@@ -1,19 +1,27 @@
-[package]
-name = "sefy"
+[workspace]
+members = ["crates/sefy-core", "crates/sefy-cli"]
+resolver = "2"
+
+[workspace.package]
 version = "0.0.1"
 edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/lacodda/sefy"
+homepage = "https://github.com/lacodda/sefy"
+authors = ["Kirill Lakhtachev <lahtachev@gmail.com>"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[workspace.dependencies]
+sefy-core = { path = "crates/sefy-core", version = "0.0.1" }
 
-[dependencies]
-aes = "0.7"
-block-modes = "0.8"
-block-padding = "0.2"
-hex = "0.4"
-eframe = "0.28"
-egui = "0.28"
-egui_extras = { version = "0.28", features = ["default", "all_loaders"] }
-getrandom = "0.2"
-rfd = "0.14"
-rusqlite = { version = "0.31.0", features = ["bundled", "chrono"] }
-image = { version = "0.25", features = ["jpeg", "png"] }
+argon2 = "0.5"
+chacha20poly1305 = { version = "0.11", features = ["alloc"] }
+getrandom = "0.3"
+rusqlite = { version = "0.40", features = ["bundled", "serialize"] }
+thiserror = "2"
+zeroize = { version = "1", features = ["derive"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

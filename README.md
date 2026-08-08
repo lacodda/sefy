@@ -18,16 +18,35 @@ any cloud folder — it draws no attention.
   known header is itself a hint) or coercion. sefy is *inconspicuous*, not
   *deniable* — and we will not pretend otherwise.
 
+## How it works
+
+- The master password is stretched into a key with **Argon2id**.
+- The whole SQLite database is sealed with **XChaCha20-Poly1305** (AEAD).
+- The file on disk is `salt ‖ nonce ‖ ciphertext` — no magic bytes, no header,
+  nothing to recognize. Two saves of identical content share no prefix.
+- The decrypted database exists **only in memory**. SQLite is never given a
+  path, so no page, journal or temporary file lands on disk.
+- Saves are atomic: ciphertext goes to a temporary file, is synced, and is
+  renamed over the vault. A crash leaves either the old vault or the new one.
+
+Details and rationale: [ADR-0001](docs/adr/0001-vault-file-format-and-cryptography.md).
+
 ## Status
 
-Early stage. The current code is a 2024 prototype; the core is being rewritten
-from scratch:
+Early stage, under active development. The core library (`sefy-core`) is in
+place: vault format, cryptography, the data model of notes, credentials, file
+attachments and tags, plus search. The `sefy` command-line tool is next, then
+release packaging, sync plugins and a GUI.
 
-- password → Argon2id key derivation
-- XChaCha20-Poly1305 (AEAD) over the whole database
-- file format `salt ‖ nonce ‖ ciphertext` — still a signature-free blob
-- the decrypted database lives only in memory, never on disk
-- core library first, then CLI, then GUI and sync plugins
+The file format is not yet frozen — until the first release, a vault may need to
+be recreated between versions.
+
+## Building
+
+```sh
+cargo build            # workspace: sefy-core (library) + sefy (CLI)
+cargo test             # unit, integration and doc tests
+```
 
 ## License
 

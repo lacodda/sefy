@@ -1,0 +1,20 @@
+[package]
+name = "sefy"
+description = "An inconspicuous encrypted store for notes, credentials and files"
+keywords = ["cli", "secrets", "password-manager", "encryption", "vault"]
+categories = ["command-line-utilities", "cryptography"]
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sefy"
+path = "src/main.rs"
+
+[dependencies]
+sefy-core.workspace = true
