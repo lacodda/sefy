@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/banner.svg" alt="sefy — an inconspicuous encrypted vault" width="720"></p>
+
 # sefy
 
 An inconspicuous encrypted vault for your secrets.
