@@ -1,0 +1,84 @@
+---
+title: sefy
+description: An inconspicuous encrypted store for notes, credentials and files - a vault whose file looks like nothing.
+template: splash
+hero:
+  tagline: Notes, credentials and files in one encrypted file with no magic bytes, no header and nothing to recognize. Call it notes.bak and leave it anywhere.
+  image:
+    html: |
+      <div class="se-install">
+        <div class="se-install__bar">
+          <span class="se-install__dot"></span>
+          <span class="se-install__dot"></span>
+          <span class="se-install__dot"></span>
+          <span class="se-install__os">install &amp; set up</span>
+        </div>
+        <pre class="se-install__body"><span class="se-install__prompt">$</span> npm i -g sefy
+      <span class="se-install__prompt">$</span> cargo install sefy
+
+      <span class="se-install__comment"># then, once:</span>
+      <span class="se-install__prompt">$</span> export SEFY_VAULT=~/notes.bak
+      <span class="se-install__prompt">$</span> sefy init
+      <span class="se-install__prompt">$</span> sefy add note "bank card"</pre>
+      </div>
+  actions:
+    - text: Get started
+      link: /sefy/getting-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/lacodda/sefy
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## A day in the life
+
+```console
+$ sefy add credential mail --login someone@example.com --url https://mail.example.com
+Password for this item:
+added "mail" as 2
+
+$ sefy get mail
+copied password of "mail" to the clipboard; clearing in 45s
+clipboard cleared
+```
+
+The secret went to the clipboard and came back off 45 seconds later - and only
+because it was still the value sitting there. Anything you copied in the
+meantime is left alone.
+
+## What the file looks like
+
+```console
+$ head -c 32 notes.bak | xxd
+00000000: 65b0 1375 a933 361d 89e2 9338 1b8d cb76  e..u.36....8...v
+00000010: 0749 7515 ad12 dd40 1c3e 3e93 9282 4b5a  .Iu....@.>>...KZ
+```
+
+No magic bytes, no header, no extension convention. Two saves of identical
+content share no prefix, because the salt and nonce are fresh every time.
+
+## What sefy does
+
+<CardGrid stagger>
+	<Card title="A file that says nothing" icon="seti:lock">
+		The whole SQLite database is sealed into one blob: `salt ‖ nonce ‖ ciphertext`. Nothing marks it as a secret store - not a header, not an extension, not a recognizable structure.
+	</Card>
+	<Card title="Notes, logins and files" icon="document">
+		Free-form notes, credentials with login, URL and TOTP, and files kept byte for byte. Tags across all of them, and search over titles and contents.
+	</Card>
+	<Card title="Nothing plaintext on disk" icon="approve-check">
+		The decrypted database lives only in memory - SQLite is never given a path, so no page, journal or temporary file lands on disk.
+	</Card>
+	<Card title="Secrets leave one way" icon="rocket">
+		`sefy get` copies to the clipboard and clears it on a timer; `show` prints an item's surroundings but never its secret. Printing is possible, but you have to ask.
+	</Card>
+	<Card title="Never a trap" icon="external">
+		`sefy export` writes everything back out as plain JSON so your data can move to another tool - after making you acknowledge exactly what that file is.
+	</Card>
+	<Card title="Honest about limits" icon="warning">
+		Inconspicuous, not deniable. It hides from a passing glance and a cloud scanner, not from a forensic examiner or from anyone who can compel a password.
+	</Card>
+</CardGrid>
