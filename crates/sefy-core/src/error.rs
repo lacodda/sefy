@@ -33,6 +33,22 @@ pub enum Error {
     #[error("no item with id {0}")]
     ItemNotFound(i64),
 
+    /// Nothing in the vault matches what the user asked for.
+    #[error("nothing matches {0:?}")]
+    NotFound(String),
+
+    /// More than one item matches, so the caller has to narrow it down.
+    ///
+    /// The candidates travel with the error to be shown to the user; they carry
+    /// item titles, so treat them as vault contents rather than log material.
+    #[error("{} items match {reference:?}", candidates.len())]
+    Ambiguous {
+        /// What the user typed.
+        reference: String,
+        /// Every item it could have meant.
+        candidates: Vec<crate::model::ItemSummary>,
+    },
+
     /// The requested item does not hold the kind of payload asked for.
     #[error("item {id} is a {actual}, not a {expected}")]
     ItemKindMismatch {

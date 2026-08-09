@@ -119,6 +119,47 @@ impl Vault {
         db::list_tags(&self.connection)
     }
 
+    /// Turns what a user typed into exactly one item.
+    ///
+    /// A reference is either an id or text. Text prefers an exact,
+    /// case-insensitive title match, and falls back to a substring search
+    /// across titles and item contents. Anything that resolves to more than one
+    /// item comes back as [`Error::Ambiguous`] carrying the candidates, so the
+    /// caller can show them rather than guess.
+    pub fn resolve(&self, reference: &str) -> Result<ItemSummary> {
+        let reference = reference.trim();
+        if reference.is_empty() {
+            return Err(Error::NotFound(String::new()));
+        }
+
+        // A bare number is an id. Titles that look like numbers stay reachable
+        // through the text path below when no such id exists.
+        if let Ok(id) = reference.parse::<i64>() {
+            match self.summary(id) {
+                Ok(summary) => return Ok(summary),
+                Err(Error::ItemNotFound(_)) => {}
+                Err(other) => return Err(other),
+            }
+        }
+
+        let matches = self.search(&Query::all().text(reference))?;
+        let exact: Vec<ItemSummary> = matches
+            .iter()
+            .filter(|summary| summary.title.eq_ignore_ascii_case(reference))
+            .cloned()
+            .collect();
+        let candidates = if exact.is_empty() { matches } else { exact };
+
+        match candidates.len() {
+            0 => Err(Error::NotFound(reference.to_owned())),
+            1 => Ok(candidates.into_iter().next().expect("length checked")),
+            _ => Err(Error::Ambiguous {
+                reference: reference.to_owned(),
+                candidates,
+            }),
+        }
+    }
+
     /// Replaces the master password and rewrites the file under it.
     ///
     /// The salt and nonce are fresh, so the new file shares nothing with the

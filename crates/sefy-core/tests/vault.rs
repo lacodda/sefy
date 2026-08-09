@@ -419,6 +419,78 @@ fn a_vault_opens_on_a_machine_that_never_saw_it() {
 }
 
 #[test]
+fn a_reference_resolves_by_id_and_by_title() {
+    let fixture = fixture();
+    let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+    let bank = vault.add(NewItem::new("bank", note("4815"))).unwrap();
+    vault
+        .add(NewItem::new("grocery list", note("milk")))
+        .unwrap();
+
+    assert_eq!(vault.resolve(&bank.to_string()).unwrap().id, bank);
+    assert_eq!(vault.resolve("bank").unwrap().id, bank);
+    assert_eq!(vault.resolve("BANK").unwrap().id, bank);
+    // Substring of a title, and a match on the note's text.
+    assert_eq!(
+        vault.resolve("groc").unwrap().id,
+        vault.resolve("milk").unwrap().id
+    );
+}
+
+#[test]
+fn an_exact_title_wins_over_substring_matches() {
+    let fixture = fixture();
+    let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+    let exact = vault.add(NewItem::new("mail", note("a"))).unwrap();
+    vault.add(NewItem::new("mail — work", note("b"))).unwrap();
+    vault.add(NewItem::new("mailing list", note("c"))).unwrap();
+
+    assert_eq!(vault.resolve("mail").unwrap().id, exact);
+}
+
+#[test]
+fn an_ambiguous_reference_reports_its_candidates() {
+    let fixture = fixture();
+    let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+    vault
+        .add(NewItem::new("mail — personal", note("a")))
+        .unwrap();
+    vault.add(NewItem::new("mail — work", note("b"))).unwrap();
+
+    match vault.resolve("mail") {
+        Err(Error::Ambiguous {
+            reference,
+            candidates,
+        }) => {
+            assert_eq!(reference, "mail");
+            assert_eq!(candidates.len(), 2);
+        }
+        other => panic!("expected an ambiguity, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_reference_matching_nothing_is_an_error() {
+    let fixture = fixture();
+    let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+    vault.add(NewItem::new("bank", note("4815"))).unwrap();
+
+    assert!(matches!(vault.resolve("nowhere"), Err(Error::NotFound(_))));
+    assert!(matches!(vault.resolve("   "), Err(Error::NotFound(_))));
+    // A number with no such id falls through to the text search, not silence.
+    assert!(matches!(vault.resolve("9999"), Err(Error::NotFound(_))));
+}
+
+#[test]
+fn a_numeric_title_stays_reachable_when_no_such_id_exists() {
+    let fixture = fixture();
+    let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+    let numeric = vault.add(NewItem::new("2024", note("archive"))).unwrap();
+
+    assert_eq!(vault.resolve("2024").unwrap().id, numeric);
+}
+
+#[test]
 fn an_empty_password_is_accepted() {
     // Weak, but the caller's business; the library must not silently refuse it.
     let fixture = fixture();
