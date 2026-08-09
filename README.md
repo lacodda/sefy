@@ -30,13 +30,17 @@ sefy add file ~/.ssh/id_ed25519 --tag keys
 
 sefy ls                                 # what is in there
 sefy find bank                          # search titles and contents
-sefy get mail                           # password → clipboard
+sefy get mail                           # password → clipboard, cleared after 45s
 sefy get mail --field login --stdout    # → stdout, for pipes
 sefy extract id_ed25519 -o ./key        # files come back byte for byte
 ```
 
 Items are addressed by id, exact title, or text to search for. When more than
 one item matches, sefy lists the candidates instead of guessing.
+
+A vault is never a trap: `sefy export` writes everything out as plain JSON, and
+`sefy import` reads it back. That file is as sensitive as the vault and protects
+nothing, so the command insists you say so explicitly.
 
 Every command: [docs/commands.md](docs/commands.md).
 

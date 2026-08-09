@@ -37,11 +37,13 @@ Adds an item. Three kinds, three subcommands.
 | Option | Meaning |
 | --- | --- |
 | `-t, --text <TEXT>` | The note body. Omit to read it from stdin. |
+| `-e, --editor` | Write the note in `$EDITOR` instead. |
 | `--tag <TAG>` | Tags; repeat the flag or separate with commas. |
 
 ```sh
 sefy add note "bank" --text "vault code 4815" --tag money,home
 pbpaste | sefy add note "meeting notes"
+sefy add note "journal" --editor
 ```
 
 ### `sefy add credential <TITLE>`
@@ -88,15 +90,29 @@ scrollback.
 | --- | --- |
 | `--field <FIELD>` | For credentials: `password` (default), `login`, `url`, `totp`. |
 | `--stdout` | Print the secret instead of copying it. |
+| `--clear-after <SECONDS>` | Clear the clipboard again after this long. Default `45`; `0` leaves it. |
 
 ```sh
-sefy get bank                       # to the clipboard
+sefy get bank                       # to the clipboard, cleared after 45s
 sefy get mail --field login
+sefy get bank --clear-after 0       # leave it there
 sefy get bank --stdout | wl-copy    # for pipes and scripts
 ```
 
 `--stdout` is what scripts want, but the secret then lives in the scrollback and
 — if the command is recalled — in the shell history.
+
+### The clipboard timeout
+
+sefy waits for the timeout before exiting, so the command sits there until the
+secret is taken back off. It clears the clipboard **only if the secret is still
+what is on it** — anything copied in the meantime is left alone.
+
+On Linux this works differently, because X11 and Wayland make the *owning
+process* serve the clipboard: sefy keeps serving the value for the timeout and
+then lets go, so the secret disappears when sefy exits either way. There
+`--clear-after 0` means "hold it for a long while" rather than "leave it
+forever", since letting go immediately would make the value unpastable.
 
 For a stored file, `get` points you at `sefy extract` instead.
 
@@ -161,6 +177,7 @@ a silent no-op.
 | --- | --- | --- |
 | `--title <TITLE>` | all | New title. |
 | `-t, --text <TEXT>` | notes | New body. |
+| `-e, --editor` | notes | Open the current body in `$EDITOR`. |
 | `-l, --login <LOGIN>` | credentials | New login. |
 | `--password` | credentials | Prompt for a new account password. |
 | `--item-password-env <VAR>` | credentials | Take the new account password from this variable. |
@@ -171,6 +188,73 @@ a silent no-op.
 | `--clear-tags` | all | Remove every tag. |
 
 An item's **kind cannot change**: a note stays a note for its lifetime.
+
+### Editing in `$EDITOR`
+
+`--editor` opens the note in `$VISUAL`, or `$EDITOR` if that is unset; a value
+carrying its own arguments (`EDITOR="code --wait"`) works. There is no built-in
+default — with none set, sefy says so rather than opening something you did not
+ask for.
+
+While the editor is open, the note sits in a temporary file **in the clear**.
+sefy overwrites and deletes that file as soon as the editor exits, but an
+editor's own swap, undo and backup files are its business and outside sefy's
+reach. If that matters for a particular note, use `--text`.
+
+---
+
+## `sefy export`
+
+Writes the whole vault out as plain, **unencrypted** JSON. This exists so a
+vault is never a trap: contents can be migrated, kept in another form, or moved
+to a different tool.
+
+| Option | Meaning |
+| --- | --- |
+| `-o, --output <PATH>` | Where to write it; omit to print to stdout. |
+| `--i-know-this-writes-plaintext` | Required. |
+| `--force` | Overwrite the destination if it exists. |
+
+```sh
+sefy export --i-know-this-writes-plaintext -o backup.json
+sefy export --i-know-this-writes-plaintext | gpg -c > backup.json.gpg
+```
+
+The acknowledgement flag is required rather than a printed warning: a warning
+arrives after the file is already on disk, and scripts do not read them at all.
+The resulting file is exactly as sensitive as the vault and protects nothing.
+
+## `sefy import [PATH]`
+
+Adds the contents of an export to this vault, reading stdin when no path is
+given.
+
+Items are **appended, never merged**: importing into a vault that already holds
+them produces duplicates rather than overwriting anything. Merging would need an
+identity for items that the format does not carry, and silently replacing
+someone's secrets is worse than a visible duplicate.
+
+The whole file is checked before anything is inserted, so a malformed entry
+halfway down cannot leave a half-imported vault behind.
+
+### Format
+
+```json
+{
+  "sefy_export": 1,
+  "items": [
+    { "title": "bank", "kind": "note", "tags": ["money"], "text": "code 4815" },
+    { "title": "mail", "kind": "credential", "login": "someone",
+      "password": "…", "url": "…", "totp": "…", "notes": "…" },
+    { "title": "key", "kind": "file", "filename": "id_ed25519",
+      "bytes_base64": "…" }
+  ]
+}
+```
+
+Notes need `text`; credentials need `login` and `password`; files need
+`filename` and `bytes_base64`. Everything else is optional. This is a plain
+enough shape to generate from another tool by hand.
 
 ---
 

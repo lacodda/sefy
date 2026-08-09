@@ -488,6 +488,201 @@ fn working_with_a_vault_leaves_no_other_files_behind() {
 }
 
 #[test]
+fn export_refuses_until_the_plaintext_warning_is_acknowledged() {
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "bank", "code 4815", &[]);
+
+    fixture
+        .sefy()
+        .arg("export")
+        .assert()
+        .failure()
+        .stderr(contains("in the clear"))
+        .stderr(contains("--i-know-this-writes-plaintext"));
+
+    fixture
+        .sefy()
+        .args(["export", "--i-know-this-writes-plaintext"])
+        .assert()
+        .success()
+        .stdout(contains("sefy_export"))
+        .stdout(contains("code 4815"));
+}
+
+#[test]
+fn an_export_survives_a_round_trip_through_the_command_line() {
+    let source = Fixture::with_vault();
+    add_note(&source, "bank", "code 4815", &["money"]);
+    source
+        .sefy()
+        .env("ITEM_PASSWORD", "hunter2")
+        .args([
+            "add",
+            "credential",
+            "mail",
+            "--login",
+            "someone",
+            "--item-password-env",
+            "ITEM_PASSWORD",
+        ])
+        .assert()
+        .success();
+
+    let dump = source.directory().join("dump.json");
+    source
+        .sefy()
+        .args(["export", "--i-know-this-writes-plaintext", "-o"])
+        .arg(&dump)
+        .assert()
+        .success();
+
+    let destination = Fixture::with_vault();
+    destination
+        .sefy()
+        .arg("import")
+        .arg(&dump)
+        .assert()
+        .success()
+        .stdout(contains("imported 2 items"));
+
+    destination
+        .sefy()
+        .args(["get", "bank", "--stdout"])
+        .assert()
+        .success()
+        .stdout(contains("code 4815"));
+    destination
+        .sefy()
+        .args(["get", "mail", "--stdout"])
+        .assert()
+        .success()
+        .stdout(contains("hunter2"));
+}
+
+#[test]
+fn export_does_not_overwrite_a_file_without_force() {
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "bank", "code", &[]);
+    let dump = fixture.directory().join("dump.json");
+    std::fs::write(&dump, b"existing").unwrap();
+
+    fixture
+        .sefy()
+        .args(["export", "--i-know-this-writes-plaintext", "-o"])
+        .arg(&dump)
+        .assert()
+        .failure()
+        .stderr(contains("--force"));
+
+    assert_eq!(std::fs::read(&dump).unwrap(), b"existing");
+}
+
+#[test]
+fn import_reads_stdin_and_reports_malformed_input() {
+    let fixture = Fixture::with_vault();
+
+    fixture
+        .sefy()
+        .arg("import")
+        .write_stdin(r#"{"sefy_export":1,"items":[{"title":"x","kind":"note","text":"y"}]}"#)
+        .assert()
+        .success()
+        .stdout(contains("imported 1 item"));
+
+    fixture
+        .sefy()
+        .arg("import")
+        .write_stdin(r#"{"sefy_export":1,"items":[{"title":"x","kind":"note"}]}"#)
+        .assert()
+        .failure()
+        .stderr(contains("malformed"));
+
+    fixture
+        .sefy()
+        .arg("import")
+        .write_stdin("not json")
+        .assert()
+        .failure()
+        .stderr(contains("not a sefy export"));
+}
+
+#[test]
+fn get_clears_the_clipboard_after_the_timeout() {
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "bank", "code 4815", &[]);
+
+    // A one-second timeout keeps the test quick; the message has to name the
+    // wait before it happens, not after.
+    let assertion = fixture
+        .sefy()
+        .args(["get", "bank", "--clear-after", "1"])
+        .assert();
+
+    // A headless CI runner may have no clipboard at all, which is a legitimate
+    // outcome here — what must not happen is a hang or a wrong message.
+    let output = assertion.get_output();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.contains("clearing in 1s") || stderr.contains("cannot reach the clipboard"),
+        "unexpected output:\nstdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+#[test]
+fn the_editor_is_refused_when_there_is_nowhere_to_open_one() {
+    let fixture = Fixture::with_vault();
+
+    // No terminal: an editor would block forever or open an unwanted window.
+    fixture
+        .sefy()
+        .env("EDITOR", "vi")
+        .args(["add", "note", "x", "--editor"])
+        .write_stdin("")
+        .assert()
+        .failure()
+        .stderr(contains("not a terminal"));
+
+    // And with no editor configured, sefy says so rather than guessing at one.
+    fixture
+        .sefy()
+        .env_remove("EDITOR")
+        .env_remove("VISUAL")
+        .args(["add", "note", "x", "--editor"])
+        .write_stdin("")
+        .assert()
+        .failure()
+        .stderr(contains("no editor configured").or(contains("not a terminal")));
+}
+
+#[test]
+fn the_editor_flag_is_refused_on_items_that_are_not_notes() {
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .env("ITEM_PASSWORD", "hunter2")
+        .args([
+            "add",
+            "credential",
+            "mail",
+            "--login",
+            "someone",
+            "--item-password-env",
+            "ITEM_PASSWORD",
+        ])
+        .assert()
+        .success();
+
+    fixture
+        .sefy()
+        .env("EDITOR", "vi")
+        .args(["edit", "mail", "--editor"])
+        .assert()
+        .failure()
+        .stderr(contains("credential"));
+}
+
+#[test]
 fn completions_are_generated_for_every_supported_shell() {
     for shell in ["bash", "zsh", "fish", "powershell", "elvish"] {
         Command::cargo_bin("sefy")

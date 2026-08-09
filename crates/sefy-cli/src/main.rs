@@ -6,6 +6,7 @@
 
 mod cli;
 mod commands;
+mod editor;
 mod output;
 mod session;
 
@@ -62,6 +63,12 @@ fn run() -> Result<()> {
             force,
         } => commands::extract(&vault, &reference, output, force),
         Command::Tags => commands::tags(&vault),
+        Command::Export {
+            output,
+            i_know_this_writes_plaintext,
+            force,
+        } => commands::export(&vault, output, i_know_this_writes_plaintext, force),
+        Command::Import { input } => commands::import(&mut vault, input),
         Command::ChangePassword { new_password_env } => {
             commands::change_password(&mut vault, new_password_env.as_deref())
         }
