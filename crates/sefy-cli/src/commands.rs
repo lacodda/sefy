@@ -152,11 +152,11 @@ pub fn show(vault: &Vault, reference: &str) -> Result<()> {
     let summary = vault.resolve(reference).map_err(output::explain)?;
     let item = vault.get(summary.id)?;
 
-    println!("id:      {}", item.summary.id);
-    println!("title:   {}", item.summary.title);
-    println!("kind:    {}", item.summary.kind);
+    field("id", &item.summary.id.to_string());
+    field("title", &item.summary.title);
+    field("kind", item.summary.kind.as_str());
     if !item.summary.tags.is_empty() {
-        println!("tags:    {}", item.summary.tags.join(", "));
+        field("tags", &item.summary.tags.join(", "));
     }
 
     match &item.payload {
@@ -165,25 +165,35 @@ pub fn show(vault: &Vault, reference: &str) -> Result<()> {
             println!("{text}");
         }
         Payload::Credential(credential) => {
-            println!("login:   {}", credential.login);
+            field("login", &credential.login);
             // Never printed here; `sefy get` is the one way a secret leaves.
-            println!("password: <hidden — use sefy get>");
+            field("password", "<hidden — use sefy get>");
             if let Some(url) = &credential.url {
-                println!("url:     {url}");
+                field("url", url);
             }
             if credential.totp.is_some() {
-                println!("totp:    <hidden — use sefy get --field totp>");
+                field("totp", "<hidden — use sefy get --field totp>");
             }
             if let Some(notes) = &credential.notes {
-                println!("notes:   {notes}");
+                field("notes", notes);
             }
         }
         Payload::File { filename, bytes } => {
-            println!("file:    {filename}");
-            println!("size:    {} bytes", bytes.len());
+            field("file", filename);
+            field("size", &format!("{} bytes", bytes.len()));
         }
     }
     Ok(())
+}
+
+/// Prints one labelled line of `sefy show`, aligned to a fixed column.
+///
+/// A single place to pad from: hand-spaced labels drift the moment one of them
+/// is longer than the rest, and `password` already had. The width leaves a
+/// space after the longest label rather than butting against it.
+fn field(label: &str, value: &str) {
+    const LABEL_WIDTH: usize = "password:".len() + 1;
+    println!("{:<LABEL_WIDTH$}{value}", format!("{label}:"));
 }
 
 /// Lists items, optionally narrowed by kind and tags.
