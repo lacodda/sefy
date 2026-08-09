@@ -1,11 +1,19 @@
 name: Publish
 
-# Triggered by the tag push directly (not the release event): releases here are
-# created by release.yml with GITHUB_TOKEN, and such events do not start other
+# Manual until the registries know this project.
+#
+# Trusted publishing is configured on an *existing* package: you add the
+# publisher on the crate's or package's settings page. Neither sefy nor
+# sefy-core exists yet, so v0.1.0 is published by hand; once the trusted
+# publishers are in place, restore the `push: tags` trigger below and every
+# later release goes out on its tag with no tokens anywhere.
+#
+# The trigger is the tag rather than the release event on purpose: releases are
+# created by release.yml with GITHUB_TOKEN, and those events do not start other
 # workflows.
 on:
-  push:
-    tags: ['v*']
+  # push:
+  #   tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
