@@ -3,12 +3,17 @@
 use anyhow::{Context, Result};
 use sefy_core::{Error, ItemSummary};
 
-/// Puts a secret on the clipboard.
+/// Puts a secret on the clipboard, and takes it back off after `seconds`.
 ///
-/// On X11 and Wayland the clipboard is served by the process that owns it, so
-/// the value has to be handed to the desktop before this program exits;
-/// `arboard` does that on Linux via its wait-for-paste path.
-pub fn to_clipboard(value: &str) -> Result<()> {
+/// Zero seconds means leaving it there until something else overwrites it.
+///
+/// The two platform paths differ in more than syntax. On Windows and macOS the
+/// clipboard holds the value itself, so this process can set it, wait, and
+/// clear it. On X11 and Wayland the clipboard is *served* by the process that
+/// owns the selection: once sefy exits, the value is gone whether or not a
+/// timer fired. There the wait is the mechanism — sefy keeps serving the
+/// selection for the timeout and then lets go.
+pub fn to_clipboard(value: &str, seconds: u64) -> Result<ClipboardHold> {
     let mut clipboard = arboard::Clipboard::new().context(
         "cannot reach the clipboard\n\
          use --stdout to print the value instead",
@@ -17,19 +22,60 @@ pub fn to_clipboard(value: &str) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         use arboard::SetExtLinux;
+        // `wait_until` hands the selection to the desktop and serves it until
+        // the deadline; without a wait of some kind the value would vanish the
+        // moment this process exits.
+        let deadline = std::time::Instant::now() + clipboard_lifetime(seconds);
         clipboard
             .set()
-            .wait()
+            .wait_until(deadline)
             .text(value.to_owned())
             .context("cannot write to the clipboard")?;
+        Ok(ClipboardHold { cleared: true })
     }
+
     #[cfg(not(target_os = "linux"))]
     {
         clipboard
             .set_text(value.to_owned())
             .context("cannot write to the clipboard")?;
+
+        if seconds == 0 {
+            return Ok(ClipboardHold { cleared: false });
+        }
+
+        std::thread::sleep(std::time::Duration::from_secs(seconds));
+        // Only clear what is still ours: overwriting whatever the user copied
+        // in the meantime would be its own small betrayal.
+        match clipboard.get_text() {
+            Ok(current) if current == value => {
+                let _ = clipboard.clear();
+                Ok(ClipboardHold { cleared: true })
+            }
+            _ => Ok(ClipboardHold { cleared: false }),
+        }
     }
-    Ok(())
+}
+
+/// How long a secret stays on the clipboard, with a floor under it.
+///
+/// A zero timeout means "leave it there" everywhere else, but on Linux letting
+/// go immediately would mean the value was never pastable at all. There it
+/// becomes a long hold instead.
+#[cfg(target_os = "linux")]
+fn clipboard_lifetime(seconds: u64) -> std::time::Duration {
+    const FOREVER_IN_PRACTICE: u64 = 8 * 60 * 60;
+    std::time::Duration::from_secs(if seconds == 0 {
+        FOREVER_IN_PRACTICE
+    } else {
+        seconds
+    })
+}
+
+/// What became of a secret that was put on the clipboard.
+pub struct ClipboardHold {
+    /// Whether sefy took the value back off the clipboard before returning.
+    pub cleared: bool,
 }
 
 /// Prints a table of items: id, title, kind and tags.

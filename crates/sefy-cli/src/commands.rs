@@ -22,9 +22,15 @@ pub fn init(path: &Path, password_env: Option<&str>) -> Result<()> {
 /// Adds an item and saves the vault.
 pub fn add(vault: &mut Vault, kind: AddKind) -> Result<()> {
     let (item, description) = match kind {
-        AddKind::Note { title, text, tag } => {
+        AddKind::Note {
+            title,
+            text,
+            editor,
+            tag,
+        } => {
             let text = match text {
                 Some(text) => text,
+                None if editor => crate::editor::edit("")?,
                 None => read_stdin().context("cannot read the note text from stdin")?,
             };
             (
@@ -110,14 +116,35 @@ pub fn get(vault: &Vault, args: GetArgs) -> Result<()> {
 
     if args.stdout {
         println!("{value}");
+        return Ok(());
+    }
+
+    if args.clear_after > 0 {
+        // Said before the wait, not after: the user needs to know why the
+        // command is sitting there.
+        println!(
+            "copied {description} of {:?} to the clipboard; clearing in {}s",
+            item.summary.title, args.clear_after
+        );
     } else {
-        output::to_clipboard(&value)?;
         println!(
             "copied {description} of {:?} to the clipboard",
             item.summary.title
         );
     }
+    flush_stdout();
+
+    let hold = output::to_clipboard(&value, args.clear_after)?;
+    if hold.cleared {
+        println!("clipboard cleared");
+    }
     Ok(())
+}
+
+/// Makes sure a message is on screen before a wait, not buffered behind it.
+fn flush_stdout() {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
 }
 
 /// Shows an item's fields, keeping its secrets hidden.
@@ -220,18 +247,23 @@ fn build_edited_payload(existing: &Payload, args: &EditArgs) -> Result<Option<Pa
         || args.notes.is_some();
 
     match existing {
-        Payload::Note { .. } => {
+        Payload::Note { text: current } => {
             if wants_credential_field {
                 bail!(
                     "this item is a note; --login, --password, --url, --totp and --notes \
                      apply to credentials"
                 );
             }
+            if args.editor {
+                return Ok(Some(Payload::Note {
+                    text: crate::editor::edit(current)?,
+                }));
+            }
             Ok(args.text.clone().map(|text| Payload::Note { text }))
         }
         Payload::Credential(credential) => {
-            if args.text.is_some() {
-                bail!("this item is a credential; --text applies to notes");
+            if args.text.is_some() || args.editor {
+                bail!("this item is a credential; --text and --editor apply to notes");
             }
             if !wants_credential_field {
                 return Ok(None);
@@ -259,7 +291,7 @@ fn build_edited_payload(existing: &Payload, args: &EditArgs) -> Result<Option<Pa
             Ok(Some(Payload::Credential(updated)))
         }
         Payload::File { .. } => {
-            if args.text.is_some() || wants_credential_field {
+            if args.text.is_some() || args.editor || wants_credential_field {
                 bail!("this item is a file; only --title and tags can be edited");
             }
             Ok(None)
@@ -334,6 +366,54 @@ pub fn tags(vault: &Vault) -> Result<()> {
     for (name, count) in tags {
         println!("{name:<width$}  {count}");
     }
+    Ok(())
+}
+
+/// Writes the vault's contents out as plain JSON.
+pub fn export(
+    vault: &Vault,
+    output_path: Option<PathBuf>,
+    acknowledged: bool,
+    force: bool,
+) -> Result<()> {
+    if !acknowledged {
+        bail!(
+            "export writes every secret in this vault in the clear\n\
+             the resulting file protects nothing — encrypt it, or delete it when done\n\
+             pass --i-know-this-writes-plaintext to go ahead"
+        );
+    }
+
+    let json = sefy_core::exchange::to_json(&sefy_core::exchange::export(vault)?)?;
+
+    match output_path {
+        Some(path) => {
+            if path.exists() && !force {
+                bail!(
+                    "{} already exists; pass --force to overwrite",
+                    path.display()
+                );
+            }
+            std::fs::write(&path, json.as_bytes())
+                .with_context(|| format!("cannot write {}", path.display()))?;
+            eprintln!("wrote {} in the clear", path.display());
+        }
+        None => println!("{json}"),
+    }
+    Ok(())
+}
+
+/// Adds the contents of an export to the vault.
+pub fn import(vault: &mut Vault, input: Option<PathBuf>) -> Result<()> {
+    let json = match input {
+        Some(path) => std::fs::read_to_string(&path)
+            .with_context(|| format!("cannot read {}", path.display()))?,
+        None => read_stdin().context("cannot read the export from stdin")?,
+    };
+
+    let export = sefy_core::exchange::from_json(&json)?;
+    let count = sefy_core::exchange::import(vault, &export)?;
+    println!("imported {count} item{}", if count == 1 { "" } else { "s" });
     Ok(())
 }
 

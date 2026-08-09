@@ -89,6 +89,36 @@ pub enum Command {
     /// List the tags in use.
     Tags,
 
+    /// Write the vault's contents out as plain, unencrypted JSON.
+    Export {
+        /// Where to write it; omit to print to stdout.
+        #[arg(long, short = 'o', value_name = "PATH")]
+        output: Option<PathBuf>,
+
+        /// Required: acknowledge that this writes every secret in the clear.
+        ///
+        /// Export exists so a vault is never a trap, but the file it produces
+        /// is exactly as sensitive as the vault — and unlike the vault, it
+        /// protects nothing. A warning printed after the fact would be too
+        /// late, so the acknowledgement comes first.
+        #[arg(long)]
+        i_know_this_writes_plaintext: bool,
+
+        /// Overwrite the destination if it exists.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Add the contents of an export to this vault.
+    ///
+    /// Items are appended, never merged: importing into a vault that already
+    /// holds them produces duplicates rather than overwriting anything.
+    Import {
+        /// Export file to read; omit to read from stdin.
+        #[arg(value_name = "PATH")]
+        input: Option<PathBuf>,
+    },
+
     /// Replace the master password.
     ChangePassword {
         /// Read the *new* password from this environment variable.
@@ -114,9 +144,13 @@ pub enum AddKind {
         /// What to call it.
         title: String,
 
-        /// The text; omit to read it from stdin.
-        #[arg(long, short = 't')]
+        /// The text; omit to read it from stdin, or pass --editor.
+        #[arg(long, short = 't', conflicts_with = "editor")]
         text: Option<String>,
+
+        /// Write the note in $EDITOR.
+        #[arg(long, short = 'e')]
+        editor: bool,
 
         /// Tags to attach; repeat or separate with commas.
         #[arg(long, value_delimiter = ',')]
@@ -188,6 +222,13 @@ pub struct GetArgs {
     /// scrollback.
     #[arg(long)]
     pub stdout: bool,
+
+    /// Seconds before the clipboard is cleared again; 0 leaves it there.
+    ///
+    /// sefy waits that long before exiting, and clears the clipboard only if
+    /// the secret is still the value sitting on it.
+    #[arg(long, value_name = "SECONDS", default_value_t = 45)]
+    pub clear_after: u64,
 }
 
 /// A field of a credential.
@@ -255,8 +296,18 @@ pub struct EditArgs {
     pub title: Option<String>,
 
     /// New text, for a note.
-    #[arg(long, short = 't')]
+    #[arg(long, short = 't', conflicts_with = "editor")]
     pub text: Option<String>,
+
+    /// Open the note in $EDITOR instead of passing its text on the command
+    /// line.
+    ///
+    /// The draft is written to a temporary file, which is overwritten and
+    /// removed as soon as the editor exits — but while the editor is open, that
+    /// file holds the note in the clear, and an editor's own swap or backup
+    /// files are outside sefy's reach.
+    #[arg(long, short = 'e')]
+    pub editor: bool,
 
     /// New login, for a credential.
     #[arg(long, short = 'l')]
