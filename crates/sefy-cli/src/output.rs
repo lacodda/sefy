@@ -165,6 +165,9 @@ mod tests {
 
     #[test]
     fn truncate_counts_characters_not_bytes() {
+        // Multi-byte test data on purpose: each of these characters is two
+        // bytes in UTF-8, so a byte-based truncation would both cut in the
+        // wrong place and be able to split a character in half.
         assert_eq!(truncate("паспорт", 7), "паспорт");
         assert_eq!(truncate("паспорт", 4), "пас…");
     }
