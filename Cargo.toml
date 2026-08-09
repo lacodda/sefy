@@ -15,8 +15,11 @@ authors = ["Kirill Lakhtachev <lahtachev@gmail.com>"]
 sefy-core = { path = "crates/sefy-core", version = "0.0.1" }
 
 argon2 = "0.5"
+base64 = "0.23"
 chacha20poly1305 = { version = "0.11", features = ["alloc"] }
 getrandom = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled", "serialize"] }
 thiserror = "2"
 zeroize = { version = "1", features = ["derive"] }
@@ -26,6 +29,7 @@ arboard = "3"
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 rpassword = "7"
+tempfile = "3"
 
 [profile.release]
 lto = true

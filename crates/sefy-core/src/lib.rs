@@ -40,11 +40,13 @@
 pub mod crypto;
 pub mod db;
 pub mod error;
+pub mod exchange;
 pub mod format;
 pub mod model;
 pub mod vault;
 
 pub use error::{Error, Result};
+pub use exchange::{Export, ExportItem, EXPORT_VERSION};
 pub use format::FORMAT_VERSION;
 pub use model::{Credential, Item, ItemKind, ItemSummary, NewItem, Payload, Query};
 pub use vault::Vault;

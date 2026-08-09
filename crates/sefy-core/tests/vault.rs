@@ -491,6 +491,141 @@ fn a_numeric_title_stays_reachable_when_no_such_id_exists() {
 }
 
 #[test]
+fn an_export_round_trips_through_json() {
+    let origin = fixture();
+    let mut vault = Vault::create(&origin.path, PASSWORD).unwrap();
+    vault
+        .add(NewItem::new("bank", note("code 4815")).with_tags(["money", "home"]))
+        .unwrap();
+    vault
+        .add(NewItem::new(
+            "mail",
+            Payload::Credential(Credential {
+                login: "someone".to_owned(),
+                password: "hunter2".to_owned(),
+                url: Some("https://example.invalid".to_owned()),
+                totp: Some("JBSWY3DPEHPK3PXP".to_owned()),
+                notes: None,
+            }),
+        ))
+        .unwrap();
+    vault
+        .add(NewItem::new(
+            "keyfile",
+            Payload::File {
+                filename: "id_ed25519".to_owned(),
+                // Bytes that no text encoding would survive.
+                bytes: (0..=255u8).collect(),
+            },
+        ))
+        .unwrap();
+
+    let json = sefy_core::exchange::to_json(&sefy_core::exchange::export(&vault).unwrap()).unwrap();
+
+    let destination = fixture();
+    let mut restored = Vault::create(&destination.path, b"another password").unwrap();
+    let count = sefy_core::exchange::import(
+        &mut restored,
+        &sefy_core::exchange::from_json(&json).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(count, 3);
+
+    let bank = restored.resolve("bank").unwrap();
+    assert_eq!(restored.get(bank.id).unwrap().payload, note("code 4815"));
+    assert_eq!(bank.tags, vec!["home", "money"]);
+
+    match restored
+        .get(restored.resolve("mail").unwrap().id)
+        .unwrap()
+        .payload
+    {
+        Payload::Credential(credential) => {
+            assert_eq!(credential.password, "hunter2");
+            assert_eq!(credential.totp.as_deref(), Some("JBSWY3DPEHPK3PXP"));
+            assert_eq!(credential.notes, None);
+        }
+        other => panic!("expected a credential, got {other:?}"),
+    }
+
+    match restored
+        .get(restored.resolve("keyfile").unwrap().id)
+        .unwrap()
+        .payload
+    {
+        Payload::File { filename, bytes } => {
+            assert_eq!(filename, "id_ed25519");
+            assert_eq!(bytes, (0..=255u8).collect::<Vec<u8>>());
+        }
+        other => panic!("expected a file, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_import_appends_rather_than_merging() {
+    let fixture = fixture();
+    let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+    vault.add(NewItem::new("bank", note("original"))).unwrap();
+
+    let json = sefy_core::exchange::to_json(&sefy_core::exchange::export(&vault).unwrap()).unwrap();
+    sefy_core::exchange::import(&mut vault, &sefy_core::exchange::from_json(&json).unwrap())
+        .unwrap();
+
+    // Two items with the same title now, and nothing was overwritten.
+    assert_eq!(vault.list().unwrap().len(), 2);
+    assert!(matches!(
+        vault.resolve("bank"),
+        Err(Error::Ambiguous { .. })
+    ));
+}
+
+#[test]
+fn a_malformed_export_is_refused_before_anything_is_inserted() {
+    let fixture = fixture();
+    let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+
+    // The first entry is fine; the second has no text. Nothing may land.
+    let json = r#"{
+        "sefy_export": 1,
+        "items": [
+            { "title": "fine", "kind": "note", "text": "here" },
+            { "title": "broken", "kind": "note" }
+        ]
+    }"#;
+
+    let export = sefy_core::exchange::from_json(json).unwrap();
+    assert!(matches!(
+        sefy_core::exchange::import(&mut vault, &export),
+        Err(Error::MalformedExport { index: 1, .. })
+    ));
+    assert!(vault.list().unwrap().is_empty());
+}
+
+#[test]
+fn an_export_from_a_future_version_is_refused() {
+    let fixture = fixture();
+    let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+
+    let export = sefy_core::exchange::from_json(r#"{"sefy_export": 99, "items": []}"#).unwrap();
+    assert!(matches!(
+        sefy_core::exchange::import(&mut vault, &export),
+        Err(Error::UnsupportedExport(99))
+    ));
+}
+
+#[test]
+fn something_that_is_not_an_export_is_refused() {
+    assert!(matches!(
+        sefy_core::exchange::from_json("not json at all"),
+        Err(Error::UnreadableExport(_))
+    ));
+    assert!(matches!(
+        sefy_core::exchange::from_json(r#"{"items": []}"#),
+        Err(Error::UnreadableExport(_))
+    ));
+}
+
+#[test]
 fn an_empty_password_is_accepted() {
     // Weak, but the caller's business; the library must not silently refuse it.
     let fixture = fixture();

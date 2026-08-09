@@ -60,6 +60,23 @@ pub enum Error {
         expected: &'static str,
     },
 
+    /// The export file declares a version this build cannot read.
+    #[error("unsupported export format version {0}; upgrade sefy")]
+    UnsupportedExport(u32),
+
+    /// The export file is not the JSON an export is supposed to be.
+    #[error("this is not a sefy export: {0}")]
+    UnreadableExport(String),
+
+    /// An entry in an export is missing a field or holds something unusable.
+    #[error("item {index} in the export is malformed: {reason}")]
+    MalformedExport {
+        /// Position of the offending entry, counting from zero.
+        index: usize,
+        /// What is wrong with it, without quoting the item's contents.
+        reason: String,
+    },
+
     /// Key derivation failed (only on absurd parameters or allocation failure).
     #[error("key derivation failed")]
     KeyDerivation,
