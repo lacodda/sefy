@@ -1,0 +1,27 @@
+{
+  "name": "sefy",
+  "version": "0.1.0",
+  "sefy": {
+    "binary": "v0.1.0"
+  },
+  "description": "An inconspicuous encrypted store for notes, credentials and files",
+  "license": "MIT",
+  "author": "Kirill Lakhtachev <lahtachev@gmail.com> (https://lacodda.com)",
+  "homepage": "https://lacodda.github.io/sefy/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lacodda/sefy.git"
+  },
+  "keywords": ["cli", "secrets", "password-manager", "encryption", "vault"],
+  "bin": {
+    "sefy": "run.js"
+  },
+  "files": ["download.js", "install.js", "run.js"],
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "os": ["win32", "darwin", "linux"],
+  "engines": {
+    "node": ">=18"
+  }
+}

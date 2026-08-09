@@ -3,6 +3,8 @@ name = "sefy"
 description = "An inconspicuous encrypted store for notes, credentials and files"
 keywords = ["cli", "secrets", "password-manager", "encryption", "vault"]
 categories = ["command-line-utilities", "cryptography"]
+# Outside the crate directory, but cargo pulls it into the package: verified by
+# inspecting the built .crate rather than assumed.
 readme = "../../README.md"
 version.workspace = true
 edition.workspace = true
@@ -10,6 +12,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 
 [[bin]]

@@ -1,2 +1,17 @@
 /target
+
+# Vault temporaries: a crashed save leaves one of these behind.
 *.sefy-tmp
+
+# Docs site (Astro Starlight)
+docs/node_modules/
+docs/dist/
+docs/.astro/
+
+# npm wrapper: binaries downloaded by install.js
+npm/sefy
+npm/sefy.exe
+npm/archive.*
+npm/node_modules/
+# The publish workflow copies the root README in here; it must never be committed.
+npm/README.md

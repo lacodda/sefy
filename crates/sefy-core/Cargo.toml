@@ -10,6 +10,8 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+# The library's reference is its rustdoc, not the CLI's documentation site.
+documentation = "https://docs.rs/sefy-core"
 authors.workspace = true
 
 [dependencies]

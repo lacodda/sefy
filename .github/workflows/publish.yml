@@ -1,0 +1,81 @@
+name: Publish
+
+# Triggered by the tag push directly (not the release event): releases here are
+# created by release.yml with GITHUB_TOKEN, and such events do not start other
+# workflows.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to publish (e.g. v0.1.0)
+        required: true
+
+permissions: {}
+
+jobs:
+  crates-io:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Get a crates.io token (OIDC trusted publishing)
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      # Order matters: sefy depends on sefy-core, and crates.io will not accept
+      # a package whose dependency it cannot resolve yet. `--package` twice
+      # rather than a workspace publish, so the order is explicit.
+      - name: Publish sefy-core
+        run: cargo publish --package sefy-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+      # The index does not carry the new version the instant publish returns,
+      # and the next step resolves sefy-core from it. Waiting for the version
+      # to appear beats a fixed sleep that is either too short or wasteful.
+      - name: Wait for sefy-core to appear in the index
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          for attempt in $(seq 1 30); do
+            if curl -sf "https://crates.io/api/v1/crates/sefy-core/$version" \
+                 -H 'user-agent: sefy-release' > /dev/null; then
+              echo "sefy-core $version is available"
+              exit 0
+            fi
+            echo "attempt $attempt: not indexed yet"
+            sleep 10
+          done
+          echo "sefy-core $version never appeared in the index" >&2
+          exit 1
+      - name: Publish sefy
+        run: cargo publish --package sefy
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  npm:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      # npm >= 11.5.1 exchanges the OIDC token itself (trusted publishing);
+      # provenance is attached automatically.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # One README for all three pages. npm publishes whatever sits next to
+      # package.json, so the root file is copied in here rather than kept as a
+      # second copy in the repo, where it would drift from the original.
+      - name: Use the root README for the npm page
+        run: cp README.md npm/README.md
+      - run: npm publish
+        working-directory: npm
