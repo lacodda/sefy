@@ -21,7 +21,24 @@ rusqlite = { version = "0.40", features = ["bundled", "serialize"] }
 thiserror = "2"
 zeroize = { version = "1", features = ["derive"] }
 
+anyhow = "1"
+arboard = "3"
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+rpassword = "7"
+
 [profile.release]
 lto = true
 codegen-units = 1
 strip = true
+
+# Argon2 is deliberately expensive, and an unoptimized build makes it about ten
+# times more so: a debug `sefy ls` spends seconds deriving the key. Optimizing
+# dependencies keeps the crypto fast in tests and development while this crate's
+# own code stays debuggable.
+[profile.dev.package."*"]
+opt-level = 3
+
+# The core crate is a workspace member, so the wildcard above does not cover it.
+[profile.dev.package.sefy-core]
+opt-level = 3

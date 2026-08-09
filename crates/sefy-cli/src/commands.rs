@@ -1,0 +1,372 @@
+//! What each subcommand does once the vault is open.
+
+use crate::cli::{AddKind, EditArgs, Field, FindArgs, GetArgs, ListArgs};
+use crate::output;
+use crate::session;
+use anyhow::{bail, Context, Result};
+use sefy_core::{Credential, NewItem, Payload, Query, Vault};
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+/// Creates a vault, refusing to touch a file that already exists.
+pub fn init(path: &Path, password_env: Option<&str>) -> Result<()> {
+    if path.exists() {
+        bail!("{} already exists", path.display());
+    }
+    let password = session::new_password(password_env)?;
+    Vault::create(path, password.as_bytes())?;
+    println!("created {}", path.display());
+    Ok(())
+}
+
+/// Adds an item and saves the vault.
+pub fn add(vault: &mut Vault, kind: AddKind) -> Result<()> {
+    let (item, description) = match kind {
+        AddKind::Note { title, text, tag } => {
+            let text = match text {
+                Some(text) => text,
+                None => read_stdin().context("cannot read the note text from stdin")?,
+            };
+            (
+                NewItem::new(title.clone(), Payload::Note { text }).with_tags(tag),
+                title,
+            )
+        }
+        AddKind::Credential {
+            title,
+            login,
+            url,
+            totp,
+            notes,
+            item_password_env,
+            tag,
+        } => {
+            // Only this item's own variable is consulted: falling back to
+            // --password-env would silently store the master password as the
+            // account's password.
+            let password =
+                session::secret("Password for this item: ", item_password_env.as_deref())?;
+            (
+                NewItem::new(
+                    title.clone(),
+                    Payload::Credential(Credential {
+                        login,
+                        password,
+                        url,
+                        totp,
+                        notes,
+                    }),
+                )
+                .with_tags(tag),
+                title,
+            )
+        }
+        AddKind::File { path, title, tag } => {
+            let bytes =
+                std::fs::read(&path).with_context(|| format!("cannot read {}", path.display()))?;
+            let filename = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "file".to_owned());
+            let title = title.unwrap_or_else(|| filename.clone());
+            (
+                NewItem::new(title.clone(), Payload::File { filename, bytes }).with_tags(tag),
+                title,
+            )
+        }
+    };
+
+    let id = vault.add(item)?;
+    vault.save()?;
+    println!("added {description:?} as {id}");
+    Ok(())
+}
+
+/// Copies a secret to the clipboard, or prints it when asked to.
+pub fn get(vault: &Vault, args: GetArgs) -> Result<()> {
+    let summary = vault.resolve(&args.reference).map_err(output::explain)?;
+    let item = vault.get(summary.id)?;
+
+    let (value, description) = match &item.payload {
+        Payload::Note { text } => (text.clone(), "text".to_owned()),
+        Payload::Credential(credential) => {
+            let value = match args.field {
+                Field::Password => Some(credential.password.clone()),
+                Field::Login => Some(credential.login.clone()),
+                Field::Url => credential.url.clone(),
+                Field::Totp => credential.totp.clone(),
+            };
+            match value {
+                Some(value) => (value, args.field.as_str().to_owned()),
+                None => bail!("{:?} has no {}", item.summary.title, args.field.as_str()),
+            }
+        }
+        Payload::File { .. } => bail!(
+            "{:?} is a file; write it to disk with: sefy extract {}",
+            item.summary.title,
+            item.summary.id
+        ),
+    };
+
+    if args.stdout {
+        println!("{value}");
+    } else {
+        output::to_clipboard(&value)?;
+        println!(
+            "copied {description} of {:?} to the clipboard",
+            item.summary.title
+        );
+    }
+    Ok(())
+}
+
+/// Shows an item's fields, keeping its secrets hidden.
+pub fn show(vault: &Vault, reference: &str) -> Result<()> {
+    let summary = vault.resolve(reference).map_err(output::explain)?;
+    let item = vault.get(summary.id)?;
+
+    println!("id:      {}", item.summary.id);
+    println!("title:   {}", item.summary.title);
+    println!("kind:    {}", item.summary.kind);
+    if !item.summary.tags.is_empty() {
+        println!("tags:    {}", item.summary.tags.join(", "));
+    }
+
+    match &item.payload {
+        Payload::Note { text } => {
+            println!("---");
+            println!("{text}");
+        }
+        Payload::Credential(credential) => {
+            println!("login:   {}", credential.login);
+            // Never printed here; `sefy get` is the one way a secret leaves.
+            println!("password: <hidden — use sefy get>");
+            if let Some(url) = &credential.url {
+                println!("url:     {url}");
+            }
+            if credential.totp.is_some() {
+                println!("totp:    <hidden — use sefy get --field totp>");
+            }
+            if let Some(notes) = &credential.notes {
+                println!("notes:   {notes}");
+            }
+        }
+        Payload::File { filename, bytes } => {
+            println!("file:    {filename}");
+            println!("size:    {} bytes", bytes.len());
+        }
+    }
+    Ok(())
+}
+
+/// Lists items, optionally narrowed by kind and tags.
+pub fn ls(vault: &Vault, args: ListArgs) -> Result<()> {
+    let mut query = Query::all().tags(args.tag);
+    if let Some(kind) = args.kind {
+        query = query.kind(kind.into());
+    }
+    output::table(&vault.search(&query)?);
+    Ok(())
+}
+
+/// Searches items by text, kind and tags.
+pub fn find(vault: &Vault, args: FindArgs) -> Result<()> {
+    let mut query = Query::all().tags(args.tag);
+    if let Some(text) = args.text {
+        query = query.text(text);
+    }
+    if let Some(kind) = args.kind {
+        query = query.kind(kind.into());
+    }
+    output::table(&vault.search(&query)?);
+    Ok(())
+}
+
+/// Changes an item's title, contents or tags.
+pub fn edit(vault: &mut Vault, args: EditArgs) -> Result<()> {
+    let summary = vault.resolve(&args.reference).map_err(output::explain)?;
+    let existing = vault.get(summary.id)?;
+
+    let payload = build_edited_payload(&existing.payload, &args)?;
+    let tags = if args.clear_tags {
+        Some(Vec::new())
+    } else if args.tag.is_empty() {
+        None
+    } else {
+        Some(args.tag.clone())
+    };
+
+    if args.title.is_none() && payload.is_none() && tags.is_none() {
+        bail!("nothing to change; pass --title, --tag, or a field to edit");
+    }
+
+    vault.update(summary.id, args.title, payload, tags)?;
+    vault.save()?;
+    println!("updated {}", summary.id);
+    Ok(())
+}
+
+/// Applies the edit flags to an item's current payload.
+///
+/// Returns `None` when no flag touches the payload, so the item keeps what it
+/// has. Flags meant for another kind of item are an error rather than a silent
+/// no-op.
+fn build_edited_payload(existing: &Payload, args: &EditArgs) -> Result<Option<Payload>> {
+    let wants_new_password = args.password || args.item_password_env.is_some();
+    let wants_credential_field = args.login.is_some()
+        || wants_new_password
+        || args.url.is_some()
+        || args.totp.is_some()
+        || args.notes.is_some();
+
+    match existing {
+        Payload::Note { .. } => {
+            if wants_credential_field {
+                bail!(
+                    "this item is a note; --login, --password, --url, --totp and --notes \
+                     apply to credentials"
+                );
+            }
+            Ok(args.text.clone().map(|text| Payload::Note { text }))
+        }
+        Payload::Credential(credential) => {
+            if args.text.is_some() {
+                bail!("this item is a credential; --text applies to notes");
+            }
+            if !wants_credential_field {
+                return Ok(None);
+            }
+
+            let mut updated = credential.clone();
+            if let Some(login) = args.login.clone() {
+                updated.login = login;
+            }
+            if wants_new_password {
+                updated.password = session::secret(
+                    "New password for this item: ",
+                    args.item_password_env.as_deref(),
+                )?;
+            }
+            if let Some(url) = args.url.clone() {
+                updated.url = Some(url);
+            }
+            if let Some(totp) = args.totp.clone() {
+                updated.totp = Some(totp);
+            }
+            if let Some(notes) = args.notes.clone() {
+                updated.notes = Some(notes);
+            }
+            Ok(Some(Payload::Credential(updated)))
+        }
+        Payload::File { .. } => {
+            if args.text.is_some() || wants_credential_field {
+                bail!("this item is a file; only --title and tags can be edited");
+            }
+            Ok(None)
+        }
+    }
+}
+
+/// Removes an item, asking first unless told not to.
+pub fn rm(vault: &mut Vault, reference: &str, yes: bool) -> Result<()> {
+    let summary = vault.resolve(reference).map_err(output::explain)?;
+
+    if !yes
+        && !confirm(&format!(
+            "remove {:?} ({})? [y/N] ",
+            summary.title, summary.id
+        ))?
+    {
+        println!("kept");
+        return Ok(());
+    }
+
+    vault.remove(summary.id)?;
+    vault.save()?;
+    println!("removed {}", summary.id);
+    Ok(())
+}
+
+/// Writes a stored file back to disk.
+pub fn extract(
+    vault: &Vault,
+    reference: &str,
+    output_path: Option<PathBuf>,
+    force: bool,
+) -> Result<()> {
+    let summary = vault.resolve(reference).map_err(output::explain)?;
+    let item = vault.get(summary.id)?;
+
+    let Payload::File { filename, bytes } = &item.payload else {
+        bail!(
+            "{:?} is a {}, not a file",
+            item.summary.title,
+            item.summary.kind
+        );
+    };
+
+    let destination = output_path.unwrap_or_else(|| PathBuf::from(filename));
+    if destination.exists() && !force {
+        bail!(
+            "{} already exists; pass --force to overwrite",
+            destination.display()
+        );
+    }
+
+    std::fs::write(&destination, bytes)
+        .with_context(|| format!("cannot write {}", destination.display()))?;
+    println!("wrote {} ({} bytes)", destination.display(), bytes.len());
+    Ok(())
+}
+
+/// Lists the tags in use with their item counts.
+pub fn tags(vault: &Vault) -> Result<()> {
+    let tags = vault.tags()?;
+    if tags.is_empty() {
+        println!("no tags");
+        return Ok(());
+    }
+    let width = tags
+        .iter()
+        .map(|(name, _)| name.chars().count())
+        .max()
+        .unwrap_or(4);
+    for (name, count) in tags {
+        println!("{name:<width$}  {count}");
+    }
+    Ok(())
+}
+
+/// Replaces the master password and rewrites the file under it.
+pub fn change_password(vault: &mut Vault, password_env: Option<&str>) -> Result<()> {
+    let password = session::new_password(password_env)?;
+    vault.change_password(password.as_bytes())?;
+    println!("password changed");
+    Ok(())
+}
+
+/// Reads everything from stdin as text.
+fn read_stdin() -> Result<String> {
+    let mut text = String::new();
+    std::io::stdin().read_to_string(&mut text)?;
+    Ok(text.trim_end_matches(['\n', '\r']).to_owned())
+}
+
+/// Asks a yes/no question on the terminal.
+fn confirm(question: &str) -> Result<bool> {
+    use std::io::{IsTerminal, Write};
+
+    if !std::io::stdin().is_terminal() {
+        bail!("cannot ask for confirmation: input is not a terminal; pass --yes");
+    }
+
+    print!("{question}");
+    std::io::stdout().flush()?;
+
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes"
+    ))
+}
