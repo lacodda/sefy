@@ -6,7 +6,7 @@
 
 use crate::error::{Error, Result};
 use crate::model::{Credential, Item, ItemKind, ItemSummary, NewItem, Payload, Query};
-use rusqlite::{params, Connection, OptionalExtension, MAIN_DB};
+use rusqlite::{Connection, MAIN_DB, OptionalExtension, params};
 use std::io::Cursor;
 
 /// Schema version of the database inside the blob.

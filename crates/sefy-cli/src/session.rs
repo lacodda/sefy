@@ -1,6 +1,6 @@
 //! Getting to an open vault: where the file is, and what the password is.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use sefy_core::Vault;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};

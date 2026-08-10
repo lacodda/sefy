@@ -374,10 +374,12 @@ fn attachment_bytes_are_not_searched() {
         ))
         .unwrap();
 
-    assert!(vault
-        .search(&Query::all().text("needle"))
-        .unwrap()
-        .is_empty());
+    assert!(
+        vault
+            .search(&Query::all().text("needle"))
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(vault.search(&Query::all().text("blob")).unwrap().len(), 1);
 }
 

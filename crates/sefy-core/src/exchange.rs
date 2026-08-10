@@ -23,8 +23,8 @@
 use crate::error::{Error, Result};
 use crate::model::{Credential, ItemKind, NewItem, Payload};
 use crate::vault::Vault;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 
 /// Version of the exchange format written by this build.

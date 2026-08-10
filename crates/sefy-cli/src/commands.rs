@@ -3,7 +3,7 @@
 use crate::cli::{AddKind, EditArgs, Field, FindArgs, GetArgs, ListArgs};
 use crate::output;
 use crate::session;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use sefy_core::{Credential, NewItem, Payload, Query, Vault};
 use std::io::Read;
 use std::path::{Path, PathBuf};

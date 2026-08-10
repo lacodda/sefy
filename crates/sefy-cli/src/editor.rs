@@ -7,7 +7,7 @@
 //! sefy's reach. The alternative — a home-grown text editor inside the CLI —
 //! would be worse in every way that matters.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::process::Command;

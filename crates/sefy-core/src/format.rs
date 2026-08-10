@@ -126,8 +126,10 @@ mod tests {
     fn plaintext_database_bytes_are_not_visible_in_the_file() {
         let database = b"SQLite format 3\0this must never appear in the open";
         let file = encode(b"pw", database).unwrap();
-        assert!(!file
-            .windows(database.len())
-            .any(|window| window == database.as_slice()));
+        assert!(
+            !file
+                .windows(database.len())
+                .any(|window| window == database.as_slice())
+        );
     }
 }
