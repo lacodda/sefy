@@ -3,7 +3,7 @@ members = ["crates/sefy-core", "crates/sefy-cli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
@@ -13,7 +13,7 @@ documentation = "https://lacodda.github.io/sefy/"
 authors = ["Kirill Lakhtachev <lahtachev@gmail.com>"]
 
 [workspace.dependencies]
-sefy-core = { path = "crates/sefy-core", version = "0.1.0" }
+sefy-core = { path = "crates/sefy-core", version = "0.1.1" }
 
 argon2 = "0.5"
 base64 = "0.23"
