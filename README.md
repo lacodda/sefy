@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="https://crates.io/crates/sefy"><img src="https://img.shields.io/crates/v/sefy?style=flat-square" alt="crates.io"></a>
-  <a href="https://www.npmjs.com/package/sefy"><img src="https://img.shields.io/npm/v/sefy?style=flat-square" alt="npm"></a>
+  <a href="https://www.npmjs.com/package/sefy-cli"><img src="https://img.shields.io/npm/v/sefy-cli?style=flat-square" alt="npm"></a>
   <a href="https://github.com/lacodda/sefy/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/lacodda/sefy/ci.yml?branch=main&style=flat-square" alt="CI"></a>
   <a href="https://github.com/lacodda/sefy/blob/main/LICENSE"><img src="https://img.shields.io/crates/l/sefy?style=flat-square" alt="MIT"></a>
 </p>
@@ -139,7 +139,7 @@ Details and rationale: [ADR-0001](https://github.com/lacodda/sefy/blob/main/docs
 
 **cargo** - `cargo install sefy`
 
-**npm** - `npm install -g sefy`
+**npm** - `npm install -g sefy-cli`
 
 **Binary releases** - grab the archive for your platform from [Releases](https://github.com/lacodda/sefy/releases/latest)
 (Windows x86_64, Linux x86_64, macOS arm64), unpack and put `sefy` on your

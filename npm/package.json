@@ -1,5 +1,5 @@
 {
-  "name": "sefy",
+  "name": "sefy-cli",
   "version": "0.1.0",
   "sefy": {
     "binary": "v0.1.0"

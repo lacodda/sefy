@@ -13,6 +13,6 @@ function exec() {
 if (fs.existsSync(exePath)) {
   exec();
 } else {
-  console.error("sefy: binary not present yet - downloading it now");
+  console.error("sefy-cli: binary not present yet - downloading it now");
   install(exec);
 }

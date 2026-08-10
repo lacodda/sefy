@@ -6,7 +6,7 @@ description: Install sefy, create a vault and put your first secrets in it.
 ## Install
 
 ```sh
-npm install -g sefy
+npm install -g sefy-cli
 ```
 
 ```sh
