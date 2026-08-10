@@ -1,8 +1,8 @@
 {
   "name": "sefy-cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "sefy": {
-    "binary": "v0.1.1"
+    "binary": "v0.1.2"
   },
   "description": "An inconspicuous encrypted store for notes, credentials and files",
   "license": "MIT",
@@ -16,8 +16,9 @@
   "bin": {
     "sefy": "run.js"
   },
-  "files": ["download.js", "install.js", "run.js"],
+  "files": ["download.js", "install.js", "run.js", "README.md"],
   "scripts": {
+    "prepack": "node -e \"require('fs').copyFileSync('../README.md','README.md')\"",
     "postinstall": "node install.js"
   },
   "os": ["win32", "darwin", "linux"],

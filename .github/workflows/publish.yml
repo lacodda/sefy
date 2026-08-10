@@ -75,10 +75,9 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      # One README for all three pages. npm publishes whatever sits next to
-      # package.json, so the root file is copied in here rather than kept as a
-      # second copy in the repo, where it would drift from the original.
-      - name: Use the root README for the npm page
-        run: cp README.md npm/README.md
+      # One README for all three pages: npm/package.json has a prepack script
+      # that copies the root file in. Doing it there rather than as a step here
+      # means a hand-run `npm publish` cannot forget it - which is exactly how
+      # 0.1.1 reached npm with no README and a blank page.
       - run: npm publish
         working-directory: npm
