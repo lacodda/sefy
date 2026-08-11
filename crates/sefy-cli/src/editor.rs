@@ -90,11 +90,11 @@ fn spawn(editor: &str, path: &Path) -> Result<std::process::ExitStatus> {
 /// old bytes are gone, and it is not meant to: it is a cheap way to avoid
 /// leaving an obvious plaintext file behind, not a secure-erase claim.
 fn shred(path: &Path) {
-    if let Ok(metadata) = std::fs::metadata(path) {
-        if let Ok(mut file) = std::fs::File::create(path) {
-            let _ = file.write_all(&vec![0u8; metadata.len() as usize]);
-            let _ = file.sync_all();
-        }
+    if let Ok(metadata) = std::fs::metadata(path)
+        && let Ok(mut file) = std::fs::File::create(path)
+    {
+        let _ = file.write_all(&vec![0u8; metadata.len() as usize]);
+        let _ = file.sync_all();
     }
     let _ = std::fs::remove_file(path);
 }
