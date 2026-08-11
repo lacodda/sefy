@@ -137,6 +137,18 @@ Details and rationale: [ADR-0001](https://github.com/lacodda/sefy/blob/main/docs
 
 ## Install
 
+**One-line installers.** Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/lacodda/sefy/main/tools/install.ps1 | iex
+```
+
+macOS / Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lacodda/sefy/main/tools/install.sh | sh
+```
+
 **cargo** - `cargo install sefy`
 
 **npm** - `npm install -g sefy-cli`
@@ -144,6 +156,9 @@ Details and rationale: [ADR-0001](https://github.com/lacodda/sefy/blob/main/docs
 **Binary releases** - grab the archive for your platform from [Releases](https://github.com/lacodda/sefy/releases/latest)
 (Windows x86_64, Linux x86_64, macOS arm64), unpack and put `sefy` on your
 `PATH`.
+
+Both installers take the newest release by default; set `SEFY_VERSION` to a tag
+to pin one, and `SEFY_INSTALL_DIR` to choose where the binary lands.
 
 Shell completions: `sefy completions bash` (also `zsh`, `fish`, `powershell`,
 `elvish`).
