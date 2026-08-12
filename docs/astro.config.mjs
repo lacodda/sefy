@@ -25,10 +25,12 @@ export default defineConfig({
 			editLink: {
 				baseUrl: 'https://github.com/lacodda/sefy/edit/main/docs/',
 			},
-			// No Guides section yet: an empty group in the sidebar is worse than
-			// none. It comes back when there is a guide to put in it.
 			sidebar: [
 				{ label: 'Getting Started', slug: 'getting-started' },
+				{
+					label: 'Guides',
+					items: [{ autogenerate: { directory: 'guides' } }],
+				},
 				{
 					label: 'Concepts',
 					items: [{ autogenerate: { directory: 'concepts' } }],

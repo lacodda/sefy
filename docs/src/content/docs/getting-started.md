@@ -129,6 +129,10 @@ refuses to assume "yes" unless you pass `--yes`.
 
 ## Where next
 
+- [Moving a vault between machines](/sefy/guides/moving-a-vault/) — copying it,
+  syncing services, and what to do when two copies drifted apart.
+- [Keeping ssh keys in a vault](/sefy/guides/ssh-keys/) — keys and passphrases
+  together, and putting them back on a new machine.
 - [Commands](/sefy/reference/commands/) — every command and flag.
 - [How the vault works](/sefy/concepts/vault-format/) — the file format and the
   cryptography behind it.
