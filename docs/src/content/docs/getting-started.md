@@ -45,7 +45,7 @@ no extension sefy expects and none it writes.
 
 ```console
 $ sefy init
-Master password:
+New master password:
 Repeat it:
 created /home/you/backups/notes.bak
 ```
@@ -133,7 +133,7 @@ refuses to assume "yes" unless you pass `--yes`.
   syncing services, and what to do when two copies drifted apart.
 - [Keeping ssh keys in a vault](/sefy/guides/ssh-keys/) — keys and passphrases
   together, and putting them back on a new machine.
-- [Commands](/sefy/reference/commands/) — every command and flag.
+- [Commands](/sefy/reference/commands/) — every command, one page each.
 - [How the vault works](/sefy/concepts/vault-format/) — the file format and the
   cryptography behind it.
 - [Threat model](/sefy/concepts/threat-model/) — what sefy protects against,
