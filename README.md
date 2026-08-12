@@ -106,6 +106,21 @@ error: 2 items match "ma":
 narrow the text, or use an id
 ```
 
+Two machines, two copies, both edited? Fold one into the other. Where they
+disagree about the same item, sefy keeps both versions rather than letting a
+timestamp decide which password you get to keep:
+
+```
+$ sefy merge ~/from-laptop.bak
+Password for /home/you/from-laptop.bak:
+merged: 1 added, 1 updated, 1 unchanged
+
+1 item changed on both sides and could not be resolved here.
+This vault's version was kept; the incoming one is beside it:
+  "mail" → also kept as "mail (conflicted copy)"
+Compare them, keep the right one, and remove the other.
+```
+
 A vault is never a trap. `sefy export` writes everything back out as plain
 JSON - which is exactly as sensitive as the vault and protects nothing, so the
 command makes you say so out loud:
@@ -169,6 +184,11 @@ The **vault file format is stable at version 1**. Files written by this release
 will stay readable: any future change to the format arrives as version 2, able
 to read version 1 and migrate it. The Argon2 parameters are part of that
 promise, not a tuning knob.
+
+The database inside the ciphertext is versioned separately, and it does move:
+0.2.0 added an identity to items so two copies of a vault can be merged. A vault
+from 0.1.x opens, is migrated on the way in, and is still readable by 0.1.x
+afterwards - the file on disk did not change shape.
 
 Released versions and what landed in each: [CHANGELOG on the Releases page](https://github.com/lacodda/sefy/releases).
 
