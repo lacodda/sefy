@@ -77,5 +77,20 @@ The format is **stable at version 1**. Files written by sefy 0.1.0 will stay
 readable: any future change arrives as version 2, able to read version 1 and
 migrate it. The Argon2 parameters are part of that promise.
 
+### The database inside is versioned separately
+
+The envelope above and the SQLite schema under it move independently. sefy 0.2.0
+added a `uuid` column to items — an identity that survives leaving the vault, so
+two copies can be [merged](/sefy/reference/merge/) — and that was a **schema**
+change, not a format one.
+
+The difference is what a user notices. A vault written by 0.1.x opens in 0.2.0,
+is migrated in memory on the way in, and is still readable by 0.1.x afterwards:
+the older build simply ignores a column it does not know about. Nothing about
+the file on disk changed shape.
+
+A schema version therefore lives inside the ciphertext next to the format
+version, where neither is a signature.
+
 Full rationale, including the alternatives that were rejected:
 [ADR-0001](https://github.com/lacodda/sefy/blob/main/docs/adr/0001-vault-file-format-and-cryptography.md).

@@ -51,18 +51,21 @@ fn configure(connection: &Connection) -> Result<()> {
 
 fn migrate(connection: &Connection) -> Result<()> {
     let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version >= SCHEMA_VERSION {
-        return Ok(());
-    }
 
-    // Steps run in order and each is idempotent, so a vault written by any
-    // earlier version arrives at the current schema by the same path.
-    migrate_to_v1(connection)?;
-    if version < 2 {
+    if version < SCHEMA_VERSION {
+        // Steps run in order and each is idempotent, so a vault written by any
+        // earlier version arrives at the current schema by the same path.
+        migrate_to_v1(connection)?;
         migrate_to_v2(connection)?;
+        connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
 
-    connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    // Unconditional, even at the current version: a migrated vault stays
+    // readable *and writable* by 0.1.x, which knows nothing about uuids and
+    // leaves the column NULL. So an up-to-date `user_version` does not prove
+    // every row carries an identity — only that this database passed through
+    // here once.
+    assign_missing_uuids(connection)?;
     Ok(())
 }
 
@@ -79,21 +82,32 @@ fn migrate_to_v2(connection: &Connection) -> Result<()> {
         connection.execute_batch("ALTER TABLE items ADD COLUMN uuid TEXT")?;
     }
 
-    // Items from a 0.1.x vault have no uuid yet; they get one now, once.
+    assign_missing_uuids(connection)?;
+
+    // Unique rather than merely indexed: two items sharing an identity would
+    // make a merge ambiguous, and there is no sane way to guess which is which.
+    // NULLs are exempt in SQLite, which is why the pass above runs first.
+    connection.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_uuid ON items(uuid)")?;
+    Ok(())
+}
+
+/// Gives an identity to every item that lacks one.
+///
+/// Two ways a row gets here: it predates the column, or an older build inserted
+/// it after this vault was already migrated. Both are answered the same way,
+/// and both only ever happen once per row.
+fn assign_missing_uuids(connection: &Connection) -> Result<()> {
     let missing: Vec<i64> = connection
         .prepare("SELECT id FROM items WHERE uuid IS NULL OR uuid = ''")?
         .query_map([], |row| row.get(0))?
         .collect::<std::result::Result<_, _>>()?;
+
     for id in missing {
         connection.execute(
             "UPDATE items SET uuid = ?1 WHERE id = ?2",
             params![new_uuid()?, id],
         )?;
     }
-
-    // Unique rather than merely indexed: two items sharing an identity would
-    // make a merge ambiguous, and there is no sane way to guess which is which.
-    connection.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_uuid ON items(uuid)")?;
     Ok(())
 }
 

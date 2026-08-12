@@ -79,6 +79,17 @@ identical — and guessing wrong would destroy a secret silently.
 So removals do not propagate. Remove an item in both places, or accept that a
 merge will bring it back from a copy that still has it.
 
+## Items older than identities
+
+Identities arrived in sefy 0.2.0. An item created by 0.1.x is given one the
+first time this build opens the vault — and if two copies of that vault were
+each opened separately, each gave it a *different* identity.
+
+There is no way around it: the copies genuinely carry no common mark from
+before. Merging them treats such an item as two, and you remove the one you do
+not want. It only affects items that predate 0.2.0 in vaults that had already
+drifted; anything created since travels correctly.
+
 ## Why this exists
 
 Nothing in a vault file can warn you that two copies drifted: the format carries

@@ -965,3 +965,52 @@ fn two_vaults_that_never_met_merge_without_collisions() {
     assert!(report.conflicts.is_empty());
     assert_eq!(vault.list().unwrap().len(), 2);
 }
+
+#[test]
+fn an_item_inserted_by_an_older_build_is_given_an_identity() {
+    // A migrated vault stays readable — and writable — by 0.1.x, which knows
+    // nothing about uuids and leaves the column NULL. Finding `user_version`
+    // already current is therefore no proof that every row has an identity.
+    let fixture = fixture();
+    write_legacy_vault(&fixture.path, PASSWORD);
+
+    // Migrate it, as opening with this build does.
+    let vault = Vault::open(&fixture.path, PASSWORD).unwrap();
+    vault.save().unwrap();
+
+    // Now do what the older build does: insert without a uuid, leaving
+    // user_version at 2.
+    let sealed = fs::read(&fixture.path).unwrap();
+    let database = sefy_core::format::decode(PASSWORD, &sealed).unwrap();
+    let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+    connection
+        .deserialize_read_exact(
+            rusqlite::MAIN_DB,
+            std::io::Cursor::new(&database[..]),
+            database.len(),
+            false,
+        )
+        .unwrap();
+    connection
+        .execute_batch(
+            "INSERT INTO items (title, kind, created_at, updated_at)
+                 VALUES ('added by 0.1.x', 'note', 200, 200);
+             INSERT INTO notes (item_id, text)
+                 VALUES (last_insert_rowid(), 'no uuid on this one');",
+        )
+        .unwrap();
+    let bytes = connection.serialize(rusqlite::MAIN_DB).unwrap().to_vec();
+    fs::write(
+        &fixture.path,
+        sefy_core::format::encode(PASSWORD, &bytes).unwrap(),
+    )
+    .unwrap();
+
+    // Reading it must work, and the newcomer must come out with an identity.
+    let reopened = Vault::open(&fixture.path, PASSWORD).unwrap();
+    let items = reopened.list().unwrap();
+    assert_eq!(items.len(), 2);
+    for item in items {
+        assert_eq!(item.uuid.len(), 36, "{:?} has no identity", item.title);
+    }
+}
