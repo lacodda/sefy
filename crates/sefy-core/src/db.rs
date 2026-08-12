@@ -12,8 +12,9 @@ use std::io::Cursor;
 /// Schema version of the database inside the blob.
 ///
 /// Distinct from the file format version: the envelope can stay the same while
-/// the tables under it grow.
-const SCHEMA_VERSION: i64 = 1;
+/// the tables under it grow. Version 2 added `items.uuid`, which is why a vault
+/// written by 0.1.x still opens — it is migrated on load, not rejected.
+const SCHEMA_VERSION: i64 = 2;
 
 /// Opens an empty in-memory database with the current schema.
 pub fn create() -> Result<Connection> {
@@ -54,6 +55,67 @@ fn migrate(connection: &Connection) -> Result<()> {
         return Ok(());
     }
 
+    // Steps run in order and each is idempotent, so a vault written by any
+    // earlier version arrives at the current schema by the same path.
+    migrate_to_v1(connection)?;
+    if version < 2 {
+        migrate_to_v2(connection)?;
+    }
+
+    connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    Ok(())
+}
+
+/// Adds `items.uuid`: an identity that survives leaving this vault.
+///
+/// Row ids cannot serve: they are per-vault autoincrements, so the same item
+/// carries different ids on two machines while unrelated items collide. Merging
+/// and re-importing both need to recognise an item, which is what this is for.
+fn migrate_to_v2(connection: &Connection) -> Result<()> {
+    let already_there = connection
+        .prepare("SELECT 1 FROM pragma_table_info('items') WHERE name = 'uuid'")?
+        .exists([])?;
+    if !already_there {
+        connection.execute_batch("ALTER TABLE items ADD COLUMN uuid TEXT")?;
+    }
+
+    // Items from a 0.1.x vault have no uuid yet; they get one now, once.
+    let missing: Vec<i64> = connection
+        .prepare("SELECT id FROM items WHERE uuid IS NULL OR uuid = ''")?
+        .query_map([], |row| row.get(0))?
+        .collect::<std::result::Result<_, _>>()?;
+    for id in missing {
+        connection.execute(
+            "UPDATE items SET uuid = ?1 WHERE id = ?2",
+            params![new_uuid()?, id],
+        )?;
+    }
+
+    // Unique rather than merely indexed: two items sharing an identity would
+    // make a merge ambiguous, and there is no sane way to guess which is which.
+    connection.execute_batch("CREATE UNIQUE INDEX IF NOT EXISTS idx_items_uuid ON items(uuid)")?;
+    Ok(())
+}
+
+/// A random UUID (version 4), rendered in the usual hyphenated form.
+pub fn new_uuid() -> Result<String> {
+    let mut bytes = crate::crypto::random_bytes::<16>()?;
+    // Version 4, variant 1 — the bits that say "this was made from randomness".
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    ))
+}
+
+fn migrate_to_v1(connection: &Connection) -> Result<()> {
     connection.execute_batch(
         "CREATE TABLE IF NOT EXISTS items (
              id         INTEGER PRIMARY KEY,
@@ -98,18 +160,32 @@ fn migrate(connection: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS idx_items_title ON items(title);
          CREATE INDEX IF NOT EXISTS idx_item_tags_tag ON item_tags(tag_id);",
     )?;
-    connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     Ok(())
 }
 
 /// Inserts an item and returns its identifier.
 pub fn insert_item(connection: &mut Connection, item: NewItem, now: i64) -> Result<i64> {
+    insert_item_with_uuid(connection, item, &new_uuid()?, now, now)
+}
+
+/// Inserts an item under an identity and timestamps decided by the caller.
+///
+/// Merging and importing need this: an item arriving from another vault keeps
+/// the identity and the history it already had, or the two copies would stop
+/// being the same item the moment they travelled.
+pub fn insert_item_with_uuid(
+    connection: &mut Connection,
+    item: NewItem,
+    uuid: &str,
+    created_at: i64,
+    updated_at: i64,
+) -> Result<i64> {
     let transaction = connection.transaction()?;
     let kind = item.payload.kind();
 
     transaction.execute(
-        "INSERT INTO items (title, kind, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
-        params![item.title, kind.as_str(), now],
+        "INSERT INTO items (uuid, title, kind, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![uuid, item.title, kind.as_str(), created_at, updated_at],
     )?;
     let id = transaction.last_insert_rowid();
 
@@ -118,6 +194,17 @@ pub fn insert_item(connection: &mut Connection, item: NewItem, now: i64) -> Resu
 
     transaction.commit()?;
     Ok(id)
+}
+
+/// Finds the item carrying this identity, if the vault holds one.
+pub fn find_by_uuid(connection: &Connection, uuid: &str) -> Result<Option<i64>> {
+    Ok(connection
+        .query_row(
+            "SELECT id FROM items WHERE uuid = ?1",
+            params![uuid],
+            |row| row.get(0),
+        )
+        .optional()?)
 }
 
 fn insert_payload(connection: &Connection, id: i64, payload: &Payload) -> Result<()> {
@@ -313,23 +400,25 @@ pub fn get_item(connection: &Connection, id: i64) -> Result<Item> {
 pub fn get_summary(connection: &Connection, id: i64) -> Result<ItemSummary> {
     let row = connection
         .query_row(
-            "SELECT id, title, kind, created_at, updated_at FROM items WHERE id = ?1",
+            "SELECT id, uuid, title, kind, created_at, updated_at FROM items WHERE id = ?1",
             params![id],
             |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(3)?,
                     row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
                 ))
             },
         )
         .optional()?;
-    let (id, title, kind, created_at, updated_at) = row.ok_or(Error::ItemNotFound(id))?;
+    let (id, uuid, title, kind, created_at, updated_at) = row.ok_or(Error::ItemNotFound(id))?;
 
     Ok(ItemSummary {
         id,
+        uuid,
         title,
         kind: ItemKind::parse(&kind).ok_or(Error::ItemNotFound(id))?,
         tags: tags_of(connection, id)?,

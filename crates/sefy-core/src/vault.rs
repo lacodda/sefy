@@ -75,6 +75,25 @@ impl Vault {
         db::insert_item(&mut self.connection, item, now())
     }
 
+    /// Adds an item that already has an identity and a history elsewhere.
+    ///
+    /// For contents arriving from another vault, where re-generating either
+    /// would make the same item look like a new one.
+    pub fn add_existing(
+        &mut self,
+        item: NewItem,
+        uuid: &str,
+        created_at: i64,
+        updated_at: i64,
+    ) -> Result<i64> {
+        db::insert_item_with_uuid(&mut self.connection, item, uuid, created_at, updated_at)
+    }
+
+    /// Finds the item carrying this identity, if there is one.
+    pub fn find_by_uuid(&self, uuid: &str) -> Result<Option<i64>> {
+        db::find_by_uuid(&self.connection, uuid)
+    }
+
     /// Reads an item with its payload.
     pub fn get(&self, id: i64) -> Result<Item> {
         db::get_item(&self.connection, id)
@@ -180,7 +199,7 @@ impl std::fmt::Debug for Vault {
 }
 
 /// Seconds since the Unix epoch, or zero on a clock set before it.
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs() as i64)

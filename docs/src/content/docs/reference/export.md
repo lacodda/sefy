@@ -44,10 +44,11 @@ straight into whatever consumes it, so it never reaches disk.
 {
   "sefy_export": 1,
   "items": [
-    { "title": "bank", "kind": "note", "tags": ["money"], "text": "code 4815" },
-    { "title": "mail", "kind": "credential", "login": "someone",
+    { "uuid": "5f2b…", "title": "bank", "kind": "note", "tags": ["money"],
+      "text": "code 4815" },
+    { "uuid": "9c14…", "title": "mail", "kind": "credential", "login": "someone",
       "password": "…", "url": "…", "totp": "…", "notes": "…" },
-    { "title": "key", "kind": "file", "filename": "id_ed25519",
+    { "uuid": "a077…", "title": "key", "kind": "file", "filename": "id_ed25519",
       "bytes_base64": "…" }
   ]
 }
@@ -56,6 +57,11 @@ straight into whatever consumes it, so it never reaches disk.
 Notes need `text`; credentials need `login` and `password`; files need
 `filename` and `bytes_base64`. Everything else is optional. This is a plain
 enough shape to generate from another tool by hand.
+
+`uuid` is the identity the item had in the vault it came from. It is what lets
+[`import`](/sefy/reference/import/) recognise an item it already holds instead
+of duplicating it. Leave it out when writing an export by hand — an entry
+without one is simply added.
 
 ## Related
 

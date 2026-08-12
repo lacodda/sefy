@@ -18,19 +18,28 @@ sefy --vault ./old.bak export --i-know-this-writes-plaintext \
   | sefy --vault ./new.bak import
 ```
 
-## Appended, never merged
+## Already here, left alone
 
-Items are **appended**: importing into a vault that already holds them produces
-duplicates rather than overwriting anything.
+Each entry carries the identity its item had in the vault it came from. An
+entry whose identity is already here is **skipped**, so importing the same
+export twice does not double anything:
 
-Merging would need an identity for items that the format does not carry — two
-credentials called "mail" may well be two different accounts — and silently
-replacing someone's secrets is worse than a visible duplicate you can remove
-with [`rm`](/sefy/reference/rm/).
+```console
+$ sefy import backup.json
+imported 0 items
+3 items already here, left alone
+```
 
-For that reason a repeated full import is a poor way to sync two vaults. Trim
-the export to the items that are actually new first; the format is plain enough
-to edit by hand.
+Skipped means *untouched*, not updated. An export is a snapshot, and it may
+easily be older than what is in the vault now — overwriting a password with one
+from last month is exactly the kind of quiet damage worth refusing. To bring
+newer contents across, use [`merge`](/sefy/reference/merge/), which compares
+both sides and says so when it cannot decide.
+
+Entries **without** an identity are always added. Exports written by sefy 0.1.x
+carry none, and neither does JSON written by hand — there is nothing to
+recognise them by, and matching on titles instead would silently collapse two
+accounts that happen to share a name.
 
 ## All or nothing
 
@@ -41,4 +50,5 @@ or none does.
 ## Related
 
 - [`export`](/sefy/reference/export/) — producing the file, and its format
-- [Moving a vault between machines](/sefy/guides/moving-a-vault/) — merging two copies
+- [`merge`](/sefy/reference/merge/) — folding in another vault, newer contents and all
+- [Moving a vault between machines](/sefy/guides/moving-a-vault/) — how copies drift

@@ -122,6 +122,15 @@ fn truncate(text: &str, width: usize) -> String {
     format!("{kept}…")
 }
 
+/// `n` followed by `noun`, pluralised the lazy English way.
+pub fn count(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("{n} {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
 /// Turns a core error into the message the user should see.
 ///
 /// An ambiguous reference is the interesting case: rather than a bare

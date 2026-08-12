@@ -101,8 +101,13 @@ pub struct Credential {
 /// An item without its payload: enough to list and search, cheap to load.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemSummary {
-    /// Identifier within this vault.
+    /// Identifier within this vault. Assigned by the database, so the same item
+    /// carries different ids in two vaults — use [`ItemSummary::uuid`] to
+    /// recognise it across them.
     pub id: i64,
+    /// Identity that survives leaving this vault: stable across machines,
+    /// exports and imports, and what merging matches on.
+    pub uuid: String,
     /// What the item is called.
     pub title: String,
     /// Kind of payload behind the summary.

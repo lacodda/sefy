@@ -422,8 +422,63 @@ pub fn import(vault: &mut Vault, input: Option<PathBuf>) -> Result<()> {
     };
 
     let export = sefy_core::exchange::from_json(&json)?;
-    let count = sefy_core::exchange::import(vault, &export)?;
-    println!("imported {count} item{}", if count == 1 { "" } else { "s" });
+    let report = sefy_core::exchange::import(vault, &export)?;
+
+    println!("imported {}", output::count(report.added, "item"));
+    if report.skipped > 0 {
+        // Silence here would read as "imported nothing" on a re-import, when
+        // what actually happened is that the vault already had it all.
+        println!(
+            "{} already here, left alone",
+            output::count(report.skipped, "item")
+        );
+    }
+    Ok(())
+}
+
+/// Folds another vault file into this one.
+pub fn merge(vault: &mut Vault, other: &Path, other_password_env: Option<&str>) -> Result<()> {
+    if other == vault.path() {
+        bail!("that is this vault; merging a file into itself would do nothing");
+    }
+
+    // Asked for separately: a copy from another machine may be under a
+    // different password, and assuming otherwise would just fail confusingly.
+    let password = session::secret(
+        &format!("Password for {}: ", other.display()),
+        other_password_env,
+    )?;
+    let source = session::open(other, &password)?;
+
+    let report = sefy_core::merge(vault, &source)?;
+
+    if report.is_empty() {
+        println!("nothing to merge; the two vaults already agree");
+        return Ok(());
+    }
+
+    println!(
+        "merged: {} added, {} updated, {} unchanged",
+        report.added, report.updated, report.unchanged
+    );
+
+    if !report.conflicts.is_empty() {
+        // Loud on purpose: a conflict means two versions of one secret now sit
+        // in the vault, and only the person who made them can say which is
+        // right. Reporting it as a count would bury exactly that.
+        println!(
+            "\n{} changed on both sides and could not be resolved here.",
+            output::count(report.conflicts.len(), "item")
+        );
+        println!("This vault's version was kept; the incoming one is beside it:");
+        for conflict in &report.conflicts {
+            println!(
+                "  {:?} → also kept as {:?}",
+                conflict.title, conflict.kept_as
+            );
+        }
+        println!("Compare them, keep the right one, and remove the other.");
+    }
     Ok(())
 }
 

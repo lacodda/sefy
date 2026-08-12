@@ -28,6 +28,7 @@ one thing to the items inside it.
 
 - [`export`](/sefy/reference/export/) — write the contents out as plain JSON
 - [`import`](/sefy/reference/import/) — add the contents of an export
+- [`merge`](/sefy/reference/merge/) — fold another vault file into this one
 
 ### The vault itself
 

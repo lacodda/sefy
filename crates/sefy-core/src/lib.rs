@@ -42,11 +42,13 @@ pub mod db;
 pub mod error;
 pub mod exchange;
 pub mod format;
+pub mod merge;
 pub mod model;
 pub mod vault;
 
 pub use error::{Error, Result};
-pub use exchange::{EXPORT_VERSION, Export, ExportItem};
+pub use exchange::{EXPORT_VERSION, Export, ExportItem, ImportReport};
 pub use format::FORMAT_VERSION;
+pub use merge::{Conflict, MergeReport, merge};
 pub use model::{Credential, Item, ItemKind, ItemSummary, NewItem, Payload, Query};
 pub use vault::Vault;

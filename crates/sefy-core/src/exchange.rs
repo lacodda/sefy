@@ -43,6 +43,13 @@ pub struct Export {
 /// One item in an export.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExportItem {
+    /// Identity the item carried in the vault it came from.
+    ///
+    /// Optional on the way in: exports written by 0.1.x have none, and one
+    /// hand-written by another tool need not invent one. An import uses it to
+    /// recognise an item it already holds instead of duplicating it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
     /// What the item is called.
     pub title: String,
     /// Which of the fields below carry its payload.
@@ -85,6 +92,7 @@ pub fn export(vault: &Vault) -> Result<Export> {
     for summary in vault.list()? {
         let item = vault.get(summary.id)?;
         let mut exported = ExportItem {
+            uuid: Some(item.summary.uuid),
             title: item.summary.title,
             kind: item.summary.kind.as_str().to_owned(),
             tags: item.summary.tags,
@@ -121,33 +129,65 @@ pub fn export(vault: &Vault) -> Result<Export> {
     })
 }
 
-/// Adds every item of an export to a vault, returning how many arrived.
+/// What an import did, item by item.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ImportReport {
+    /// Items the vault did not hold, now added.
+    pub added: usize,
+    /// Items already present under the same identity, left untouched.
+    pub skipped: usize,
+}
+
+impl ImportReport {
+    /// How many entries the export carried in total.
+    pub fn total(&self) -> usize {
+        self.added + self.skipped
+    }
+}
+
+/// Adds the items of an export to a vault, skipping ones it already holds.
 ///
-/// Items are appended, never matched against what is already there: an import
-/// into a non-empty vault duplicates rather than merges. Merging would need an
-/// identity for items that the format does not have, and silently overwriting
-/// someone's secrets is worse than a visible duplicate.
+/// An entry carrying a `uuid` the vault already has is **skipped**, not merged
+/// and not duplicated: re-importing the same export twice leaves the vault as
+/// it was after the first time. Bringing newer contents across is what
+/// [`crate::merge`] is for — an import is not the place to overwrite a secret,
+/// because the export may well be the older of the two.
+///
+/// Entries without a `uuid` — exports written by 0.1.x, or JSON produced by
+/// another tool — are always added. There is nothing to recognise them by, and
+/// guessing from titles would silently collapse two accounts that share a name.
 ///
 /// The whole export is validated before anything is inserted, so a malformed
 /// entry halfway down the file cannot leave a half-imported vault behind.
-pub fn import(vault: &mut Vault, export: &Export) -> Result<usize> {
+pub fn import(vault: &mut Vault, export: &Export) -> Result<ImportReport> {
     if export.version != EXPORT_VERSION {
         return Err(Error::UnsupportedExport(export.version));
     }
 
-    let prepared: Vec<NewItem> = export
+    let prepared: Vec<(Option<&str>, NewItem)> = export
         .items
         .iter()
         .enumerate()
-        .map(|(index, item)| to_new_item(index, item))
+        .map(|(index, item)| Ok((item.uuid.as_deref(), to_new_item(index, item)?)))
         .collect::<Result<_>>()?;
 
-    let count = prepared.len();
-    for item in prepared {
-        vault.add(item)?;
+    let mut report = ImportReport::default();
+    for (uuid, item) in prepared {
+        match uuid {
+            Some(uuid) if vault.find_by_uuid(uuid)?.is_some() => report.skipped += 1,
+            Some(uuid) => {
+                let now = crate::vault::now();
+                vault.add_existing(item, uuid, now, now)?;
+                report.added += 1;
+            }
+            None => {
+                vault.add(item)?;
+                report.added += 1;
+            }
+        }
     }
     vault.save()?;
-    Ok(count)
+    Ok(report)
 }
 
 /// Turns one exported entry into something the vault will accept.

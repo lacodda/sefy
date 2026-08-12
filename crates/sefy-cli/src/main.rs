@@ -69,6 +69,10 @@ fn run() -> Result<()> {
             force,
         } => commands::export(&vault, output, i_know_this_writes_plaintext, force),
         Command::Import { input } => commands::import(&mut vault, input),
+        Command::Merge {
+            other,
+            other_password_env,
+        } => commands::merge(&mut vault, &other, other_password_env.as_deref()),
         Command::ChangePassword { new_password_env } => {
             commands::change_password(&mut vault, new_password_env.as_deref())
         }

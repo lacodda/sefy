@@ -111,12 +111,35 @@ pub enum Command {
 
     /// Add the contents of an export to this vault.
     ///
-    /// Items are appended, never merged: importing into a vault that already
-    /// holds them produces duplicates rather than overwriting anything.
+    /// An entry the vault already holds under the same identity is skipped, so
+    /// importing the same export twice does not duplicate it. Contents are
+    /// never overwritten: an export may well be older than what is here, and
+    /// bringing newer contents across is what `merge` is for.
     Import {
         /// Export file to read; omit to read from stdin.
         #[arg(value_name = "PATH")]
         input: Option<PathBuf>,
+    },
+
+    /// Fold another vault file into this one.
+    ///
+    /// For two copies that drifted apart: items missing here are copied across,
+    /// newer contents from there replace older ones here, and an item changed
+    /// on both sides is kept twice rather than resolved by guesswork. Nothing
+    /// is ever deleted — "gone from there" and "added here" look identical from
+    /// this side.
+    Merge {
+        /// The other vault file.
+        #[arg(value_name = "FILE")]
+        other: PathBuf,
+
+        /// Read the other vault's password from this environment variable.
+        ///
+        /// Distinct from --password-env: a copy from another machine may well
+        /// be under a different password, and reusing one variable for both
+        /// would make that impossible to express.
+        #[arg(long, value_name = "VAR")]
+        other_password_env: Option<String>,
     },
 
     /// Replace the master password.

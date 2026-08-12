@@ -59,62 +59,73 @@ safe to delete; the next save reuses that name anyway.
 
 ## Two machines, one vault
 
-sefy has **no locking and no merge**. The vault is loaded into memory, changed,
-and written back whole. If two machines both load the vault and both save, the
-second save wins completely and the first machine's change is gone.
+sefy has **no locking**. The vault is loaded into memory, changed, and written
+back whole. If two machines both load the same file and both save, the second
+save wins completely and the first machine's change is gone.
 
-There is no conflict detection to warn you, because there is nothing in the
-clear for a second process to inspect — checking would mean decrypting, and a
-file that announced "vault modified at 14:02" would be carrying exactly the kind
-of metadata this format refuses to write.
+Nothing warns you while it happens, because there is nothing in the clear for a
+second process to inspect — checking would mean decrypting, and a file that
+announced "vault modified at 14:02" would be carrying exactly the kind of
+metadata this format refuses to write.
 
 So the working rule is one machine at a time:
 
 1. Finish what you are doing and let the file sync.
 2. Only then edit it elsewhere.
 
-If that discipline is not realistic for you, keep one vault per machine and move
-individual items across with `export`/`import` as below.
+What that rule protects against is one file being **overwritten** by the other —
+and that is the one loss nothing can undo. If instead you keep a separate vault
+per machine and let them drift on purpose, the two are reconciled afterwards
+with [`merge`](/sefy/reference/merge/), below.
 
 ## Merging two vaults that drifted apart
 
-When both copies changed, put one into the other:
+When both copies changed, fold one into the other:
 
 ```console
-$ sefy --vault ./laptop.bak export --i-know-this-writes-plaintext -o transfer.json
-wrote transfer.json in the clear
-
-$ sefy --vault ./desktop.bak import transfer.json
-imported 1 item
+$ sefy --vault ./desktop.bak merge ./laptop.bak
+Password for ./laptop.bak:
+merged: 1 added, 1 updated, 1 unchanged
 ```
 
-The intermediate file holds **every secret in the clear**. Write it somewhere
-that is not synced or backed up, move it in one step, and delete it as soon as
-the import succeeds. On a shared machine, prefer a pipe so it never reaches
-disk at all:
+Items are matched on the identity each carries, so this is safe to repeat: a
+second merge of the same file reports everything as unchanged rather than
+doubling it. The file being merged from is only read.
+
+Where both sides changed the same item, sefy keeps **both** and says so, rather
+than letting a timestamp decide which password you get to keep:
+
+```console
+1 item changed on both sides and could not be resolved here.
+This vault's version was kept; the incoming one is beside it:
+  "mail" → also kept as "mail (conflicted copy)"
+```
+
+Nothing is deleted by a merge: an item missing from the other copy stays here,
+because "removed there" and "added here" are indistinguishable from this side.
+[`merge`](/sefy/reference/merge/) has the full rules.
+
+Two things it does not do. It has no idea which copy is "the real one" — merge
+runs in whichever vault you point `--vault` at, and only that one changes. And
+it cannot repair a copy you have already overwritten: if a sync service replaced
+one file with the other, what was in it is gone, and this guide's advice about
+one machine at a time is what keeps that from happening.
+
+### The older way, and when it still applies
+
+Before identities existed, moving items between vaults meant export and import
+by hand — and that is still the path for a vault written by sefy 0.1.x, whose
+items carry no identity to match on, or for moving a *subset* of items rather
+than everything:
 
 ```sh
 sefy --vault ./laptop.bak export --i-know-this-writes-plaintext \
   | sefy --vault ./desktop.bak import
 ```
 
-Import **appends and never merges**: items that already exist in the destination
-come out as duplicates rather than overwriting anything. That is deliberate —
-silently replacing a secret you still needed is a worse outcome than a duplicate
-you can see and remove with `sefy rm`.
-
-For that reason a full export/import of a whole vault is a poor way to sync
-repeatedly. Trim `transfer.json` to the items that are actually new before
-importing; the format is plain enough to edit:
-
-```json
-{
-  "sefy_export": 1,
-  "items": [
-    { "title": "bank", "kind": "note", "tags": ["money"], "text": "code 4815" }
-  ]
-}
-```
+Mind what that pipe carries: an export holds **every secret in the clear**.
+Piping keeps it off disk; writing it to a file does not, so delete the file as
+soon as the import succeeds.
 
 ## Backups
 
