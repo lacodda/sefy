@@ -734,10 +734,14 @@ fn plugin_directory(manifest: &str) -> tempfile::TempDir {
     {
         use std::os::unix::fs::PermissionsExt;
         let path = directory.path().join("sefy-plugin-demo");
+        // `printf` is a shell builtin, so this script needs nothing on PATH —
+        // the test below cuts PATH down to this directory alone, and a `cat`
+        // here would make the plugin fail to describe itself for a reason that
+        // has nothing to do with what is being tested.
         std::fs::write(
             &path,
             format!(
-                "#!/bin/sh\nif [ \"$1\" = \"--manifest\" ]; then\n  cat <<'MANIFEST'\n{manifest}\nMANIFEST\nelse\n  echo '{{}}'\nfi\n"
+                "#!/bin/sh\nif [ \"$1\" = \"--manifest\" ]; then\n  printf '%s' '{manifest}'\nelse\n  printf '%s' '{{}}'\nfi\n"
             ),
         )
         .unwrap();
@@ -747,14 +751,16 @@ fn plugin_directory(manifest: &str) -> tempfile::TempDir {
     directory
 }
 
-/// `sefy` with only this directory on its PATH, so the machine's own plugins
-/// cannot make the assertion pass or fail.
+/// `sefy` that can see this directory's plugins and no others.
+///
+/// PATH is cut down to the directory itself so a plugin installed on the
+/// machine running the tests cannot make an assertion pass or fail, and the
+/// per-user data directory is pointed at the same place for the same reason.
 fn sefy_seeing_only(directory: &Path) -> Command {
     let mut command = Command::cargo_bin("sefy").unwrap();
     command
         .env_remove("SEFY_VAULT")
         .env("PATH", directory)
-        // Otherwise the real per-user plugin directory is searched first.
         .env("APPDATA", directory)
         .env("XDG_DATA_HOME", directory)
         .env("HOME", directory);
