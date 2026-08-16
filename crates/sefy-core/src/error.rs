@@ -77,6 +77,32 @@ pub enum Error {
         reason: String,
     },
 
+    /// A plugin was found but sefy will not run it.
+    ///
+    /// Refusing before the call is deliberate: running a transport that cannot
+    /// do what was asked turns a knowable mismatch into a failure the user has
+    /// to interpret from someone else's error message.
+    #[error("plugin {name} cannot be used: {reason}")]
+    PluginUnusable {
+        /// Short name of the plugin.
+        name: String,
+        /// Why it will not be run.
+        reason: String,
+    },
+
+    /// A plugin ran and did not carry out the operation.
+    ///
+    /// The reason comes from the plugin itself and is shown as given; a
+    /// transport's own output is never quoted back verbatim, since it may
+    /// carry credentials for the remote.
+    #[error("plugin {name} failed: {reason}")]
+    PluginFailed {
+        /// Short name of the plugin.
+        name: String,
+        /// What the plugin said went wrong.
+        reason: String,
+    },
+
     /// Key derivation failed (only on absurd parameters or allocation failure).
     #[error("key derivation failed")]
     KeyDerivation,

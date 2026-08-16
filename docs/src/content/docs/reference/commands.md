@@ -3,8 +3,11 @@ title: "Commands"
 description: Every sefy command, and the conventions they all share.
 ---
 
-Every command works on one vault file, asks for one master password, and does
-one thing to the items inside it.
+Every command that touches items works on one vault file, asks for one master
+password, and does one thing to the items inside it.
+[`plugin`](/sefy/reference/plugin/) and
+[`completions`](/sefy/reference/completions/) are the exceptions: they report on
+the installation itself and need neither a vault nor a password.
 
 ## The commands
 
@@ -33,6 +36,7 @@ one thing to the items inside it.
 ### The vault itself
 
 - [`change-password`](/sefy/reference/change-password/) — replace the master password
+- [`plugin`](/sefy/reference/plugin/) — inspect the installed transports
 - [`completions`](/sefy/reference/completions/) — print a shell completion script
 
 ## Choosing the vault

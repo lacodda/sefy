@@ -12,7 +12,7 @@ mod session;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
-use cli::{Cli, Command};
+use cli::{Cli, Command, PluginAction};
 
 fn main() -> std::process::ExitCode {
     match run() {
@@ -30,8 +30,13 @@ fn run() -> Result<()> {
     let arguments = Cli::parse();
     let password_env = arguments.password_env.as_deref();
 
-    // Neither of these needs a vault, so they come before the file is resolved.
+    // None of these needs a vault, so they come before the file is resolved.
     match arguments.command {
+        Command::Plugin { action } => {
+            return match action {
+                PluginAction::List { paths } => commands::plugin_list(paths),
+            };
+        }
         Command::Completions { shell } => {
             let mut command = Cli::command();
             let name = command.get_name().to_owned();
@@ -76,7 +81,7 @@ fn run() -> Result<()> {
         Command::ChangePassword { new_password_env } => {
             commands::change_password(&mut vault, new_password_env.as_deref())
         }
-        // Both are handled above, before the vault is opened.
-        Command::Init | Command::Completions { .. } => unreachable!(),
+        // All three are handled above, before the vault is opened.
+        Command::Init | Command::Plugin { .. } | Command::Completions { .. } => unreachable!(),
     }
 }

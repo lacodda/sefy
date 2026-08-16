@@ -157,3 +157,18 @@ Deleting a vault file removes the ciphertext, not the password's reach: anyone
 holding an older copy and the password can still read what was in it at the
 time. If a machine is being handed on, delete the file *and* change the password
 on the copy you keep, so the two are no longer opened by the same secret.
+
+## Having something else carry it
+
+Everything above is done by hand. A **plugin** does the carrying instead — an
+executable named `sefy-plugin-*` that moves the sealed file to a git remote, an
+FTP server or a cloud drive, without ever seeing what is inside it.
+
+```console
+$ sefy plugin list
+github  0.1.0     pull, push
+```
+
+Moving a vault with one arrives in a later release; `sefy plugin list` is how
+you check what is installed today. See the
+[`plugin` reference](/sefy/reference/plugin/), including how to write one.

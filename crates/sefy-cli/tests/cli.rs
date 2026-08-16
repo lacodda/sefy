@@ -700,6 +700,7 @@ fn completions_and_help_need_no_vault_and_no_password() {
         vec!["--help"],
         vec!["--version"],
         vec!["completions", "bash"],
+        vec!["plugin", "list"],
     ] {
         Command::cargo_bin("sefy")
             .unwrap()
@@ -708,4 +709,101 @@ fn completions_and_help_need_no_vault_and_no_password() {
             .assert()
             .success();
     }
+}
+
+/// Writes a runnable stand-in for a plugin, and returns the directory holding
+/// it — ready to be put on the PATH of a test invocation.
+fn plugin_directory(manifest: &str) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+
+    #[cfg(windows)]
+    {
+        let manifest_path = directory.path().join("manifest.json");
+        std::fs::write(&manifest_path, manifest).unwrap();
+        std::fs::write(
+            directory.path().join("sefy-plugin-demo.cmd"),
+            format!(
+                "@echo off\r\nif \"%1\"==\"--manifest\" (type \"{}\") else (echo {{}})\r\n",
+                manifest_path.display()
+            ),
+        )
+        .unwrap();
+    }
+
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = directory.path().join("sefy-plugin-demo");
+        std::fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"--manifest\" ]; then\n  cat <<'MANIFEST'\n{manifest}\nMANIFEST\nelse\n  echo '{{}}'\nfi\n"
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    directory
+}
+
+/// `sefy` with only this directory on its PATH, so the machine's own plugins
+/// cannot make the assertion pass or fail.
+fn sefy_seeing_only(directory: &Path) -> Command {
+    let mut command = Command::cargo_bin("sefy").unwrap();
+    command
+        .env_remove("SEFY_VAULT")
+        .env("PATH", directory)
+        // Otherwise the real per-user plugin directory is searched first.
+        .env("APPDATA", directory)
+        .env("XDG_DATA_HOME", directory)
+        .env("HOME", directory);
+    command
+}
+
+#[test]
+fn an_installed_plugin_is_listed_with_what_it_can_do() {
+    let directory = plugin_directory(
+        r#"{"protocol_version":1,"name":"demo","version":"1.2.3","operations":["push","pull"]}"#,
+    );
+
+    sefy_seeing_only(directory.path())
+        .args(["plugin", "list"])
+        .assert()
+        .success()
+        .stdout(
+            contains("demo")
+                .and(contains("1.2.3"))
+                .and(contains("push")),
+        );
+}
+
+#[test]
+fn a_plugin_speaking_another_protocol_is_listed_with_the_reason() {
+    let directory = plugin_directory(
+        r#"{"protocol_version":99,"name":"demo","version":"1.2.3","operations":["push"]}"#,
+    );
+
+    sefy_seeing_only(directory.path())
+        .args(["plugin", "list"])
+        .assert()
+        .success()
+        // Present but refused: a line saying nothing would be indistinguishable
+        // from the plugin not being installed at all.
+        .stdout(
+            contains("demo")
+                .and(contains("unusable"))
+                .and(contains("99")),
+        );
+}
+
+#[test]
+fn nothing_installed_says_how_a_plugin_is_installed() {
+    let directory = tempfile::tempdir().unwrap();
+
+    sefy_seeing_only(directory.path())
+        .args(["plugin", "list"])
+        .assert()
+        .success()
+        .stdout(contains("no plugins installed").and(contains("sefy-plugin-")));
 }

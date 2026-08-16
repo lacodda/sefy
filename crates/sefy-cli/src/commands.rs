@@ -490,6 +490,76 @@ pub fn change_password(vault: &mut Vault, password_env: Option<&str>) -> Result<
     Ok(())
 }
 
+/// Lists the transports installed on this machine.
+///
+/// Everything found is shown, usable or not. A plugin that is present but
+/// broken looks exactly like one that was never installed if it is left out —
+/// and the two call for opposite fixes.
+pub fn plugin_list(show_paths: bool) -> Result<()> {
+    let paths = sefy_core::plugin::search_paths();
+    let plugins = sefy_core::plugin::discover_in(&paths);
+
+    if show_paths {
+        println!("looked in:");
+        for path in &paths {
+            println!("  {}", path.display());
+        }
+        println!();
+    }
+
+    if plugins.is_empty() {
+        println!("no plugins installed");
+        println!(
+            "a plugin is an executable named {}<name>, on PATH or in {}",
+            sefy_core::plugin::PREFIX,
+            match sefy_core::plugin::plugin_directory() {
+                Some(directory) => directory.display().to_string(),
+                None => "sefy's data directory".to_owned(),
+            }
+        );
+        return Ok(());
+    }
+
+    let name_width = plugins
+        .iter()
+        .map(|plugin| plugin.name().chars().count())
+        .max()
+        .unwrap_or(4);
+
+    for plugin in &plugins {
+        let version = plugin
+            .manifest
+            .as_ref()
+            .map_or("?", |manifest| manifest.version.as_str());
+
+        let state = if plugin.usable {
+            let mut operations: Vec<&str> = plugin
+                .manifest
+                .iter()
+                .flat_map(|manifest| &manifest.operations)
+                .map(|operation| operation.as_str())
+                .collect();
+            operations.sort_unstable();
+            operations.join(", ")
+        } else {
+            format!(
+                "unusable: {}",
+                plugin.reason.as_deref().unwrap_or("no reason given")
+            )
+        };
+
+        println!(
+            "{:<name_width$}  {:<8}  {}",
+            plugin.name(),
+            version,
+            state,
+            name_width = name_width
+        );
+    }
+
+    Ok(())
+}
+
 /// Reads everything from stdin as text.
 fn read_stdin() -> Result<String> {
     let mut text = String::new();

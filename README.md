@@ -134,6 +134,34 @@ pass --i-know-this-writes-plaintext to go ahead
 
 Full command reference: **[lacodda.github.io/sefy](https://lacodda.github.io/sefy/)**.
 
+## Transports
+
+Carrying a vault to another machine is the job of a **plugin**: any executable
+named `sefy-plugin-*`, found in sefy's data directory or on `PATH`. sefy knows
+nothing about git, FTP or any cloud drive - it asks a plugin what it can do and
+what happened.
+
+```
+$ sefy plugin list
+ftp     0.2.1     push
+future  9.0.0     unusable: it speaks protocol 99 and this build speaks 1
+github  0.1.0     pull, push
+```
+
+A transport is handed the **path of the sealed file** and nothing else - no
+master password, no key, no item. What it carries is what anyone would find on
+your disk: a blob it cannot read. That is also why a plugin cannot merge; it
+fetches the other copy to a file, and `sefy merge` folds the two together where
+both sides can actually be read.
+
+Broken plugins are listed with the reason rather than skipped: an omitted line
+would look exactly like a plugin that was never installed.
+
+The protocol is small enough to implement in a shell script - manifest on
+`--manifest`, one JSON request on stdin for `run`. Writing one:
+[plugin reference](https://lacodda.github.io/sefy/reference/plugin/) ·
+[ADR-0002](https://github.com/lacodda/sefy/blob/main/docs/adr/0002-plugin-protocol.md).
+
 ## How it works
 
 - The master password is stretched into a key with **Argon2id**.

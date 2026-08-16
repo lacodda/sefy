@@ -152,10 +152,27 @@ pub enum Command {
         new_password_env: Option<String>,
     },
 
+    /// Inspect the transports installed on this machine.
+    Plugin {
+        #[command(subcommand)]
+        action: PluginAction,
+    },
+
     /// Print a shell completion script.
     Completions {
         /// Shell to generate for.
         shell: clap_complete::Shell,
+    },
+}
+
+/// What to do with plugins.
+#[derive(Debug, Subcommand)]
+pub enum PluginAction {
+    /// List the plugins sefy can see, and say why any of them is unusable.
+    List {
+        /// Also print where sefy looked.
+        #[arg(long)]
+        paths: bool,
     },
 }
 
