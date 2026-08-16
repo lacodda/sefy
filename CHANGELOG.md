@@ -10,6 +10,11 @@ afterwards. Any change that would break an existing file gets its own
 "Breaking Changes" section here, with the migration path or a plain statement
 that there is none. This paragraph survives regenerating the file.
 
+## [0.3.0] - 2026-08-16
+
+### Features
+- Let transports carry the vault without seeing it
+
 ## [0.2.0] - 2026-08-12
 
 ### Bug Fixes
@@ -20,6 +25,7 @@ that there is none. This paragraph survives regenerating the file.
 ### Documentation
 - Add the Guides section
 - Give every command its own page
+- Changelog and README for v0.2.0
 
 ### Features
 - Add one-line installers for Windows and Unix
