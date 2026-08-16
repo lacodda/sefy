@@ -218,6 +218,11 @@ The database inside the ciphertext is versioned separately, and it does move:
 from 0.1.x opens, is migrated on the way in, and is still readable by 0.1.x
 afterwards - the file on disk did not change shape.
 
+The **plugin protocol is at version 1** as of 0.3.0. Optional fields may be
+added to the manifest without breaking a plugin that predates them; changing
+what an existing field means would arrive as version 2, with both accepted for a
+time.
+
 Released versions and what landed in each: [CHANGELOG on the Releases page](https://github.com/lacodda/sefy/releases).
 
 ## Building
