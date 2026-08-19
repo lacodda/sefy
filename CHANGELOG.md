@@ -10,10 +10,21 @@ afterwards. Any change that would break an existing file gets its own
 "Breaking Changes" section here, with the migration path or a plain statement
 that there is none. This paragraph survives regenerating the file.
 
+## [0.3.1] - 2026-08-19
+
+### Bug Fixes
+- Point Windows shells at the PowerShell installer
+
 ## [0.3.0] - 2026-08-16
+
+### Documentation
+- Changelog and stability note for v0.3.0
 
 ### Features
 - Let transports carry the vault without seeing it
+
+### Testing
+- Make the fixture plugin need nothing on PATH
 
 ## [0.2.0] - 2026-08-12
 
