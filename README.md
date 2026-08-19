@@ -192,6 +192,8 @@ macOS / Linux:
 curl -fsSL https://raw.githubusercontent.com/lacodda/sefy/main/tools/install.sh | sh
 ```
 
+On Windows use the PowerShell line above: `install.sh` carries the macOS and Linux builds only, and run from Git Bash it stops with a pointer back here.
+
 **cargo** - `cargo install sefy`
 
 **npm** - `npm install -g sefy-cli`

@@ -5,9 +5,25 @@ description: Install sefy, create a vault and put your first secrets in it.
 
 ## Install
 
+One line on Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/lacodda/sefy/main/tools/install.ps1 | iex
+```
+
+One line on macOS / Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/lacodda/sefy/main/tools/install.sh | sh
+```
+
+Via npm:
+
 ```sh
 npm install -g sefy-cli
 ```
+
+Via cargo:
 
 ```sh
 cargo install sefy
@@ -16,6 +32,12 @@ cargo install sefy
 Or take a prebuilt archive from [Releases](https://github.com/lacodda/sefy/releases/latest)
 (Windows x86_64, Linux x86_64, macOS arm64), unpack it and put `sefy` on your
 `PATH`.
+
+:::caution[On Windows, use the PowerShell line]
+`install.sh` carries the macOS and Linux builds only. Running it from Git Bash,
+MSYS2 or Cygwin stops with a pointer to `install.ps1` rather than installing
+anything.
+:::
 
 Shell completions:
 
