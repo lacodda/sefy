@@ -814,27 +814,39 @@ fn nothing_installed_says_how_a_plugin_is_installed() {
         .stdout(contains("no plugins installed").and(contains("sefy-plugin-")));
 }
 
-/// Writes a transport whose "remote" is another file on this machine, into a
-/// directory that can be put on a test invocation's PATH.
+/// The directory sefy looks in, given a stand-in for the per-user data
+/// directory. Created on the way, since the fixtures are written into it.
+fn plugins_inside(data: &Path) -> PathBuf {
+    let directory = data.join("sefy").join("plugins");
+    std::fs::create_dir_all(&directory).unwrap();
+    directory
+}
+
+/// Writes a transport whose "remote" is another file on this machine.
+///
+/// The returned directory stands in for the per-user data directory, and the
+/// executable goes into the `sefy/plugins` subdirectory sefy documents — the
+/// same route a real installation takes.
 ///
 /// It reads the path to move from the request on stdin — the same barrier the
 /// core tests rely on, and the reason a fixture told the path some other way
 /// would prove nothing.
 fn transport_directory(remote: &Path) -> tempfile::TempDir {
-    let directory = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let directory = plugins_inside(data.path());
     let manifest =
         r#"{"protocol_version":1,"name":"file","version":"0.1.0","operations":["push","pull"]}"#;
     let remote = remote.display().to_string();
     // Whatever `name` arrives in the request is recorded here, so a test can
     // check what sefy told the transport rather than only what it printed.
-    let seen = directory.path().join("seen-name.txt").display().to_string();
+    let seen = directory.join("seen-name.txt").display().to_string();
 
     #[cfg(windows)]
     {
-        let manifest_path = directory.path().join("manifest.json");
+        let manifest_path = directory.join("manifest.json");
         std::fs::write(&manifest_path, manifest).unwrap();
 
-        let script = directory.path().join("transport.ps1");
+        let script = directory.join("transport.ps1");
         std::fs::write(
             &script,
             format!(
@@ -846,9 +858,9 @@ fn transport_directory(remote: &Path) -> tempfile::TempDir {
         )
         .unwrap();
 
-        // PowerShell by absolute path: these tests cut PATH down to the
-        // transport directory, and a bare `powershell` would fail to start for
-        // a reason that has nothing to do with what is under test.
+        // PowerShell by absolute path: the PATH these tests hand over is
+        // trimmed, and a bare `powershell` failing to start would surface as
+        // "the plugin failed" — pointing at sefy rather than the fixture.
         let shell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
             .join("System32")
             .join("WindowsPowerShell")
@@ -856,7 +868,7 @@ fn transport_directory(remote: &Path) -> tempfile::TempDir {
             .join("powershell.exe");
 
         std::fs::write(
-            directory.path().join("sefy-plugin-file.cmd"),
+            directory.join("sefy-plugin-file.cmd"),
             format!(
                 "@echo off\r\n\
                  if \"%1\"==\"--manifest\" (type \"{manifest}\" & exit /b 0)\r\n\
@@ -872,7 +884,7 @@ fn transport_directory(remote: &Path) -> tempfile::TempDir {
     #[cfg(not(windows))]
     {
         use std::os::unix::fs::PermissionsExt;
-        let path = directory.path().join("sefy-plugin-file");
+        let path = directory.join("sefy-plugin-file");
         std::fs::write(
             &path,
             format!(
@@ -895,12 +907,12 @@ esac
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    directory
+    data
 }
 
 /// The `name` the transport was handed on its last call.
-fn name_the_transport_saw(transports: &Path) -> String {
-    std::fs::read_to_string(transports.join("seen-name.txt"))
+fn name_the_transport_saw(data: &Path) -> String {
+    std::fs::read_to_string(plugins_inside(data).join("seen-name.txt"))
         .expect("the transport must have been called")
         .trim()
         .to_owned()
@@ -908,7 +920,8 @@ fn name_the_transport_saw(transports: &Path) -> String {
 
 /// A second transport, so a test can ask what happens when the choice is not
 /// obvious. It describes itself and does nothing else.
-fn second_transport(directory: &Path) {
+fn second_transport(data: &Path) {
+    let directory = plugins_inside(data);
     let manifest =
         r#"{"protocol_version":1,"name":"other","version":"0.1.0","operations":["push","pull"]}"#;
 
@@ -942,16 +955,40 @@ fn second_transport(directory: &Path) {
 }
 
 /// `sefy` pointed at this vault *and* able to see only these transports.
+///
+/// The transports are found through the data directory rather than by cutting
+/// `PATH` down to their own: these fixtures are shell scripts, and a `PATH`
+/// holding nothing else leaves them without `cp` or `sed` — which fails as
+/// "the plugin failed", pointing at sefy rather than at the fixture.
+/// `PATH` keeps the system directories and loses the user ones, so a transport
+/// actually installed on the machine running the tests still cannot answer.
 fn sefy_with_transport(fixture: &Fixture, transports: &Path) -> Command {
     let mut command = fixture.sefy();
     command
-        .env("PATH", transports)
+        .env("PATH", system_path())
         .env("APPDATA", transports)
         .env("XDG_DATA_HOME", transports)
         .env("HOME", transports)
         .env_remove("SEFY_TRANSPORT")
         .env_remove("SEFY_REMOTE_NAME");
     command
+}
+
+/// The directories a plain shell needs, and nothing a plugin could be installed
+/// into by hand.
+fn system_path() -> std::ffi::OsString {
+    #[cfg(windows)]
+    {
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        std::ffi::OsString::from(format!(
+            r"{root}\System32;{root};{root}\System32\WindowsPowerShell\v1.0"
+        ))
+    }
+
+    #[cfg(not(windows))]
+    {
+        std::ffi::OsString::from("/usr/bin:/bin:/usr/sbin:/sbin")
+    }
 }
 
 #[test]
