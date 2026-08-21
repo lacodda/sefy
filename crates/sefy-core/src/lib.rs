@@ -45,6 +45,7 @@ pub mod format;
 pub mod merge;
 pub mod model;
 pub mod plugin;
+pub mod sync;
 pub mod vault;
 
 pub use error::{Error, Result};
@@ -53,4 +54,5 @@ pub use format::FORMAT_VERSION;
 pub use merge::{Conflict, MergeReport, merge};
 pub use model::{Credential, Item, ItemKind, ItemSummary, NewItem, Payload, Query};
 pub use plugin::{PROTOCOL_VERSION, Plugin};
+pub use sync::{PullReport, SyncReport, pull, push, sync};
 pub use vault::Vault;
