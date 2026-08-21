@@ -817,7 +817,16 @@ fn nothing_installed_says_how_a_plugin_is_installed() {
 /// The directory sefy looks in, given a stand-in for the per-user data
 /// directory. Created on the way, since the fixtures are written into it.
 fn plugins_inside(data: &Path) -> PathBuf {
-    let directory = data.join("sefy").join("plugins");
+    // The same resolution sefy does, so the fixture is found the way a real
+    // transport is. Not a shared helper with the library: a test that asked the
+    // code under test where to put the fixture would agree with it even when
+    // both are wrong.
+    #[cfg(target_os = "macos")]
+    let base = data.join("Library").join("Application Support");
+    #[cfg(not(target_os = "macos"))]
+    let base = data.to_path_buf();
+
+    let directory = base.join("sefy").join("plugins");
     std::fs::create_dir_all(&directory).unwrap();
     directory
 }
@@ -1193,4 +1202,22 @@ fn a_pull_under_a_different_remote_password_is_asked_for_separately() {
         .assert()
         .success()
         .stdout(contains("1 added"));
+}
+
+#[test]
+fn the_fixture_transport_is_where_sefy_looks_for_one() {
+    // A guard for the tests below rather than for the product: when the fixture
+    // lands somewhere sefy does not search, every transport test fails with
+    // "no usable transport installed" — which reads as a bug in the selection
+    // code rather than a fixture in the wrong directory. macOS resolves the
+    // data directory through ~/Library/Application Support, and getting that
+    // wrong is exactly how this was discovered.
+    let fixture = Fixture::with_vault();
+    let transports = transport_directory(&fixture.directory().join("remote.bin"));
+
+    sefy_with_transport(&fixture, transports.path())
+        .args(["plugin", "list"])
+        .assert()
+        .success()
+        .stdout(contains("file").and(contains("pull")).and(contains("push")));
 }
