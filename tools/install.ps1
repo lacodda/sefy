@@ -22,7 +22,7 @@ if (-not $tag) {
     }
 }
 if (-not $tag -or $tag -notmatch '^v\d') {
-    throw "Cannot resolve the latest release of $repo - set `$env:SEFY_VERSION to a tag like v0.2.0"
+    throw "Cannot resolve the latest release of $repo - set `$env:SEFY_VERSION to a tag like v0.4.0"
 }
 
 $name = "sefy-$tag-x86_64-pc-windows-msvc"
@@ -39,6 +39,19 @@ try {
     if (-not $binary) { throw "The archive did not contain sefy.exe" }
     New-Item -ItemType Directory -Force $dir | Out-Null
     Copy-Item $binary.FullName $dir -Force
+
+    # Transports go where sefy looks for them, which is its data directory -
+    # not beside the binary, and not beside the vault, where a plugins folder
+    # would annotate a file that gives nothing away.
+    $plugins = Get-ChildItem -Path $tmp -Filter "sefy-plugin-*.exe" -Recurse
+    if ($plugins) {
+        $pluginDir = Join-Path $env:APPDATA "sefy\plugins"
+        New-Item -ItemType Directory -Force $pluginDir | Out-Null
+        foreach ($plugin in $plugins) {
+            Copy-Item $plugin.FullName $pluginDir -Force
+            Write-Host "Installed $($plugin.Name) to $pluginDir"
+        }
+    }
 } finally {
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }

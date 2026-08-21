@@ -7,9 +7,13 @@ A **plugin** is a transport: it moves your vault file between this machine and
 somewhere else — a git remote, an FTP server, a cloud drive. sefy itself knows
 nothing about any of them.
 
-`sefy plugin` reports on the transports installed here. Moving a vault with one
-arrives in a later release; this command is how you check that a plugin is
-installed and that sefy is willing to run it.
+`sefy plugin` reports on the transports installed here — what sefy can see, and
+why it will not run anything it refuses. Moving the vault is done by
+[`push`](/sefy/reference/push/), [`pull`](/sefy/reference/pull/) and
+[`sync`](/sefy/reference/sync/).
+
+`sefy-plugin-github` ships alongside the CLI; see
+[Syncing through a transport](/sefy/guides/syncing/) for setting it up.
 
 ## Usage
 
@@ -26,7 +30,7 @@ $ sefy plugin list
 broken  ?         unusable: it refused to describe itself
 ftp     0.2.1     push
 future  9.0.0     unusable: it speaks protocol 99 and this build speaks 1
-github  0.1.0     pull, push
+github  0.4.0     pull, push
 ```
 
 Three columns: the plugin's name, its version, and either the operations it
@@ -82,8 +86,8 @@ shell script, a Python file. It answers two invocations.
 {
   "protocol_version": 1,
   "name": "github",
-  "version": "0.1.0",
-  "description": "Keeps a vault in a private git repository",
+  "version": "0.4.0",
+  "description": "Keeps a vault in a git repository",
   "operations": ["push", "pull"]
 }
 ```

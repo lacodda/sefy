@@ -36,7 +36,7 @@ fi
 case "$TAG" in
     v[0-9]*) ;;
     *)
-        echo "Cannot resolve the latest release of $REPO - set SEFY_VERSION to a tag like v0.2.0" >&2
+        echo "Cannot resolve the latest release of $REPO - set SEFY_VERSION to a tag like v0.4.0" >&2
         exit 1
         ;;
 esac
@@ -57,6 +57,21 @@ BIN=$(find "$TMP" -type f -name sefy -perm -u+x | head -n 1)
 [ -n "$BIN" ] || { echo "The archive did not contain a sefy binary" >&2; exit 1; }
 install -m 755 "$BIN" "$BIN_DIR/sefy"
 echo "Installed sefy $TAG to $BIN_DIR/sefy"
+
+# Transports go where sefy looks for them, not beside the binary: a plugins
+# directory next to the vault would annotate a file that gives nothing away,
+# and one on PATH would be found but is not where sefy documents them.
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
+case "$(uname -s)" in
+    Darwin) DATA_DIR="$HOME/Library/Application Support" ;;
+esac
+PLUGIN_DIR="$DATA_DIR/sefy/plugins"
+
+for PLUGIN in $(find "$TMP" -type f -name 'sefy-plugin-*' -perm -u+x); do
+    mkdir -p "$PLUGIN_DIR"
+    install -m 755 "$PLUGIN" "$PLUGIN_DIR/$(basename "$PLUGIN")"
+    echo "Installed $(basename "$PLUGIN") to $PLUGIN_DIR"
+done
 
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;

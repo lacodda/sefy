@@ -59,6 +59,11 @@ jobs:
         run: cargo publish --package sefy
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+      # The transport depends on neither of the two above, so its order is free.
+      - name: Publish sefy-plugin-github
+        run: cargo publish --package sefy-plugin-github
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   npm:
     runs-on: ubuntu-latest

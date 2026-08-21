@@ -30,15 +30,18 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+      # The transport ships beside the CLI: a release that carries only sefy
+      # would leave `sefy sync` with nothing to call.
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} -p sefy
+        run: cargo build --release --target ${{ matrix.target }} -p sefy -p sefy-plugin-github
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $name = "sefy-${{ github.ref_name }}-${{ matrix.target }}"
           New-Item -ItemType Directory $name | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/sefy.exe", "LICENSE", "README.md" $name
+          $built = "target/${{ matrix.target }}/release"
+          Copy-Item "$built/sefy.exe", "$built/sefy-plugin-github.exe", "LICENSE", "README.md" $name
           Compress-Archive -Path $name -DestinationPath "$name.zip"
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -46,7 +49,9 @@ jobs:
         run: |
           name="sefy-${{ github.ref_name }}-${{ matrix.target }}"
           mkdir "$name"
-          cp "target/${{ matrix.target }}/release/sefy" LICENSE README.md "$name"
+          cp "target/${{ matrix.target }}/release/sefy" \
+             "target/${{ matrix.target }}/release/sefy-plugin-github" \
+             LICENSE README.md "$name"
           tar czf "$name.tar.gz" "$name"
       - uses: actions/upload-artifact@v7
         with:

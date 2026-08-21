@@ -166,7 +166,7 @@ FTP server or a cloud drive, without ever seeing what is inside it.
 
 ```console
 $ sefy plugin list
-github  0.1.0     pull, push
+github  0.4.0     pull, push
 
 $ sefy sync
 Master password:

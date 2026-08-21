@@ -33,6 +33,12 @@ Or take a prebuilt archive from [Releases](https://github.com/lacodda/sefy/relea
 (Windows x86_64, Linux x86_64, macOS arm64), unpack it and put `sefy` on your
 `PATH`.
 
+Both one-line installers also place any transport the archive carries into
+sefy's plugins directory, so [`sefy sync`](/sefy/reference/sync/) has something
+to call. Installing through cargo or npm gets the CLI alone; add the git
+transport with `cargo install sefy-plugin-github` and see
+[Syncing through a transport](/sefy/guides/syncing/).
+
 :::caution[On Windows, use the PowerShell line]
 `install.sh` carries the macOS and Linux builds only. Running it from Git Bash,
 MSYS2 or Cygwin stops with a pointer to `install.ps1` rather than installing

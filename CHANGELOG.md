@@ -10,6 +10,26 @@ afterwards. Any change that would break an existing file gets its own
 "Breaking Changes" section here, with the migration path or a plain statement
 that there is none. This paragraph survives regenerating the file.
 
+## [0.4.0] - 2026-08-21
+
+The vault file format is untouched (still version 1), and so is the plugin
+protocol (still version 1). One behaviour did change: when two copies of an item
+carry the *same* timestamp and differ, the merge now keeps both instead of
+letting the incoming one win. Timestamps are whole seconds, so a tie is ordinary
+rather than exotic once a sync runs shortly after edits on two machines — and
+the previous behaviour discarded one of them silently.
+
+### Bug Fixes
+- Keep both versions when two edits share a timestamp
+
+### Features
+- Move a vault through a transport without opening it to one
+- Push, pull and sync a vault through a transport
+- A transport that keeps the vault in a git repository
+
+### Refactoring
+- One rule for what name addresses a plugin
+
 ## [0.3.1] - 2026-08-19
 
 ### Bug Fixes

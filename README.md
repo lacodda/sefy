@@ -106,9 +106,19 @@ error: 2 items match "ma":
 narrow the text, or use an id
 ```
 
-Two machines, two copies, both edited? Fold one into the other. Where they
-disagree about the same item, sefy keeps both versions rather than letting a
-timestamp decide which password you get to keep:
+Several machines? `sefy sync` carries the vault through a transport and folds
+what comes back into this one:
+
+```
+$ sefy sync
+Master password:
+synced "vault" through github
+merged: 2 added, 0 updated, 14 unchanged
+```
+
+Or fold in a copy you carried across by hand. Either way, where the two disagree
+about the same item, sefy keeps both versions rather than letting a timestamp
+decide which password you get to keep:
 
 ```
 $ sefy merge ~/from-laptop.bak
@@ -141,17 +151,21 @@ named `sefy-plugin-*`, found in sefy's data directory or on `PATH`. sefy knows
 nothing about git, FTP or any cloud drive - it asks a plugin what it can do and
 what happened.
 
+`sefy-plugin-github` ships alongside the CLI and keeps the vault in a git
+repository - point `SEFY_GITHUB_REPO` at one and `sefy sync` does the rest.
+Authentication is whatever git already does on the machine, so no token is
+stored anywhere.
+
 ```
 $ sefy plugin list
-ftp     0.2.1     push
 future  9.0.0     unusable: it speaks protocol 99 and this build speaks 1
-github  0.1.0     pull, push
+github  0.4.0     pull, push
 ```
 
 A transport is handed the **path of the sealed file** and nothing else - no
 master password, no key, no item. What it carries is what anyone would find on
-your disk: a blob it cannot read. That is also why a plugin cannot merge; it
-fetches the other copy to a file, and `sefy merge` folds the two together where
+your disk: a blob it cannot read. That is also why a plugin cannot merge: it
+moves the other copy to a file, and sefy folds the two together itself, where
 both sides can actually be read.
 
 Broken plugins are listed with the reason rather than skipped: an omitted line
@@ -194,7 +208,8 @@ curl -fsSL https://raw.githubusercontent.com/lacodda/sefy/main/tools/install.sh 
 
 On Windows use the PowerShell line above: `install.sh` carries the macOS and Linux builds only, and run from Git Bash it stops with a pointer back here.
 
-**cargo** - `cargo install sefy`
+**cargo** - `cargo install sefy` (and `cargo install sefy-plugin-github` for the
+git transport)
 
 **npm** - `npm install -g sefy-cli`
 
@@ -203,7 +218,9 @@ On Windows use the PowerShell line above: `install.sh` carries the macOS and Lin
 `PATH`.
 
 Both installers take the newest release by default; set `SEFY_VERSION` to a tag
-to pin one, and `SEFY_INSTALL_DIR` to choose where the binary lands.
+to pin one, and `SEFY_INSTALL_DIR` to choose where the binary lands. They also
+place any transport the archive carries into sefy's plugins directory, so
+`sefy plugin list` finds it without a second step.
 
 Shell completions: `sefy completions bash` (also `zsh`, `fish`, `powershell`,
 `elvish`).
@@ -220,10 +237,10 @@ The database inside the ciphertext is versioned separately, and it does move:
 from 0.1.x opens, is migrated on the way in, and is still readable by 0.1.x
 afterwards - the file on disk did not change shape.
 
-The **plugin protocol is at version 1** as of 0.3.0. Optional fields may be
-added to the manifest without breaking a plugin that predates them; changing
-what an existing field means would arrive as version 2, with both accepted for a
-time.
+The **plugin protocol is at version 1** as of 0.3.0, and 0.4.0 put it to work
+without changing it. Optional fields may be added to the manifest without
+breaking a plugin that predates them; changing what an existing field means
+would arrive as version 2, with both accepted for a time.
 
 Released versions and what landed in each: [CHANGELOG on the Releases page](https://github.com/lacodda/sefy/releases).
 

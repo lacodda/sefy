@@ -284,3 +284,116 @@ fn the_documented_vault_format_version_matches_the_code() {
          readable, so this needs a migration path and a Breaking Changes entry"
     );
 }
+
+#[test]
+fn every_binary_the_workspace_builds_reaches_the_release() {
+    // A crate added to the workspace does not add itself to the release
+    // workflow, and nothing fails when it is missing: the tag goes out, the
+    // archive is one file short, and whoever downloads it finds `sefy sync`
+    // with no transport to call.
+    let workflow = read(".github/workflows/release.yml");
+    let members = read("Cargo.toml");
+
+    let binaries: Vec<String> = members
+        .lines()
+        .skip_while(|line| !line.starts_with("members"))
+        .take(1)
+        .flat_map(|line| {
+            line.split('"')
+                .filter(|part| part.starts_with("crates/"))
+                .map(|part| part.trim_start_matches("crates/").to_owned())
+                .collect::<Vec<_>>()
+        })
+        .filter(|name| {
+            // Libraries have nothing to ship in an archive of executables.
+            repo_root()
+                .join("crates")
+                .join(name)
+                .join("src/main.rs")
+                .is_file()
+        })
+        .collect();
+
+    assert!(
+        binaries.len() >= 2,
+        "expected the CLI and at least one transport, found {binaries:?}"
+    );
+
+    for directory in binaries {
+        // Three names that need not agree: the directory, the package cargo
+        // builds, and the executable that lands in the archive.
+        let package = manifest_field(
+            &format!("crates/{directory}/Cargo.toml"),
+            "[package]",
+            "name",
+        );
+        let binary = manifest_field(&format!("crates/{directory}/Cargo.toml"), "[[bin]]", "name");
+        assert!(
+            workflow.contains(&format!("-p {package}")),
+            "release.yml does not build {package}; the release would ship without it"
+        );
+        assert!(
+            workflow.contains(&format!("{binary}.exe")),
+            "release.yml does not package {binary}.exe for Windows"
+        );
+        assert!(
+            workflow.contains(&format!("release/{binary}\"")),
+            "release.yml does not package {binary} for Unix"
+        );
+    }
+}
+
+#[test]
+fn every_crate_that_is_published_is_named_in_the_publish_workflow() {
+    // Same trap on the crates.io side, and just as quiet: the tag publishes
+    // what the workflow lists, not what the workspace holds.
+    let workflow = read(".github/workflows/publish.yml");
+    let members = read("Cargo.toml");
+
+    let crates: Vec<String> = members
+        .lines()
+        .skip_while(|line| !line.starts_with("members"))
+        .take(1)
+        .flat_map(|line| {
+            line.split('"')
+                .filter(|part| part.starts_with("crates/"))
+                .map(|part| part.trim_start_matches("crates/").to_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    for directory in crates {
+        // The crate's published name, which need not match its directory.
+        let name = manifest_field(
+            &format!("crates/{directory}/Cargo.toml"),
+            "[package]",
+            "name",
+        );
+        assert!(
+            workflow.contains(&format!("--package {name}")),
+            "publish.yml never publishes {name}; a release would leave it behind on crates.io"
+        );
+    }
+}
+
+#[test]
+fn the_installers_place_the_transports_the_release_carries() {
+    // The archive gained a transport in 0.4.0; an installer that only unpacks
+    // the CLI leaves it in the temporary directory it deletes on the way out.
+    // The failure is quiet: sefy installs, `sefy sync` says no transport is
+    // installed, and nothing points at the installer as the reason.
+    for (file, marker) in [
+        ("tools/install.sh", "sefy-plugin-*"),
+        ("tools/install.ps1", "sefy-plugin-*.exe"),
+    ] {
+        let text = read(file);
+        assert!(
+            text.contains(marker),
+            "{file} never looks for {marker}, so a transport in the archive is discarded"
+        );
+        assert!(
+            text.contains("plugins"),
+            "{file} does not install anything into sefy's plugins directory"
+        );
+    }
+}
