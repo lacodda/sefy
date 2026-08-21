@@ -10,17 +10,27 @@ afterwards. Any change that would break an existing file gets its own
 "Breaking Changes" section here, with the migration path or a plain statement
 that there is none. This paragraph survives regenerating the file.
 
-## [0.4.0] - 2026-08-21
+## [0.5.0] - 2026-08-21
 
-The vault file format is untouched (still version 1), and so is the plugin
-protocol (still version 1). One behaviour did change: when two copies of an item
-carry the *same* timestamp and differ, the merge now keeps both instead of
-letting the incoming one win. Timestamps are whole seconds, so a tie is ordinary
-rather than exotic once a sync runs shortly after edits on two machines — and
-the previous behaviour discarded one of them silently.
+Nothing about an existing vault changes: the file format is still version 1 and
+the plugin protocol is still version 1. The second transport was written against
+the protocol as it stood and needed no field added to it, which is the evidence
+that it was not shaped around the first one.
+
+### Documentation
+- Note that a new crate's first version goes up by hand
+
+### Features
+- A transport that keeps the vault on a server over SSH
+
+## [0.4.0] - 2026-08-21
 
 ### Bug Fixes
 - Keep both versions when two edits share a timestamp
+- Commit as sefy rather than as whoever is at the keyboard
+
+### Documentation
+- The landing page lists syncing among what sefy does
 
 ### Features
 - Move a vault through a transport without opening it to one
@@ -29,6 +39,10 @@ the previous behaviour discarded one of them silently.
 
 ### Refactoring
 - One rule for what name addresses a plugin
+
+### Testing
+- Find the fixture transport the way a real one is found
+- Put the fixture transport where macOS looks for one
 
 ## [0.3.1] - 2026-08-19
 
