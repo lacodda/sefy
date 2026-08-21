@@ -436,3 +436,64 @@ fn a_changed_vault_of_the_same_length_is_still_published() {
         "what the remote holds must be the second vault, not the first"
     );
 }
+
+#[test]
+fn a_push_works_on_a_machine_with_no_git_identity_configured() {
+    // git refuses to commit without user.name and user.email, and the machine
+    // running this may well have neither — a fresh install, a CI runner. The
+    // transport supplies its own rather than failing the sync with git's "tell
+    // me who you are", which is a puzzling thing to meet when all you asked was
+    // to move a vault.
+    let directory = tempfile::tempdir().unwrap();
+    let remote = remote(directory.path());
+    let vault = directory.path().join("notes.bak");
+    std::fs::write(&vault, b"sealed").unwrap();
+
+    // An empty HOME (and the Windows equivalents) means no global config to
+    // read an identity from, whatever the real machine has set.
+    let empty_home = directory.path().join("no-config");
+    std::fs::create_dir_all(&empty_home).unwrap();
+
+    let mut child = Command::new(plugin_binary())
+        .arg("run")
+        .env("SEFY_GITHUB_REPO", &remote)
+        .env("SEFY_GITHUB_DIR", directory.path().join("machine"))
+        .env("HOME", &empty_home)
+        .env("USERPROFILE", &empty_home)
+        .env("GIT_CONFIG_GLOBAL", empty_home.join("gitconfig"))
+        .env("GIT_CONFIG_SYSTEM", empty_home.join("gitconfig"))
+        .env_remove("GIT_AUTHOR_NAME")
+        .env_remove("GIT_AUTHOR_EMAIL")
+        .env_remove("GIT_COMMITTER_NAME")
+        .env_remove("GIT_COMMITTER_EMAIL")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(request("push", &vault, "vault").as_bytes())
+            .unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "the push must not need an identity: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let fetched = directory.path().join("fetched.bin");
+    let (ok, _, stderr) = run_plugin(
+        &request("pull", &fetched, "vault"),
+        &remote,
+        &directory.path().join("elsewhere"),
+    );
+    assert!(ok, "{stderr}");
+    assert_eq!(std::fs::read(&fetched).unwrap(), b"sealed");
+}

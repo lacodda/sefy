@@ -80,9 +80,11 @@ work-laptop
 
 The contents are the sealed blob — the same headerless file the format
 describes. Anyone with access to the repository sees files of high-entropy bytes
-and a history of commits all saying `update`. The commit message is fixed on
-purpose: a subject naming what changed would annotate the file the format spends
-its effort keeping anonymous.
+and a history of commits all saying `update`, authored by `sefy`. Both are fixed
+on purpose: a subject naming what changed, or your real name and address on
+every commit, would say more about the owner than the blobs do. It also means
+the transport works on a machine where git has no identity configured, instead
+of failing with git's "tell me who you are".
 
 `--name` decides which file this machine writes:
 

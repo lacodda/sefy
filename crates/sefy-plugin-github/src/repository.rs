@@ -12,6 +12,14 @@ use std::path::{Path, PathBuf};
 /// Environment variable naming the repository to use.
 pub const REPOSITORY: &str = "SEFY_GITHUB_REPO";
 
+/// Who the commits are attributed to.
+///
+/// Deliberately not the person running it: every commit in this repository says
+/// "a vault moved", and a real name and address attached to that is the one
+/// piece of identifying information the blobs themselves withhold.
+const AUTHOR_NAME: &str = "sefy";
+const AUTHOR_EMAIL: &str = "sefy@localhost";
+
 /// What went wrong.
 #[derive(Debug)]
 pub enum Error {
@@ -187,9 +195,26 @@ fn push(checkout: &Path, request: &Request) -> Result<String, Error> {
     // A fixed message on purpose: a commit subject naming what changed would
     // annotate an otherwise anonymous file in a history anyone with repository
     // access can read.
+    //
+    // The identity is supplied here rather than taken from the machine's git
+    // configuration, for two reasons. A machine without `user.name` set — a
+    // fresh install, a CI runner — would otherwise fail the push with git's
+    // "tell me who you are", which is a puzzling thing to meet when all you
+    // asked was to sync a vault. And the person's real name and address in the
+    // history of a repository full of anonymous blobs says more about the
+    // owner than the blobs do.
     git::run(
         Some(checkout),
-        &["commit", "--quiet", "-m", "update"],
+        &[
+            "-c",
+            &format!("user.name={AUTHOR_NAME}"),
+            "-c",
+            &format!("user.email={AUTHOR_EMAIL}"),
+            "commit",
+            "--quiet",
+            "-m",
+            "update",
+        ],
         "recording the change",
     )?;
 
