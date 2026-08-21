@@ -80,6 +80,9 @@ content share no prefix, because the salt and nonce are fresh every time.
 	<Card title="Secrets leave one way" icon="rocket">
 		`sefy get` copies to the clipboard and clears it on a timer; `show` prints an item's surroundings but never its secret. Printing is possible, but you have to ask.
 	</Card>
+	<Card title="Several machines, one vault" icon="random">
+		`sefy sync` moves the sealed file through a transport and folds what comes back in - both versions kept when both sides changed, nothing dropped on a timestamp. The transport never sees the password or an item.
+	</Card>
 	<Card title="Never a trap" icon="external">
 		`sefy export` writes everything back out as plain JSON so your data can move to another tool - after making you acknowledge exactly what that file is.
 	</Card>
