@@ -58,7 +58,8 @@ pub fn push(vault: &Vault, plugin: &Plugin, name: &str) -> Result<Report> {
 ///
 /// `remote_password` is separate from the vault's own because the copy on the
 /// other side may well be under a different one — the same reason `merge` asks
-/// for it separately. The vault is saved only when the merge changed something.
+/// for it separately. The merge writes the vault back itself, so a pull that
+/// brought something across is on disk by the time it returns.
 pub fn pull(
     vault: &mut Vault,
     plugin: &Plugin,
@@ -89,13 +90,11 @@ pub fn pull(
     let remote = Vault::open(scratch.path(), remote_password)?;
     let merged = merge(vault, &remote)?;
 
-    // Dropping the remote vault before the local save keeps only one open
-    // database around, and makes the file removable on Windows.
+    // `merge` saves the destination itself, so the vault is already on disk
+    // by this point. Dropping the remote copy here rather than at the end of
+    // the function closes its database before the scratch directory is
+    // removed, which is what Windows requires.
     drop(remote);
-
-    if !merged.is_empty() {
-        vault.save()?;
-    }
 
     Ok(PullReport { transport, merged })
 }

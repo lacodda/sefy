@@ -81,6 +81,9 @@ fn run() -> Result<()> {
         Command::ChangePassword { new_password_env } => {
             commands::change_password(&mut vault, new_password_env.as_deref())
         }
+        Command::Push(args) => commands::push(&vault, args),
+        Command::Pull(args) => commands::pull(&mut vault, args, &password),
+        Command::Sync(args) => commands::sync(&mut vault, args, &password),
         // All three are handled above, before the vault is opened.
         Command::Init | Command::Plugin { .. } | Command::Completions { .. } => unreachable!(),
     }

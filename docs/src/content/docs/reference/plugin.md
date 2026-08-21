@@ -135,5 +135,7 @@ in a log or an issue.
 
 ## Related
 
+- [`push`](/sefy/reference/push/), [`pull`](/sefy/reference/pull/) and
+  [`sync`](/sefy/reference/sync/) — the commands that call a transport
 - [`merge`](/sefy/reference/merge/) — folding a fetched copy into this vault
-- [Moving a vault between machines](/sefy/guides/moving-a-vault/) — doing it by hand today
+- [Moving a vault between machines](/sefy/guides/moving-a-vault/) — doing it by hand

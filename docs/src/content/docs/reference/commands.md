@@ -33,6 +33,12 @@ the installation itself and need neither a vault nor a password.
 - [`import`](/sefy/reference/import/) — add the contents of an export
 - [`merge`](/sefy/reference/merge/) — fold another vault file into this one
 
+### Between machines
+
+- [`push`](/sefy/reference/push/) — send this vault to the remote
+- [`pull`](/sefy/reference/pull/) — fetch the remote copy and fold it in
+- [`sync`](/sefy/reference/sync/) — pull, then push
+
 ### The vault itself
 
 - [`change-password`](/sefy/reference/change-password/) — replace the master password

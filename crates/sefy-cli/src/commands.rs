@@ -1,6 +1,6 @@
 //! What each subcommand does once the vault is open.
 
-use crate::cli::{AddKind, EditArgs, Field, FindArgs, GetArgs, ListArgs};
+use crate::cli::{AddKind, EditArgs, Field, FindArgs, GetArgs, ListArgs, PullArgs, RemoteArgs};
 use crate::output;
 use crate::session;
 use anyhow::{Context, Result, bail};
@@ -452,9 +452,151 @@ pub fn merge(vault: &mut Vault, other: &Path, other_password_env: Option<&str>) 
 
     let report = sefy_core::merge(vault, &source)?;
 
+    report_merge(&report, "nothing to merge; the two vaults already agree");
+    Ok(())
+}
+
+/// Replaces the master password and rewrites the file under it.
+pub fn change_password(vault: &mut Vault, password_env: Option<&str>) -> Result<()> {
+    let password = session::new_password(password_env)?;
+    vault.change_password(password.as_bytes())?;
+    println!("password changed");
+    Ok(())
+}
+
+/// Sends the vault file to the remote.
+pub fn push(vault: &Vault, args: RemoteArgs) -> Result<()> {
+    let plugin = transport(args.transport.as_deref())?;
+    let report = sefy_core::push(vault, &plugin, &args.name)?;
+
+    println!("pushed {:?} through {}", args.name, plugin.name());
+    if let Some(message) = report.message {
+        println!("{message}");
+    }
+    Ok(())
+}
+
+/// Fetches the remote copy and folds it in.
+pub fn pull(vault: &mut Vault, args: PullArgs, master: &str) -> Result<()> {
+    let plugin = transport(args.remote.transport.as_deref())?;
+    let remote_password = remote_password(&args, master)?;
+
+    let report = sefy_core::pull(
+        vault,
+        &plugin,
+        &args.remote.name,
+        remote_password.as_bytes(),
+    )?;
+
+    println!("pulled {:?} through {}", args.remote.name, plugin.name());
+    if let Some(message) = &report.transport.message {
+        println!("{message}");
+    }
+    report_merge(
+        &report.merged,
+        "nothing came back that this vault did not already have",
+    );
+    Ok(())
+}
+
+/// Pulls, then pushes the result back.
+pub fn sync(vault: &mut Vault, args: PullArgs, master: &str) -> Result<()> {
+    let plugin = transport(args.remote.transport.as_deref())?;
+    let remote_password = remote_password(&args, master)?;
+
+    let report = sefy_core::sync(
+        vault,
+        &plugin,
+        &args.remote.name,
+        remote_password.as_bytes(),
+    )?;
+
+    println!("synced {:?} through {}", args.remote.name, plugin.name());
+    for message in [
+        report.pulled.transport.message.as_deref(),
+        report.pushed.message.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        println!("{message}");
+    }
+    report_merge(
+        &report.pulled.merged,
+        "nothing came back that this vault did not already have",
+    );
+    Ok(())
+}
+
+/// The master password of the copy on the other side.
+///
+/// A pull brings back a copy of *this* vault, so the same password is the
+/// ordinary case and the default. Both ways of saying otherwise are honoured.
+fn remote_password(args: &PullArgs, master: &str) -> Result<String> {
+    if let Some(variable) = args.remote_password_env.as_deref() {
+        return session::secret("", Some(variable));
+    }
+    if args.ask_remote_password {
+        return session::secret("Password of the remote copy: ", None);
+    }
+    Ok(master.to_owned())
+}
+
+/// Picks the transport to use.
+///
+/// Named, or the only one installed. Guessing between several would mean
+/// choosing where somebody's vault goes, and a wrong guess there is not a
+/// mistake that announces itself.
+fn transport(name: Option<&str>) -> Result<sefy_core::Plugin> {
+    let installed = sefy_core::plugin::discover();
+
+    if let Some(name) = name {
+        let found = installed
+            .into_iter()
+            .find(|plugin| plugin.name() == name || plugin.executable == name)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no transport called {name:?}\n\
+                     run `sefy plugin list` to see what is installed."
+                )
+            })?;
+        return Ok(found);
+    }
+
+    let usable: Vec<sefy_core::Plugin> = installed
+        .into_iter()
+        .filter(|plugin| plugin.usable)
+        .collect();
+
+    match usable.len() {
+        0 => bail!(
+            "no usable transport installed\n\
+             a transport is an executable named {}<name>; `sefy plugin list` \
+             says where sefy looks and why anything found is unusable.",
+            sefy_core::plugin::PREFIX
+        ),
+        1 => Ok(usable.into_iter().next().expect("just counted")),
+        _ => {
+            let names: Vec<&str> = usable.iter().map(sefy_core::Plugin::name).collect();
+            bail!(
+                "several transports are installed: {}\n\
+                 say which one with --transport <NAME>.",
+                names.join(", ")
+            )
+        }
+    }
+}
+
+/// Prints what a merge did.
+///
+/// Shared by `merge`, `pull` and `sync`: the outcome is the same thing in all
+/// three, and a conflict has to read the same way whichever brought it in.
+/// Only the line for "the two already agree" differs, since what the user did
+/// differs.
+fn report_merge(report: &sefy_core::MergeReport, nothing_to_do: &str) {
     if report.is_empty() {
-        println!("nothing to merge; the two vaults already agree");
-        return Ok(());
+        println!("{nothing_to_do}");
+        return;
     }
 
     println!(
@@ -463,9 +605,9 @@ pub fn merge(vault: &mut Vault, other: &Path, other_password_env: Option<&str>) 
     );
 
     if !report.conflicts.is_empty() {
-        // Loud on purpose: a conflict means two versions of one secret now sit
-        // in the vault, and only the person who made them can say which is
-        // right. Reporting it as a count would bury exactly that.
+        // Loud on purpose, exactly as in `merge`: a conflict means two versions
+        // of one secret now sit in the vault, and only the person who made them
+        // can say which is right.
         println!(
             "\n{} changed on both sides and could not be resolved here.",
             output::count(report.conflicts.len(), "item")
@@ -479,15 +621,6 @@ pub fn merge(vault: &mut Vault, other: &Path, other_password_env: Option<&str>) 
         }
         println!("Compare them, keep the right one, and remove the other.");
     }
-    Ok(())
-}
-
-/// Replaces the master password and rewrites the file under it.
-pub fn change_password(vault: &mut Vault, password_env: Option<&str>) -> Result<()> {
-    let password = session::new_password(password_env)?;
-    vault.change_password(password.as_bytes())?;
-    println!("password changed");
-    Ok(())
 }
 
 /// Lists the transports installed on this machine.

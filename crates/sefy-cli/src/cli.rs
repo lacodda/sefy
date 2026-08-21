@@ -152,6 +152,26 @@ pub enum Command {
         new_password_env: Option<String>,
     },
 
+    /// Send this vault to the remote, replacing the copy there.
+    ///
+    /// The file that travels is the sealed one; the transport carrying it never
+    /// sees the master password or a single item.
+    Push(RemoteArgs),
+
+    /// Fetch the remote copy and fold it into this vault.
+    ///
+    /// The two are merged rather than one replacing the other: items missing
+    /// here are copied across, newer contents replace older ones, and an item
+    /// changed on both sides is kept twice. Nothing local is deleted.
+    Pull(PullArgs),
+
+    /// Pull, then push: take what is at the remote, then publish the result.
+    ///
+    /// The everyday gesture on a machine that is one of several. The order is
+    /// not a preference — pushing first would replace the remote copy with one
+    /// that never saw its contents.
+    Sync(PullArgs),
+
     /// Inspect the transports installed on this machine.
     Plugin {
         #[command(subcommand)]
@@ -163,6 +183,51 @@ pub enum Command {
         /// Shell to generate for.
         shell: clap_complete::Shell,
     },
+}
+
+/// Which transport to use, and what the remote copy is called.
+#[derive(Debug, Args)]
+pub struct RemoteArgs {
+    /// Transport to use, by its short name; omit when only one is installed.
+    ///
+    /// There is no configuration file to record a default in — sefy keeps
+    /// nothing on disk but the vault and its plugins — so the choice is either
+    /// obvious or stated.
+    #[arg(long, short = 'p', value_name = "NAME", env = "SEFY_TRANSPORT")]
+    pub transport: Option<String>,
+
+    /// What the remote copy is called.
+    ///
+    /// A transport needs some handle for the thing it stores, and the local
+    /// file name is a poor one: a vault is deliberately named like anything
+    /// else, and on a shared remote two machines' "notes.bak" would collide.
+    #[arg(
+        long,
+        value_name = "NAME",
+        env = "SEFY_REMOTE_NAME",
+        default_value = "vault"
+    )]
+    pub name: String,
+}
+
+/// A pull or a sync: a transport, a remote name, and the remote's password.
+#[derive(Debug, Args)]
+pub struct PullArgs {
+    #[command(flatten)]
+    pub remote: RemoteArgs,
+
+    /// Read the *remote* copy's master password from this environment variable.
+    ///
+    /// Only needed when the two differ. Unlike `merge`, which folds in a file
+    /// from anywhere, a pull brings back a copy of *this* vault, and the same
+    /// password is the ordinary case — so it is what sefy uses unless told
+    /// otherwise here or with --ask-remote-password.
+    #[arg(long, value_name = "VAR", conflicts_with = "ask_remote_password")]
+    pub remote_password_env: Option<String>,
+
+    /// Ask for the remote copy's password instead of reusing this vault's.
+    #[arg(long)]
+    pub ask_remote_password: bool,
 }
 
 /// What to do with plugins.

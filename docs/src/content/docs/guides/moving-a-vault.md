@@ -160,15 +160,26 @@ on the copy you keep, so the two are no longer opened by the same secret.
 
 ## Having something else carry it
 
-Everything above is done by hand. A **plugin** does the carrying instead — an
+Everything above is done by hand. A **transport** does the carrying instead — an
 executable named `sefy-plugin-*` that moves the sealed file to a git remote, an
 FTP server or a cloud drive, without ever seeing what is inside it.
 
 ```console
 $ sefy plugin list
 github  0.1.0     pull, push
+
+$ sefy sync
+Master password:
+synced "vault" through github
+merged: 2 added, 0 updated, 14 unchanged
 ```
 
-Moving a vault with one arrives in a later release; `sefy plugin list` is how
-you check what is installed today. See the
-[`plugin` reference](/sefy/reference/plugin/), including how to write one.
+`sefy sync` is the everyday form: it pulls first, folds what came back into this
+vault with the same rules as `merge`, and publishes the result. So the "one
+machine at a time" rule above is about *files being overwritten* — with a
+transport, two machines that both edited are reconciled rather than one losing.
+
+- [`push`](/sefy/reference/push/), [`pull`](/sefy/reference/pull/) and
+  [`sync`](/sefy/reference/sync/) — the commands
+- [Syncing through a transport](/sefy/guides/syncing/) — setting one up
+- [`plugin`](/sefy/reference/plugin/) — what is installed, and how to write one
