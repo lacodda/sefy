@@ -59,14 +59,21 @@ jobs:
         run: cargo publish --package sefy
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-      # The transport depends on neither of the two above, so its order is free.
+      # The transports depend on neither of the two above, so their order is
+      # free. Both need two things done by hand once, and this step fails until
+      # they are:
       #
-      # A crate that has never been published cannot be created from here:
-      # crates.io refuses Trusted Publishing tokens with "Trusted Publishing
-      # tokens do not support creating new crates". The first version of any new
-      # crate goes up by hand (`cargo publish --package <name>`), and every
-      # release after that runs through this step. Caught on 0.4.0, when this
-      # crate was new.
+      # 1. **The first version goes up manually.** crates.io refuses to create a
+      #    crate from here: "Trusted Publishing tokens do not support creating
+      #    new crates". Run `cargo publish --package <name>` once.
+      # 2. **Trusted Publishing is configured for that crate.** Publishing by
+      #    hand creates the crate but does not connect it to this repository,
+      #    and the next run fails with "the provided access token is not valid
+      #    for crate <name>" — which reads like a token problem and is not one.
+      #    Add the publisher on the crate's Settings page on crates.io:
+      #    repository lacodda/sefy, workflow publish.yml.
+      #
+      # Caught twice: 0.4.0 on step 1, 0.5.0 on step 2.
       - name: Publish sefy-plugin-github
         run: cargo publish --package sefy-plugin-github
         env:
