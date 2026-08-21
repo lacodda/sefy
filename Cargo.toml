@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/sefy-core", "crates/sefy-cli", "crates/sefy-plugin-github"]
+members = [
+    "crates/sefy-core",
+    "crates/sefy-cli",
+    "crates/sefy-plugin-github",
+    "crates/sefy-plugin-sftp",
+]
 resolver = "2"
 
 [workspace.package]

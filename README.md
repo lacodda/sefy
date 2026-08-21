@@ -151,16 +151,24 @@ named `sefy-plugin-*`, found in sefy's data directory or on `PATH`. sefy knows
 nothing about git, FTP or any cloud drive - it asks a plugin what it can do and
 what happened.
 
-`sefy-plugin-github` ships alongside the CLI and keeps the vault in a git
-repository - point `SEFY_GITHUB_REPO` at one and `sefy sync` does the rest.
-Authentication is whatever git already does on the machine, so no token is
-stored anywhere.
+Two transports ship alongside the CLI, and neither stores a credential of its
+own - each authenticates the way the machine already does:
+
+- **github** keeps the vault in a git repository. Point `SEFY_GITHUB_REPO` at
+  one; version history comes free with it.
+- **sftp** keeps it on a server you control, over OpenSSH. Point
+  `SEFY_SFTP_DESTINATION` at `you@server:/path`; nothing lands there but the
+  blob.
 
 ```
 $ sefy plugin list
 future  9.0.0     unusable: it speaks protocol 99 and this build speaks 1
-github  0.4.0     pull, push
+github  0.5.0     pull, push
+sftp    0.5.0     pull, push
 ```
+
+With more than one installed, sefy asks which rather than choosing where your
+vault goes: `sefy sync --transport sftp`, or `SEFY_TRANSPORT=sftp` once.
 
 A transport is handed the **path of the sealed file** and nothing else - no
 master password, no key, no item. What it carries is what anyone would find on
@@ -208,8 +216,8 @@ curl -fsSL https://raw.githubusercontent.com/lacodda/sefy/main/tools/install.sh 
 
 On Windows use the PowerShell line above: `install.sh` carries the macOS and Linux builds only, and run from Git Bash it stops with a pointer back here.
 
-**cargo** - `cargo install sefy` (and `cargo install sefy-plugin-github` for the
-git transport)
+**cargo** - `cargo install sefy`, plus `cargo install sefy-plugin-github` or
+`sefy-plugin-sftp` for a transport
 
 **npm** - `npm install -g sefy-cli`
 

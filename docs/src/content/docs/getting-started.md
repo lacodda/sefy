@@ -36,8 +36,10 @@ Or take a prebuilt archive from [Releases](https://github.com/lacodda/sefy/relea
 Both one-line installers also place any transport the archive carries into
 sefy's plugins directory, so [`sefy sync`](/sefy/reference/sync/) has something
 to call. Installing through cargo or npm gets the CLI alone; add the git
-transport with `cargo install sefy-plugin-github` and see
-[Syncing through a transport](/sefy/guides/syncing/).
+transport with `cargo install sefy-plugin-github` (a git repository) or
+`cargo install sefy-plugin-sftp` (your own server), and see
+[Syncing through a transport](/sefy/guides/syncing/) or
+[Syncing to your own server](/sefy/guides/syncing-over-ssh/).
 
 :::caution[On Windows, use the PowerShell line]
 `install.sh` carries the macOS and Linux builds only. Running it from Git Bash,

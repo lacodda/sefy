@@ -1,0 +1,157 @@
+//! A stand-in for `ssh` and `scp`, compiled by the transport tests.
+//!
+//! It is not part of the crate: `tests/transport.rs` compiles this file with
+//! rustc into a temporary directory, twice, under the two names the plugin
+//! calls. A shell script would have been simpler and was tried first — Rust on
+//! Windows resolves `Command::new("scp")` to an executable only, never a
+//! `.cmd`, so the stand-in has to be a real program.
+//!
+//! Which program it is playing comes from its own file name, and where the
+//! "server" lives comes from the environment, since the plugin controls only
+//! the arguments.
+
+use std::path::{Path, PathBuf};
+
+fn main() {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    let program = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.file_stem().map(|stem| stem.to_string_lossy().into_owned()))
+        .unwrap_or_default();
+
+    let server = PathBuf::from(std::env::var("SEFY_FAKE_SERVER").expect("SEFY_FAKE_SERVER"));
+    let log = PathBuf::from(std::env::var("SEFY_FAKE_LOG").expect("SEFY_FAKE_LOG"));
+    record(&log, &program, &arguments);
+
+    let code = match program.as_str() {
+        "scp" => scp(&server, &arguments),
+        "ssh" => ssh(&server, &arguments),
+        other => {
+            eprintln!("the stand-in was invoked as {other:?}, which it does not play");
+            1
+        }
+    };
+
+    std::process::exit(code);
+}
+
+/// Appends one line per invocation, so a test can assert on what was run.
+fn record(log: &Path, program: &str, arguments: &[String]) {
+    use std::io::Write;
+
+    let line = format!("{program} {}\n", arguments.join(" "));
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log)
+        .expect("the log must be writable");
+    file.write_all(line.as_bytes()).unwrap();
+}
+
+/// Copies between a local path and the stand-in server directory.
+fn scp(server: &Path, arguments: &[String]) -> i32 {
+    let paths: Vec<&String> = positional(arguments);
+    let [from, to] = paths[..] else {
+        eprintln!("the stand-in scp wants exactly two paths, got {paths:?}");
+        return 1;
+    };
+
+    let from = resolve(server, from);
+    let to = resolve(server, to);
+
+    match std::fs::copy(&from, &to) {
+        Ok(_) => 0,
+        Err(error) => {
+            eprintln!("stand-in scp: cannot copy {}: {error}", from.display());
+            1
+        }
+    }
+}
+
+/// Runs the small set of remote commands this transport issues.
+///
+/// Deliberately not a shell: what is under test is the command the plugin
+/// builds, and a stand-in that passed the line to `sh` would also pass a name
+/// the plugin should have refused.
+fn ssh(server: &Path, arguments: &[String]) -> i32 {
+    let Some(command) = arguments.last() else {
+        eprintln!("stand-in ssh: no command");
+        return 1;
+    };
+
+    let words: Vec<&str> = command.split_whitespace().collect();
+
+    // Every path inside a remote command is a remote one by definition: it
+    // carries no `host:` prefix, because ssh already knows the host.
+    let remote = |path: &str| server.join(path.rsplit('/').next().unwrap_or(path));
+
+    match words.as_slice() {
+        // test -f <path> && echo present || echo absent
+        ["test", "-f", path, "&&", "echo", "present", "||", "echo", "absent"] => {
+            let present = remote(path).is_file();
+            println!("{}", if present { "present" } else { "absent" });
+            0
+        }
+        ["mv", "--", from, to] => match std::fs::rename(remote(from), remote(to)) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("stand-in ssh: cannot move: {error}");
+                1
+            }
+        },
+        ["rm", "-f", "--", path] => {
+            let _ = std::fs::remove_file(remote(path));
+            0
+        }
+        _ => {
+            eprintln!("stand-in ssh does not know: {command}");
+            1
+        }
+    }
+}
+
+/// Arguments that are not options: everything after `--`, or everything that
+/// is not a flag and not the value of `-o`.
+fn positional(arguments: &[String]) -> Vec<&String> {
+    if let Some(at) = arguments.iter().position(|argument| argument == "--") {
+        return arguments[at + 1..].iter().collect();
+    }
+
+    let mut positional = Vec::new();
+    let mut skip_next = false;
+    for argument in arguments {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if argument == "-o" {
+            skip_next = true;
+            continue;
+        }
+        if argument.starts_with('-') {
+            continue;
+        }
+        positional.push(argument);
+    }
+    positional
+}
+
+/// Turns one scp-style path into a local one.
+///
+/// `host:/dir/name` becomes `<server>/name`; anything else is already local.
+/// Only the file name is kept, so the test's server directory stands in for
+/// whatever directory the destination named.
+fn resolve(server: &Path, path: &str) -> PathBuf {
+    let is_remote = match path.split_once(':') {
+        // A Windows drive letter, not a host.
+        Some((head, _)) => head.len() > 1,
+        None => false,
+    };
+
+    if !is_remote {
+        return PathBuf::from(path);
+    }
+
+    let remote = path.split_once(':').map(|(_, tail)| tail).unwrap_or(path);
+    server.join(remote.rsplit('/').next().unwrap_or(remote))
+}

@@ -7,8 +7,9 @@ A **transport** carries the vault file between this machine and somewhere else.
 It is an ordinary executable named `sefy-plugin-*`, and sefy hands it the sealed
 file — never the password, never an item.
 
-This guide sets up the transport that ships with sefy, `sefy-plugin-github`,
-which keeps the vault in a git repository.
+This guide sets up `sefy-plugin-github`, which keeps the vault in a git
+repository. The other transport that ships with sefy puts it on a server over
+SSH — see [Syncing to your own server](/sefy/guides/syncing-over-ssh/).
 
 ## What you need
 
@@ -33,8 +34,12 @@ Anywhere on `PATH` works too. Check that sefy sees it:
 
 ```console
 $ sefy plugin list
-github  0.4.0     pull, push
+github  0.5.0     pull, push
+sftp    0.5.0     pull, push
 ```
+
+With two installed, sefy will not choose between them: name one with
+`--transport github`, or set `SEFY_TRANSPORT` once per shell.
 
 A plugin that is present but unusable is listed with the reason, because a
 broken installation and a missing one call for opposite fixes.
@@ -152,4 +157,5 @@ shell script. See [`plugin`](/sefy/reference/plugin/) for the full contract.
 
 - [`sync`](/sefy/reference/sync/), [`push`](/sefy/reference/push/), [`pull`](/sefy/reference/pull/)
 - [`merge`](/sefy/reference/merge/) — the rules a pull applies
+- [Syncing to your own server](/sefy/guides/syncing-over-ssh/) — the same thing over SSH
 - [Moving a vault between machines](/sefy/guides/moving-a-vault/) — doing it by hand

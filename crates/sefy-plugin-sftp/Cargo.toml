@@ -1,0 +1,25 @@
+[package]
+name = "sefy-plugin-sftp"
+description = "sefy transport that keeps a vault on a server over SSH"
+keywords = ["sefy", "plugin", "ssh", "sync", "secrets"]
+categories = ["command-line-utilities"]
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sefy-plugin-sftp"
+path = "src/main.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -285,6 +285,44 @@ fn the_documented_vault_format_version_matches_the_code() {
     );
 }
 
+/// Directory names of every workspace member under `crates/`.
+///
+/// Reads the whole `members = [...]` block rather than one line: the list was
+/// written on a single line until a fourth crate made rustfmt spread it out,
+/// and a parser that stopped at the first line would then quietly find nothing.
+fn workspace_members() -> Vec<String> {
+    let manifest = read("Cargo.toml");
+    let mut names = Vec::new();
+    let mut inside = false;
+
+    for line in manifest.lines() {
+        let trimmed = line.trim();
+        if !inside {
+            if !trimmed.starts_with("members") {
+                continue;
+            }
+            inside = true;
+        }
+
+        names.extend(
+            trimmed
+                .split('"')
+                .filter(|part| part.starts_with("crates/"))
+                .map(|part| part.trim_start_matches("crates/").to_owned()),
+        );
+
+        if trimmed.contains(']') {
+            break;
+        }
+    }
+
+    assert!(
+        !names.is_empty(),
+        "no workspace members found; the manifest's `members` list is not being read"
+    );
+    names
+}
+
 #[test]
 fn every_binary_the_workspace_builds_reaches_the_release() {
     // A crate added to the workspace does not add itself to the release
@@ -292,18 +330,9 @@ fn every_binary_the_workspace_builds_reaches_the_release() {
     // archive is one file short, and whoever downloads it finds `sefy sync`
     // with no transport to call.
     let workflow = read(".github/workflows/release.yml");
-    let members = read("Cargo.toml");
 
-    let binaries: Vec<String> = members
-        .lines()
-        .skip_while(|line| !line.starts_with("members"))
-        .take(1)
-        .flat_map(|line| {
-            line.split('"')
-                .filter(|part| part.starts_with("crates/"))
-                .map(|part| part.trim_start_matches("crates/").to_owned())
-                .collect::<Vec<_>>()
-        })
+    let binaries: Vec<String> = workspace_members()
+        .into_iter()
         .filter(|name| {
             // Libraries have nothing to ship in an archive of executables.
             repo_root()
@@ -348,19 +377,8 @@ fn every_crate_that_is_published_is_named_in_the_publish_workflow() {
     // Same trap on the crates.io side, and just as quiet: the tag publishes
     // what the workflow lists, not what the workspace holds.
     let workflow = read(".github/workflows/publish.yml");
-    let members = read("Cargo.toml");
 
-    let crates: Vec<String> = members
-        .lines()
-        .skip_while(|line| !line.starts_with("members"))
-        .take(1)
-        .flat_map(|line| {
-            line.split('"')
-                .filter(|part| part.starts_with("crates/"))
-                .map(|part| part.trim_start_matches("crates/").to_owned())
-                .collect::<Vec<_>>()
-        })
-        .collect();
+    let crates = workspace_members();
 
     for directory in crates {
         // The crate's published name, which need not match its directory.
@@ -396,4 +414,49 @@ fn the_installers_place_the_transports_the_release_carries() {
             "{file} does not install anything into sefy's plugins directory"
         );
     }
+}
+
+#[test]
+fn nothing_outside_a_transport_knows_which_transport_it_is() {
+    // The point of the protocol: sefy moves a sealed file through something it
+    // cannot see into. A transport's own vocabulary leaking into the core or
+    // the CLI would mean the protocol was shaped around whichever one was
+    // written first — the thing a second transport exists to disprove.
+    //
+    // Checked as a gate rather than remembered, because the leak would arrive
+    // as a small convenience: one `if plugin.name() == "github"` and the next
+    // transport starts asking for exceptions.
+    for area in ["crates/sefy-core/src", "crates/sefy-cli/src"] {
+        for file in rust_files(&repo_root().join(area)) {
+            let text = fs::read_to_string(&file).unwrap();
+            for (number, line) in text.lines().enumerate() {
+                let code = line.split("//").next().unwrap_or("").to_lowercase();
+                for word in ["github", "sftp", " git ", "ssh", "scp"] {
+                    assert!(
+                        !code.contains(word),
+                        "{}:{} mentions {word:?}; transports are known by the protocol only",
+                        file.display(),
+                        number + 1
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Every `.rs` file under a directory, recursively.
+fn rust_files(directory: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let entries = fs::read_dir(directory)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", directory.display()));
+
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(rust_files(&path));
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            found.push(path);
+        }
+    }
+    found
 }
