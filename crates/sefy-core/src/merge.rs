@@ -95,7 +95,13 @@ pub fn merge(destination: &mut Vault, source: &Vault) -> Result<MergeReport> {
         // Both carry the identity, and their contents differ. Whether that is a
         // conflict depends on whether this side moved on since the incoming
         // copy was last written.
-        if existing.summary.updated_at <= incoming.summary.updated_at {
+        //
+        // Strictly older, not "older or the same". Timestamps here are whole
+        // seconds, so two machines editing the same item within one second —
+        // ordinary once a sync runs after both — carry the same one. Treating
+        // that as "the incoming copy is newer" would discard the local edit on
+        // a tie, which is the one thing this function promises not to do.
+        if existing.summary.updated_at < incoming.summary.updated_at {
             destination.update(
                 existing_id,
                 Some(incoming.summary.title),

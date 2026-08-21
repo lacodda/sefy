@@ -883,6 +883,59 @@ fn a_newer_version_from_the_other_side_wins() {
 }
 
 #[test]
+fn two_edits_in_the_same_second_are_a_conflict_not_a_silent_overwrite() {
+    // Timestamps here are whole seconds, so two machines editing one item
+    // within the same second carry the same one — which is ordinary rather
+    // than exotic once a sync runs shortly after both edits. A tie must not be
+    // read as "the incoming copy is newer": that would discard the local edit
+    // without a word, which is precisely what merge promises never to do.
+    let (here, there, uuid) = two_copies();
+    const SAME_MOMENT: i64 = 1_700_000_000;
+
+    let mut other = Vault::open(&there.path, PASSWORD).unwrap();
+    let their_id = other.find_by_uuid(&uuid).unwrap().unwrap();
+    other.remove(their_id).unwrap();
+    other
+        .add_existing(
+            NewItem::new("bank", note("changed there")),
+            &uuid,
+            0,
+            SAME_MOMENT,
+        )
+        .unwrap();
+    other.save().unwrap();
+
+    let mut vault = Vault::open(&here.path, PASSWORD).unwrap();
+    let mine = vault.find_by_uuid(&uuid).unwrap().unwrap();
+    vault.remove(mine).unwrap();
+    vault
+        .add_existing(
+            NewItem::new("bank", note("changed here")),
+            &uuid,
+            0,
+            SAME_MOMENT,
+        )
+        .unwrap();
+
+    let report = sefy_core::merge(&mut vault, &other).unwrap();
+
+    assert_eq!(report.updated, 0, "a tie is not an update");
+    assert_eq!(report.conflicts.len(), 1);
+
+    let mine = vault.find_by_uuid(&uuid).unwrap().unwrap();
+    assert_eq!(
+        vault.get(mine).unwrap().payload,
+        note("changed here"),
+        "the local edit survives"
+    );
+    let kept = vault.resolve(&report.conflicts[0].kept_as).unwrap();
+    assert_eq!(
+        vault.get(kept.id).unwrap().payload,
+        note("changed there"),
+        "and so does the incoming one"
+    );
+}
+#[test]
 fn an_older_version_from_the_other_side_is_kept_beside_the_newer_one() {
     // Both sides changed. Nothing is thrown away: "newest wins" is fine for a
     // title and ruinous for a password, so the loser stays in the vault.
