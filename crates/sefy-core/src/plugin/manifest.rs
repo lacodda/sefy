@@ -92,6 +92,15 @@ impl Plugin {
         }
     }
 
+    /// Whether this is the plugin someone means when they type `name`.
+    ///
+    /// Either the short name from the manifest or the executable name: a
+    /// plugin too broken to describe itself still has to be addressable by the
+    /// person trying to work out what is wrong with it.
+    pub fn answers_to(&self, name: &str) -> bool {
+        self.name() == name || self.executable == name
+    }
+
     /// Whether the plugin declares this operation.
     pub fn supports(&self, operation: Operation) -> bool {
         self.manifest

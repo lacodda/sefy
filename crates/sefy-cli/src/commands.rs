@@ -551,15 +551,12 @@ fn transport(name: Option<&str>) -> Result<sefy_core::Plugin> {
     let installed = sefy_core::plugin::discover();
 
     if let Some(name) = name {
-        let found = installed
-            .into_iter()
-            .find(|plugin| plugin.name() == name || plugin.executable == name)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "no transport called {name:?}\n\
+        let found = sefy_core::plugin::find(installed, name).ok_or_else(|| {
+            anyhow::anyhow!(
+                "no transport called {name:?}\n\
                      run `sefy plugin list` to see what is installed."
-                )
-            })?;
+            )
+        })?;
         return Ok(found);
     }
 

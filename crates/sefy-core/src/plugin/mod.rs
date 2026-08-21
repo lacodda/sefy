@@ -140,11 +140,13 @@ pub fn discover_in(directories: &[PathBuf]) -> Vec<Plugin> {
     found
 }
 
-/// Finds one plugin by its short name (`github`) or executable name.
-pub fn find(name: &str) -> Option<Plugin> {
-    discover()
-        .into_iter()
-        .find(|plugin| plugin.name() == name || plugin.executable == name)
+/// Finds one plugin among those installed, by short name or executable name.
+///
+/// Takes the list rather than discovering it: a caller that has to say
+/// something useful when the name matches nothing needs the same list to say it
+/// with, and discovering twice would run every plugin on the machine again.
+pub fn find(installed: Vec<Plugin>, name: &str) -> Option<Plugin> {
+    installed.into_iter().find(|plugin| plugin.answers_to(name))
 }
 
 /// Asks a plugin what it is.
@@ -721,6 +723,47 @@ mod tests {
         assert!(report.message.is_none());
     }
 
+    #[test]
+    fn a_plugin_is_found_by_its_short_name() {
+        let directory = tempfile::tempdir().unwrap();
+        let plugin = demo(directory.path());
+        let installed = vec![plugin];
+
+        let found = find(installed, "demo").expect("the short name must address it");
+
+        assert_eq!(found.executable, "sefy-plugin-demo");
+    }
+
+    #[test]
+    fn a_plugin_is_also_found_by_its_executable_name() {
+        let directory = tempfile::tempdir().unwrap();
+        let plugin = demo(directory.path());
+
+        let found = find(vec![plugin], "sefy-plugin-demo");
+
+        assert!(found.is_some(), "the file name must address it too");
+    }
+
+    #[test]
+    fn a_name_matching_nothing_finds_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let plugin = demo(directory.path());
+
+        assert!(find(vec![plugin], "elsewhere").is_none());
+    }
+
+    #[test]
+    fn a_plugin_too_broken_to_describe_itself_is_still_addressable() {
+        // The case that matters: naming it is how someone asks what is wrong
+        // with it, and a plugin with no manifest has no short name of its own.
+        let directory = tempfile::tempdir().unwrap();
+        fake_plugin(directory.path(), "sefy-plugin-broken", "not json", "{}");
+        let installed = discover_in(&[directory.path().to_path_buf()]);
+
+        let found = find(installed, "broken").expect("it must still answer to its name");
+
+        assert!(!found.usable);
+    }
     #[test]
     fn an_unreadable_reply_is_not_quoted_back() {
         let directory = tempfile::tempdir().unwrap();
