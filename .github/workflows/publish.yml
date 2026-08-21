@@ -60,6 +60,13 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
       # The transport depends on neither of the two above, so its order is free.
+      #
+      # A crate that has never been published cannot be created from here:
+      # crates.io refuses Trusted Publishing tokens with "Trusted Publishing
+      # tokens do not support creating new crates". The first version of any new
+      # crate goes up by hand (`cargo publish --package <name>`), and every
+      # release after that runs through this step. Caught on 0.4.0, when this
+      # crate was new.
       - name: Publish sefy-plugin-github
         run: cargo publish --package sefy-plugin-github
         env:
