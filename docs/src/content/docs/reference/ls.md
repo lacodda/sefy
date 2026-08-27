@@ -44,3 +44,4 @@ no items
 
 - [`find`](/sefy/reference/find/) — the same listing, narrowed by text
 - [`tags`](/sefy/reference/tags/) — which tags exist and how many items use them
+- [Versions and compatibility](/sefy/concepts/versions/) — items marked "needs a newer sefy"

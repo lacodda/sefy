@@ -63,3 +63,4 @@ for [`get`](/sefy/reference/get/) instead, which puts it on the clipboard.
 
 - [`get`](/sefy/reference/get/) — the only way a covered secret comes out
 - [`ls`](/sefy/reference/ls/) — the same items, one line each
+- [Versions and compatibility](/sefy/concepts/versions/) — items this build cannot read

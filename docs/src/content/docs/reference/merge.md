@@ -104,3 +104,4 @@ machines saving the same file means the second save wins whole.
 - [Moving a vault between machines](/sefy/guides/moving-a-vault/) — how copies drift in the first place
 - [`import`](/sefy/reference/import/) — bringing in contents from a plain JSON export
 - [`rm`](/sefy/reference/rm/) — clearing up after a conflict
+- [Versions and compatibility](/sefy/concepts/versions/) — what a merge leaves where it is

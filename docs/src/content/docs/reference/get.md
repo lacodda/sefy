@@ -65,3 +65,4 @@ one through the clipboard would corrupt it. Files leave through
 
 - [`show`](/sefy/reference/show/) — an item's surroundings, without its secrets
 - [`extract`](/sefy/reference/extract/) — stored files
+- [Versions and compatibility](/sefy/concepts/versions/) — items a newer sefy wrote

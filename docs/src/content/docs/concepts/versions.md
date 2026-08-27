@@ -1,0 +1,73 @@
+---
+title: Versions and compatibility
+description: What happens when two machines run different versions of sefy, and what is promised across them.
+---
+
+A vault is one file, and files travel. Once you
+[sync](/sefy/guides/syncing/) between two machines, or restore a backup onto a
+new one, sooner or later two different versions of sefy are looking at the same
+vault. This page says what holds across that gap.
+
+## The file format does not move
+
+The vault format is **version 1**, and it is frozen. A vault created by 0.1.0
+opens in the current release, and that is checked on every build against a real
+file written by an older published binary rather than against the current code's
+opinion of itself.
+
+Changing the format — different Argon2 parameters, a different layout — would
+mean a new format version, and it would be announced as a breaking change with a
+migration path. Nothing does that quietly.
+
+## Items from a newer sefy
+
+Inside the encrypted file, the contents can grow: a newer sefy may add a kind of
+item this one has never heard of. When an older build meets one, it:
+
+- **lists it**, under the name the kind was stored as, marked so you can tell
+  why it looks different;
+- **finds it** by title and tags;
+- lets you **retitle and retag** it, because those live beside the contents;
+- **exports it**, flagged as an entry whose contents this build could not read;
+- **leaves it alone** during a merge, and says that it did.
+
+What it will not do is guess. Reading such an item, editing its contents, or
+importing one into a vault are all refused with an explanation, because an item
+that silently arrived empty would be worse than one that was honestly not read.
+
+```console
+$ sefy ls
+1  shed     note
+2  my visa  card        (needs a newer sefy)
+
+$ sefy get "my visa"
+error: "my visa" is a card, which this version of sefy does not know
+it was written by a newer sefy — upgrade to read it
+(the item is safe: it is listed, exported and synced as it is)
+```
+
+Nothing is lost in the meantime: the item and its contents stay in the vault
+untouched, and upgrading makes them readable again.
+
+:::caution[Before 0.6.0]
+sefy 0.5.0 and earlier did not do this. A single item of an unknown kind made
+`ls`, `find`, `export` and `merge` fail outright, reporting that an item plainly
+present in the file did not exist. If you sync between machines, upgrade the
+older one before a newer sefy writes a kind it does not know.
+:::
+
+## Syncing between different versions
+
+A [transport](/sefy/reference/plugin/) moves the sealed file and never looks
+inside it, so mixed versions are a question about the contents, not the
+transport. The rule that matters: **the machine with the older sefy can carry a
+vault it cannot fully read** — it will not corrupt or drop what it does not
+understand — but it cannot merge those items into another vault. Merge from the
+newer side, or upgrade.
+
+## What a plugin can rely on
+
+The [plugin protocol](/sefy/reference/plugin/) is at version 1, and a plugin
+written against 0.3.0 keeps working. New manifest fields are added as optional
+ones; changing what an existing field means would require protocol version 2,
+with both accepted for a time.

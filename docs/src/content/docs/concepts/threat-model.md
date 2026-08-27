@@ -51,7 +51,10 @@ Two features write plaintext on purpose, and both say so before doing it:
 
 - **`sefy export`** produces a JSON file with every secret in the clear. It
   exists so a vault is never a trap — you can always move your data elsewhere —
-  and it refuses to run until you acknowledge what the file is.
+  and it refuses to run until you acknowledge what the file is. An item written
+  by a [newer sefy](/sefy/concepts/versions/) is listed in the export with its
+  contents left out and marked as such, so the file never quietly claims to hold
+  more than it does.
 - **`--editor`** puts a note in a temporary file while your editor is open.
   sefy overwrites and removes that file on exit, but an editor's own swap, undo
   and backup files are its business, not sefy's.

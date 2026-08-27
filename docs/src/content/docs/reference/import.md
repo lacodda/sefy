@@ -47,8 +47,24 @@ The whole file is checked before anything is inserted, so a malformed entry
 halfway down cannot leave a half-imported vault behind. Either every item lands
 or none does.
 
+There is one deliberate exception. An entry naming a kind this build does not
+know — written by a newer sefy, or by another tool — is **counted and skipped**
+rather than treated as malformed:
+
+```console
+$ sefy import backup.json
+imported 3 items
+1 item of a kind this version does not know, not imported
+upgrade sefy and import again
+```
+
+Failing the whole file would mean one entry from a newer version could block
+everything else from arriving, which is the opposite of what this command is
+for. See [Versions and compatibility](/sefy/concepts/versions/).
+
 ## Related
 
 - [`export`](/sefy/reference/export/) — producing the file, and its format
 - [`merge`](/sefy/reference/merge/) — folding in another vault, newer contents and all
 - [Moving a vault between machines](/sefy/guides/moving-a-vault/) — how copies drift
+- [Versions and compatibility](/sefy/concepts/versions/) — entries from a newer sefy

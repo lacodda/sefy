@@ -68,3 +68,4 @@ without one is simply added.
 - [`import`](/sefy/reference/import/) — reading one back in
 - [Moving a vault between machines](/sefy/guides/moving-a-vault/)
 - [Threat model](/sefy/concepts/threat-model/) — the one deliberate exception
+- [Versions and compatibility](/sefy/concepts/versions/) — entries whose contents could not be read
