@@ -10,12 +10,49 @@ afterwards. Any change that would break an existing file gets its own
 "Breaking Changes" section here, with the migration path or a plain statement
 that there is none. This paragraph survives regenerating the file.
 
-## [0.5.0] - 2026-08-21
+## [0.6.0] - 2026-08-27
 
-Nothing about an existing vault changes: the file format is still version 1 and
-the plugin protocol is still version 1. The second transport was written against
-the protocol as it stood and needed no field added to it, which is the evidence
-that it was not shaped around the first one.
+Existing vaults are unaffected: the file format is still version 1 and the plugin
+protocol is still version 1. What changes is what happens when a vault holds an
+item this build does not understand — one written by a newer sefy. Until now a
+single such item made `ls`, `find`, `export` and `merge` fail outright, claiming
+no item with that id existed while it sat plainly in the file. It is now listed,
+searched, retitled, exported and passed over by a merge, and only the operations
+that would have to invent its contents are refused.
+
+That matters a release early: it makes adding a kind of item something an older
+sefy can survive rather than a breaking change for everyone syncing between
+machines.
+
+This release also moves `argon2` from 0.5 to 0.6, its first stable release after
+months of candidates. The derived key is unchanged — a vault written by the
+published 0.5.0 binary opens under this one and vice versa — and a file from that
+binary is now kept in the test suite so any future crypto bump has to prove the
+same thing rather than be reasoned about.
+
+### Breaking Changes
+
+Only for code using the `sefy-core` library; the CLI and vault files are
+unaffected.
+
+- `ItemKind` gained an `Unknown(String)` variant and is no longer `Copy`; match
+  arms must handle it, and `as_str` now takes `&self` and returns `&str`.
+- `ItemKind::parse` returns `ItemKind` rather than `Option<ItemKind>`: a name
+  this build has not heard of is no longer a failure.
+- `Payload` gained an `Unknown { kind }` variant. Writing one into a vault is
+  refused with `Error::UnknownItemKind`.
+- `Error::ItemKindMismatch` carries `String` fields instead of `&'static str`.
+- `ImportReport` and `MergeReport` gained an `unsupported` count, and
+  `MergeReport::is_empty` accounts for it.
+
+### Bug Fixes
+- An item from a newer sefy no longer breaks the vault it sits in
+
+### Documentation
+- Publishing a crate by hand does not connect it to this repository
+- Say what holds when two machines run different versions
+
+## [0.5.0] - 2026-08-21
 
 ### Documentation
 - Note that a new crate's first version goes up by hand
