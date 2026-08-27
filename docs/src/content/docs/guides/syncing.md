@@ -34,8 +34,8 @@ Anywhere on `PATH` works too. Check that sefy sees it:
 
 ```console
 $ sefy plugin list
-github  0.5.0     pull, push
-sftp    0.5.0     pull, push
+github  0.6.0     pull, push
+sftp    0.6.0     pull, push
 ```
 
 With two installed, sefy will not choose between them: name one with

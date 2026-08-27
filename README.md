@@ -163,8 +163,8 @@ own - each authenticates the way the machine already does:
 ```
 $ sefy plugin list
 future  9.0.0     unusable: it speaks protocol 99 and this build speaks 1
-github  0.5.0     pull, push
-sftp    0.5.0     pull, push
+github  0.6.0     pull, push
+sftp    0.6.0     pull, push
 ```
 
 With more than one installed, sefy asks which rather than choosing where your
