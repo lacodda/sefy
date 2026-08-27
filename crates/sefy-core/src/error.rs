@@ -55,9 +55,24 @@ pub enum Error {
         /// Item that was addressed.
         id: i64,
         /// Kind the item actually has.
-        actual: &'static str,
+        actual: String,
         /// Kind the caller asked for.
-        expected: &'static str,
+        expected: String,
+    },
+
+    /// The item was written by a newer sefy, which knows a kind this one does
+    /// not.
+    ///
+    /// Reading its contents, editing it or extracting it would all mean
+    /// guessing at a shape this build has never seen. Listing, searching,
+    /// exporting and merging work regardless: those need the item's identity,
+    /// not its meaning.
+    #[error("item {id} is a {kind}, a kind this version of sefy does not know")]
+    UnknownItemKind {
+        /// Item that was addressed.
+        id: i64,
+        /// The name the kind was stored under.
+        kind: String,
     },
 
     /// The export file declares a version this build cannot read.

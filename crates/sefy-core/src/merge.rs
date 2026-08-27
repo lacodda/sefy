@@ -25,6 +25,13 @@ pub struct MergeReport {
     pub unchanged: usize,
     /// Items where both sides changed and one version had to be kept aside.
     pub conflicts: Vec<Conflict>,
+    /// Items of a kind this build does not know, left where they were.
+    ///
+    /// A newer sefy wrote them, and this one holds their identity but not their
+    /// contents. Copying such an item across would create one that is empty
+    /// rather than merely unread — so it stays put, and is counted here instead
+    /// of being passed over in silence.
+    pub unsupported: usize,
 }
 
 /// One item that changed on both sides since the copies parted.
@@ -38,8 +45,12 @@ pub struct Conflict {
 
 impl MergeReport {
     /// Whether the merge changed anything at all.
+    ///
+    /// Skipped items count as something to report even though nothing moved:
+    /// "nothing to do" would be read as "the two copies agree", and they do
+    /// not — this build simply could not tell.
     pub fn is_empty(&self) -> bool {
-        self.added == 0 && self.updated == 0 && self.conflicts.is_empty()
+        self.added == 0 && self.updated == 0 && self.conflicts.is_empty() && self.unsupported == 0
     }
 }
 
@@ -67,6 +78,14 @@ pub fn merge(destination: &mut Vault, source: &Vault) -> Result<MergeReport> {
     for incoming_summary in source.list()? {
         let incoming = source.get(incoming_summary.id)?;
         let uuid = &incoming.summary.uuid;
+
+        // Nothing here can be decided: this build cannot read the incoming
+        // contents, so it can neither compare them with what is here nor carry
+        // them over. Merging with a version that does know the kind will do it.
+        if matches!(incoming.payload, Payload::Unknown { .. }) {
+            report.unsupported += 1;
+            continue;
+        }
 
         let Some(existing_id) = destination.find_by_uuid(uuid)? else {
             destination.add_existing(

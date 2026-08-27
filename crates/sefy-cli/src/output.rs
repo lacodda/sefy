@@ -97,18 +97,34 @@ pub fn table(items: &[ItemSummary]) {
         .unwrap_or(5)
         .min(40);
 
+    // A kind this build does not know is named as it was stored and marked, so
+    // a listing shows the item plainly instead of hiding it — and says why
+    // `sefy get` will not open it.
+    let kind_width = items
+        .iter()
+        .map(|item| item.kind.as_str().chars().count())
+        .max()
+        .unwrap_or(10)
+        .max(10);
+
     for item in items {
         let tags = if item.tags.is_empty() {
             String::new()
         } else {
             format!("  [{}]", item.tags.join(", "))
         };
+        let unknown = if item.kind.is_known() {
+            ""
+        } else {
+            "  (needs a newer sefy)"
+        };
         println!(
-            "{:>id_width$}  {:<title_width$}  {:<10}{}",
+            "{:>id_width$}  {:<title_width$}  {:<kind_width$}{}{}",
             item.id,
             truncate(&item.title, title_width),
             item.kind.as_str(),
             tags,
+            unknown,
         );
     }
 }

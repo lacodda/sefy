@@ -249,6 +249,16 @@ fn insert_payload(connection: &Connection, id: i64, payload: &Payload) -> Result
                 params![id, filename, bytes],
             )?;
         }
+        // Refused rather than skipped. There is no table to put this in, and
+        // writing the row without its contents would turn an item this build
+        // merely cannot read into one that is genuinely empty — destroying data
+        // in the name of tolerating it.
+        Payload::Unknown { kind } => {
+            return Err(Error::UnknownItemKind {
+                id,
+                kind: kind.clone(),
+            });
+        }
     }
     Ok(())
 }
@@ -339,10 +349,8 @@ pub fn update_item(
         if kind.as_str() != existing_kind {
             return Err(Error::ItemKindMismatch {
                 id,
-                actual: ItemKind::parse(&existing_kind)
-                    .map(ItemKind::as_str)
-                    .unwrap_or("unknown"),
-                expected: kind.as_str(),
+                actual: existing_kind,
+                expected: kind.as_str().to_owned(),
             });
         }
         delete_payload(&transaction, id)?;
@@ -406,6 +414,10 @@ pub fn get_item(connection: &Connection, id: i64) -> Result<Item> {
                 })
             },
         )?,
+        // Written by a newer sefy: the row exists, and so does whatever table
+        // holds its contents, but this build knows neither the table nor the
+        // shape. The item is reported as itself rather than as an error.
+        ItemKind::Unknown(ref name) => Payload::Unknown { kind: name.clone() },
     };
     Ok(Item { summary, payload })
 }
@@ -434,7 +446,7 @@ pub fn get_summary(connection: &Connection, id: i64) -> Result<ItemSummary> {
         id,
         uuid,
         title,
-        kind: ItemKind::parse(&kind).ok_or(Error::ItemNotFound(id))?,
+        kind: ItemKind::parse(&kind),
         tags: tags_of(connection, id)?,
         created_at,
         updated_at,
@@ -464,7 +476,7 @@ pub fn search(connection: &Connection, query: &Query) -> Result<Vec<ItemSummary>
     );
     let mut arguments: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-    if let Some(kind) = query.kind {
+    if let Some(kind) = &query.kind {
         arguments.push(Box::new(kind.as_str().to_owned()));
         sql.push_str(&format!(" AND i.kind = ?{}", arguments.len()));
     }

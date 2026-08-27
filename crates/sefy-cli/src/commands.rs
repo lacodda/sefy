@@ -112,6 +112,12 @@ pub fn get(vault: &Vault, args: GetArgs) -> Result<()> {
             item.summary.title,
             item.summary.id
         ),
+        Payload::Unknown { kind } => bail!(
+            "{:?} is a {kind}, which this version of sefy does not know\n\
+             it was written by a newer sefy — upgrade to read it\n\
+             (the item is safe: it is listed, exported and synced as it is)",
+            item.summary.title
+        ),
     };
 
     if args.stdout {
@@ -181,6 +187,12 @@ pub fn show(vault: &Vault, reference: &str) -> Result<()> {
         Payload::File { filename, bytes } => {
             field("file", filename);
             field("size", &format!("{} bytes", bytes.len()));
+        }
+        Payload::Unknown { kind } => {
+            println!("---");
+            println!("This item is a {kind}, a kind this version of sefy does not know.");
+            println!("A newer sefy wrote it. Upgrade to read its contents.");
+            println!("Nothing is lost: the item keeps its place in this vault.");
         }
     }
     Ok(())
@@ -303,6 +315,19 @@ fn build_edited_payload(existing: &Payload, args: &EditArgs) -> Result<Option<Pa
         Payload::File { .. } => {
             if args.text.is_some() || args.editor || wants_credential_field {
                 bail!("this item is a file; only --title and tags can be edited");
+            }
+            Ok(None)
+        }
+        // Title and tags live beside the contents, not inside them, so they can
+        // still be changed — returning `None` here leaves the payload alone and
+        // lets the caller apply them. Anything that would rewrite the contents
+        // is refused: this build cannot read them and must not replace them.
+        Payload::Unknown { kind } => {
+            if args.text.is_some() || args.editor || wants_credential_field {
+                bail!(
+                    "this item is a {kind}, a kind this version of sefy does not know;\n\
+                     only --title and tags can be edited"
+                );
             }
             Ok(None)
         }
@@ -431,6 +456,13 @@ pub fn import(vault: &mut Vault, input: Option<PathBuf>) -> Result<()> {
         println!(
             "{} already here, left alone",
             output::count(report.skipped, "item")
+        );
+    }
+    if report.unsupported > 0 {
+        println!(
+            "{} of a kind this version does not know, not imported\n\
+             upgrade sefy and import again",
+            output::count(report.unsupported, "item")
         );
     }
     Ok(())
@@ -600,6 +632,14 @@ fn report_merge(report: &sefy_core::MergeReport, nothing_to_do: &str) {
         "merged: {} added, {} updated, {} unchanged",
         report.added, report.updated, report.unchanged
     );
+
+    if report.unsupported > 0 {
+        println!(
+            "{} left where it was: a kind this version of sefy does not know.\n\
+             Nothing was lost — merge again from a build that knows it.",
+            output::count(report.unsupported, "item")
+        );
+    }
 
     if !report.conflicts.is_empty() {
         // Loud on purpose, exactly as in `merge`: a conflict means two versions

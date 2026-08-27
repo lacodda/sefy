@@ -1221,3 +1221,124 @@ fn the_fixture_transport_is_where_sefy_looks_for_one() {
         .success()
         .stdout(contains("file").and(contains("pull")).and(contains("push")));
 }
+
+/// Writes an item whose kind this build does not know, the way a newer sefy
+/// would: a row in `items` and its contents in a table of its own.
+fn add_item_of_a_future_kind(fixture: &Fixture, title: &str) {
+    let file = std::fs::read(&fixture.path).unwrap();
+    let database = sefy_core::format::decode(MASTER.as_bytes(), &file).unwrap();
+    let connection = sefy_core::db::load(&database).unwrap();
+
+    connection
+        .execute(
+            "INSERT INTO items (uuid, title, kind, created_at, updated_at)
+             VALUES ('11111111-2222-4333-8444-555555555555', ?1, 'card', 1000, 1000)",
+            [title],
+        )
+        .unwrap();
+    let id = connection.last_insert_rowid();
+    connection
+        .execute_batch("CREATE TABLE cards (item_id INTEGER NOT NULL, number TEXT NOT NULL)")
+        .unwrap();
+    connection
+        .execute(
+            "INSERT INTO cards (item_id, number) VALUES (?1, '4111')",
+            [id],
+        )
+        .unwrap();
+
+    let dumped = sefy_core::db::dump(&connection).unwrap();
+    std::fs::write(
+        &fixture.path,
+        sefy_core::format::encode(MASTER.as_bytes(), &dumped).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn an_item_from_a_newer_sefy_does_not_break_the_listing() {
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "shed", "combination 4815", &[]);
+    add_item_of_a_future_kind(&fixture, "my card");
+
+    // The whole point: one unreadable item used to take the listing down with
+    // it, reporting "no item with id 2" about an item sitting right there.
+    fixture
+        .sefy()
+        .arg("ls")
+        .assert()
+        .success()
+        .stdout(contains("shed").and(contains("my card")))
+        .stdout(contains("needs a newer sefy"));
+}
+
+#[test]
+fn reading_an_item_from_a_newer_sefy_explains_rather_than_denies_it() {
+    let fixture = Fixture::with_vault();
+    add_item_of_a_future_kind(&fixture, "my card");
+
+    fixture
+        .sefy()
+        .args(["show", "my card"])
+        .assert()
+        .success()
+        .stdout(contains("card").and(contains("does not know")));
+
+    fixture
+        .sefy()
+        .args(["get", "my card", "--stdout"])
+        .assert()
+        .failure()
+        .stderr(contains("upgrade to read it"));
+}
+
+#[test]
+fn an_item_from_a_newer_sefy_can_still_be_retitled() {
+    let fixture = Fixture::with_vault();
+    add_item_of_a_future_kind(&fixture, "my card");
+
+    fixture
+        .sefy()
+        .args(["edit", "my card", "--title", "travel card"])
+        .assert()
+        .success();
+    fixture
+        .sefy()
+        .arg("ls")
+        .assert()
+        .success()
+        .stdout(contains("travel card"));
+
+    // Rewriting its contents is refused: this build cannot read what is there.
+    fixture
+        .sefy()
+        .args(["edit", "travel card", "--text", "nope"])
+        .assert()
+        .failure()
+        .stderr(contains("only --title and tags"));
+}
+
+#[test]
+fn an_export_still_runs_with_an_item_from_a_newer_sefy_in_the_vault() {
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "shed", "combination 4815", &[]);
+    add_item_of_a_future_kind(&fixture, "my card");
+
+    let output = fixture.directory().join("export.json");
+    fixture
+        .sefy()
+        .args(["export", "--output"])
+        .arg(&output)
+        .arg("--i-know-this-writes-plaintext")
+        .assert()
+        .success();
+
+    // "sefy can always get your data out" has to hold even when part of the
+    // vault came from a version this one does not understand.
+    let written = std::fs::read_to_string(&output).unwrap();
+    assert!(written.contains("my card"), "the item is in the export");
+    assert!(
+        written.contains("contents_not_exported"),
+        "and the export says its contents could not be read"
+    );
+}

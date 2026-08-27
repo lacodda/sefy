@@ -3,7 +3,7 @@
 use zeroize::Zeroize;
 
 /// Kind of payload an item carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ItemKind {
     /// Free-form text.
     Note,
@@ -11,26 +11,48 @@ pub enum ItemKind {
     Credential,
     /// Arbitrary bytes kept verbatim.
     File,
+    /// A kind this build does not know, carrying the name it was stored under.
+    ///
+    /// Vaults travel between machines, and the two ends need not run the same
+    /// version. An item written by a newer sefy therefore has to be *something*
+    /// here rather than a parse failure: refusing it would take down every
+    /// listing, export and merge in a vault that is otherwise perfectly
+    /// readable — which is exactly what 0.5.0 and earlier did.
+    ///
+    /// Such an item can be listed, searched, exported and merged, but not read
+    /// or edited: this build does not know the shape behind the name and will
+    /// not guess at it.
+    Unknown(String),
 }
 
 impl ItemKind {
     /// Stable identifier used in the database and on the command line.
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::Note => "note",
             Self::Credential => "credential",
             Self::File => "file",
+            Self::Unknown(name) => name,
         }
     }
 
-    /// Parses the identifier produced by [`ItemKind::as_str`].
-    pub fn parse(value: &str) -> Option<Self> {
+    /// Reads the identifier produced by [`ItemKind::as_str`].
+    ///
+    /// Never fails: an unrecognized name becomes [`ItemKind::Unknown`], because
+    /// a name this build has not heard of is a fact about this build, not a
+    /// broken vault.
+    pub fn parse(value: &str) -> Self {
         match value {
-            "note" => Some(Self::Note),
-            "credential" => Some(Self::Credential),
-            "file" => Some(Self::File),
-            _ => None,
+            "note" => Self::Note,
+            "credential" => Self::Credential,
+            "file" => Self::File,
+            other => Self::Unknown(other.to_owned()),
         }
+    }
+
+    /// Whether this build understands the payload behind the name.
+    pub fn is_known(&self) -> bool {
+        !matches!(self, Self::Unknown(_))
     }
 }
 
@@ -57,6 +79,15 @@ pub enum Payload {
         /// File contents, kept byte for byte.
         bytes: Vec<u8>,
     },
+    /// An item whose kind this build does not know.
+    ///
+    /// The contents stay in the vault untouched; there is nothing here because
+    /// this build cannot say what shape they have. Carrying the name lets the
+    /// item be listed and passed along without being understood.
+    Unknown {
+        /// The kind name the item was stored under.
+        kind: String,
+    },
 }
 
 impl Payload {
@@ -66,6 +97,7 @@ impl Payload {
             Self::Note { .. } => ItemKind::Note,
             Self::Credential(_) => ItemKind::Credential,
             Self::File { .. } => ItemKind::File,
+            Self::Unknown { kind } => ItemKind::Unknown(kind.clone()),
         }
     }
 }
@@ -79,6 +111,9 @@ impl Zeroize for Payload {
                 filename.zeroize();
                 bytes.zeroize();
             }
+            // Nothing secret is held here — only the kind's name, which is not
+            // a secret and is needed to describe the item.
+            Self::Unknown { .. } => {}
         }
     }
 }
@@ -209,8 +244,17 @@ mod tests {
     #[test]
     fn kind_names_round_trip() {
         for kind in [ItemKind::Note, ItemKind::Credential, ItemKind::File] {
-            assert_eq!(ItemKind::parse(kind.as_str()), Some(kind));
+            assert_eq!(ItemKind::parse(kind.as_str()), kind);
         }
-        assert_eq!(ItemKind::parse("passport"), None);
+    }
+
+    #[test]
+    fn an_unheard_of_kind_keeps_its_name_instead_of_failing() {
+        let kind = ItemKind::parse("passport");
+        assert_eq!(kind, ItemKind::Unknown("passport".to_owned()));
+        assert_eq!(kind.as_str(), "passport");
+        assert!(!kind.is_known());
+        // It survives a round trip like any other name.
+        assert_eq!(ItemKind::parse(kind.as_str()), kind);
     }
 }

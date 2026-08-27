@@ -84,6 +84,15 @@ pub struct ExportItem {
     /// Contents of a stored file, base64-encoded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes_base64: Option<String>,
+
+    /// Set when the vault held this item but the exporting build could not read
+    /// its contents, because a newer sefy wrote it.
+    ///
+    /// The entry then carries the item's identity, title and tags and nothing
+    /// else. Importing it is refused rather than done partially: an item that
+    /// silently arrived empty would be worse than one that was never imported.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub contents_not_exported: bool,
 }
 
 /// Collects everything in a vault into an [`Export`].
@@ -104,6 +113,7 @@ pub fn export(vault: &Vault) -> Result<Export> {
             notes: None,
             filename: None,
             bytes_base64: None,
+            contents_not_exported: false,
         };
 
         match item.payload {
@@ -115,6 +125,13 @@ pub fn export(vault: &Vault) -> Result<Export> {
                 exported.totp = credential.totp;
                 exported.notes = credential.notes;
             }
+            // Its contents stay behind: this build cannot read them, and an
+            // export that quietly dropped the item would turn "sefy can always
+            // get your data out" into a promise that holds only until someone
+            // uses a newer version. The entry says what it is and that it came
+            // out incomplete, so a reader is never misled into thinking an
+            // empty item is all there was.
+            Payload::Unknown { .. } => exported.contents_not_exported = true,
             Payload::File { filename, bytes } => {
                 exported.filename = Some(filename);
                 exported.bytes_base64 = Some(BASE64.encode(&bytes));
@@ -136,12 +153,19 @@ pub struct ImportReport {
     pub added: usize,
     /// Items already present under the same identity, left untouched.
     pub skipped: usize,
+    /// Entries this build cannot store: a kind it does not know, or an entry
+    /// whose contents were left out of the export that produced it.
+    ///
+    /// They are counted rather than silently dropped, and rather than failing
+    /// the whole import: one entry from a newer sefy should not stop the other
+    /// nine hundred from arriving.
+    pub unsupported: usize,
 }
 
 impl ImportReport {
     /// How many entries the export carried in total.
     pub fn total(&self) -> usize {
-        self.added + self.skipped
+        self.added + self.skipped + self.unsupported
     }
 }
 
@@ -164,14 +188,20 @@ pub fn import(vault: &mut Vault, export: &Export) -> Result<ImportReport> {
         return Err(Error::UnsupportedExport(export.version));
     }
 
-    let prepared: Vec<(Option<&str>, NewItem)> = export
-        .items
-        .iter()
-        .enumerate()
-        .map(|(index, item)| Ok((item.uuid.as_deref(), to_new_item(index, item)?)))
-        .collect::<Result<_>>()?;
-
     let mut report = ImportReport::default();
+
+    // Entries this build cannot represent are counted here and left out of the
+    // batch below, so validation of the rest — and the all-or-nothing guarantee
+    // that goes with it — is unaffected by their presence.
+    let mut prepared: Vec<(Option<&str>, NewItem)> = Vec::new();
+    for (index, item) in export.items.iter().enumerate() {
+        if item.contents_not_exported || !ItemKind::parse(&item.kind).is_known() {
+            report.unsupported += 1;
+            continue;
+        }
+        prepared.push((item.uuid.as_deref(), to_new_item(index, item)?));
+    }
+
     for (uuid, item) in prepared {
         match uuid {
             Some(uuid) if vault.find_by_uuid(uuid)?.is_some() => report.skipped += 1,
@@ -192,12 +222,7 @@ pub fn import(vault: &mut Vault, export: &Export) -> Result<ImportReport> {
 
 /// Turns one exported entry into something the vault will accept.
 fn to_new_item(index: usize, item: &ExportItem) -> Result<NewItem> {
-    let kind = ItemKind::parse(&item.kind).ok_or_else(|| Error::MalformedExport {
-        index,
-        reason: format!("unknown kind {:?}", item.kind),
-    })?;
-
-    let payload = match kind {
+    let payload = match ItemKind::parse(&item.kind) {
         ItemKind::Note => Payload::Note {
             text: item.text.clone().ok_or_else(|| Error::MalformedExport {
                 index,
@@ -243,6 +268,15 @@ fn to_new_item(index: usize, item: &ExportItem) -> Result<NewItem> {
                         reason: format!("bytes_base64 is not valid base64: {error}"),
                     })?,
             }
+        }
+        // Filtered out by `import` before it gets here: an unknown kind has no
+        // shape to build. Spelled out rather than left to a catch-all, so that
+        // adding a kind is a compile error here until it is handled.
+        ItemKind::Unknown(name) => {
+            return Err(Error::MalformedExport {
+                index,
+                reason: format!("kind {name:?} is not known to this build"),
+            });
         }
     };
 
