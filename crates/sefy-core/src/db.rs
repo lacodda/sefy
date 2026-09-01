@@ -5,7 +5,9 @@
 //! never pointed at a path, so no plaintext page ever reaches the disk.
 
 use crate::error::{Error, Result};
-use crate::model::{Credential, Item, ItemKind, ItemSummary, NewItem, Payload, Query};
+use crate::model::{
+    Field, Item, ItemKind, ItemSummary, LEGACY_LOGIN_NAME, NewItem, Payload, Query,
+};
 use rusqlite::{Connection, MAIN_DB, OptionalExtension, params};
 use std::io::Cursor;
 
@@ -13,8 +15,11 @@ use std::io::Cursor;
 ///
 /// Distinct from the file format version: the envelope can stay the same while
 /// the tables under it grow. Version 2 added `items.uuid`, which is why a vault
-/// written by 0.1.x still opens — it is migrated on load, not rejected.
-const SCHEMA_VERSION: i64 = 2;
+/// written by 0.1.x still opens. Version 3 replaced the `credentials` table
+/// with `fields`, so that a kind of record costs a template rather than a
+/// table — a vault written by 0.6.0 or earlier is migrated on load, not
+/// rejected.
+const SCHEMA_VERSION: i64 = 3;
 
 /// Opens an empty in-memory database with the current schema.
 pub fn create() -> Result<Connection> {
@@ -57,15 +62,17 @@ fn migrate(connection: &Connection) -> Result<()> {
         // earlier version arrives at the current schema by the same path.
         migrate_to_v1(connection)?;
         migrate_to_v2(connection)?;
+        migrate_to_v3(connection)?;
         connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
 
     // Unconditional, even at the current version: a migrated vault stays
-    // readable *and writable* by 0.1.x, which knows nothing about uuids and
-    // leaves the column NULL. So an up-to-date `user_version` does not prove
-    // every row carries an identity — only that this database passed through
-    // here once.
+    // readable *and writable* by an older build, which knows nothing of what
+    // was added here. So an up-to-date `user_version` does not prove every row
+    // has been brought along — only that this database passed through here
+    // once. Both passes below only ever do work on a row that needs it.
     assign_missing_uuids(connection)?;
+    move_credentials_into_fields(connection)?;
     Ok(())
 }
 
@@ -108,6 +115,112 @@ fn assign_missing_uuids(connection: &Connection) -> Result<()> {
             params![new_uuid()?, id],
         )?;
     }
+    Ok(())
+}
+
+/// Adds `fields`, the one table every record made of named fields lives in.
+///
+/// Up to 0.6.0 a credential had its own table with five fixed columns, which
+/// made every further kind — a card, an SSH key — cost another table, another
+/// payload variant and another set of flags. Fields cost a template instead.
+fn migrate_to_v3(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS fields (
+             item_id  INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+             name     TEXT    NOT NULL,
+             value    TEXT    NOT NULL,
+             secret   INTEGER NOT NULL,
+             position INTEGER NOT NULL,
+             PRIMARY KEY (item_id, name)
+         );
+
+         CREATE INDEX IF NOT EXISTS idx_fields_item ON fields(item_id, position);",
+    )?;
+
+    move_credentials_into_fields(connection)?;
+    Ok(())
+}
+
+/// One row of the pre-0.7.0 `credentials` table.
+type LegacyCredential = (
+    i64,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+
+/// Turns every remaining `credentials` row into fields, then empties the table.
+///
+/// The table itself stays — dropping it would make an older build's own writes
+/// fail outright rather than be carried across — but its rows do not. A row
+/// left behind would still be readable by 0.6.0 through `get`, while that same
+/// build's `show` and `ls` called the item a kind they do not know: one binary
+/// giving two answers to "do you understand this item". Moving the contents and
+/// leaving nothing behind makes the older build wrong about the item
+/// consistently, which is the honest half of the two.
+///
+/// This runs on every open rather than behind a version check, so a row 0.6.0
+/// inserts *after* this vault was migrated is picked up on the next open
+/// instead of being lost. `user_version` says "this database passed through the
+/// migration once", never "every row has been brought along" — the lesson the
+/// uuid migration taught in 0.2.0.
+fn move_credentials_into_fields(connection: &Connection) -> Result<()> {
+    let table_exists = connection
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'credentials'")?
+        .exists([])?;
+    if !table_exists {
+        return Ok(());
+    }
+
+    let leftovers: Vec<LegacyCredential> = connection
+        .prepare(
+            "SELECT item_id, login, password, url, totp, notes FROM credentials
+                 WHERE item_id NOT IN (SELECT item_id FROM fields)",
+        )?
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })?
+        .collect::<std::result::Result<_, _>>()?;
+
+    for (item_id, login, password, url, totp, notes) in leftovers {
+        let mut fields = vec![
+            Field::public("login", login),
+            Field::secret("password", password),
+        ];
+        // An absent optional stays absent: writing it as an empty field would
+        // turn "this login has no URL" into "its URL is the empty string".
+        if let Some(url) = url {
+            fields.push(Field::public("url", url));
+        }
+        if let Some(totp) = totp {
+            fields.push(Field::secret("totp", totp));
+        }
+        if let Some(notes) = notes {
+            fields.push(Field::public("notes", notes));
+        }
+        write_fields(connection, item_id, &fields)?;
+    }
+
+    // The kind is renamed alongside, so the vault says `login` everywhere and
+    // an item does not read as one kind in its row and another in its fields.
+    connection.execute(
+        "UPDATE items SET kind = ?1 WHERE kind = ?2",
+        params![ItemKind::Login.as_str(), LEGACY_LOGIN_NAME],
+    )?;
+
+    // Emptied only once the contents are safely in `fields`. A crash between
+    // the two leaves the vault holding both copies, which the next open
+    // resolves exactly the same way rather than losing anything.
+    connection.execute("DELETE FROM credentials", [])?;
     Ok(())
 }
 
@@ -229,20 +342,7 @@ fn insert_payload(connection: &Connection, id: i64, payload: &Payload) -> Result
                 params![id, text],
             )?;
         }
-        Payload::Credential(credential) => {
-            connection.execute(
-                "INSERT INTO credentials (item_id, login, password, url, totp, notes)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![
-                    id,
-                    credential.login,
-                    credential.password,
-                    credential.url,
-                    credential.totp,
-                    credential.notes
-                ],
-            )?;
-        }
+        Payload::Fields { fields, .. } => write_fields(connection, id, fields)?,
         Payload::File { filename, bytes } => {
             connection.execute(
                 "INSERT INTO files (item_id, filename, bytes) VALUES (?1, ?2, ?3)",
@@ -263,10 +363,51 @@ fn insert_payload(connection: &Connection, id: i64, payload: &Payload) -> Result
     Ok(())
 }
 
+/// Writes a record's fields, keeping the order they were given in.
+///
+/// Position is stored rather than derived: the template's order is what a
+/// record is meant to be read in, and a field the template never heard of has
+/// to sit somewhere stable too.
+fn write_fields(connection: &Connection, id: i64, fields: &[Field]) -> Result<()> {
+    for (position, field) in fields.iter().enumerate() {
+        connection.execute(
+            "INSERT OR REPLACE INTO fields (item_id, name, value, secret, position)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id, field.name, field.value, field.secret, position as i64],
+        )?;
+    }
+    Ok(())
+}
+
+fn read_fields(connection: &Connection, id: i64) -> Result<Vec<Field>> {
+    let mut statement = connection.prepare(
+        "SELECT name, value, secret FROM fields WHERE item_id = ?1 ORDER BY position, name",
+    )?;
+    let fields = statement
+        .query_map(params![id], |row| {
+            Ok(Field {
+                name: row.get(0)?,
+                value: row.get(1)?,
+                secret: row.get(2)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(fields)
+}
+
 fn delete_payload(connection: &Connection, id: i64) -> Result<()> {
     connection.execute("DELETE FROM notes WHERE item_id = ?1", params![id])?;
-    connection.execute("DELETE FROM credentials WHERE item_id = ?1", params![id])?;
+    connection.execute("DELETE FROM fields WHERE item_id = ?1", params![id])?;
     connection.execute("DELETE FROM files WHERE item_id = ?1", params![id])?;
+    // The pre-v3 table is emptied for this item too: leaving the old row behind
+    // would let the migration pass resurrect the contents that were just
+    // replaced, the next time this vault is opened.
+    let has_credentials = connection
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'credentials'")?
+        .exists([])?;
+    if has_credentials {
+        connection.execute("DELETE FROM credentials WHERE item_id = ?1", params![id])?;
+    }
     Ok(())
 }
 
@@ -346,7 +487,9 @@ pub fn update_item(
         let kind = payload.kind();
         // Changing an item's kind would leave callers holding an id whose shape
         // silently changed; edits stay within the kind the item was created as.
-        if kind.as_str() != existing_kind {
+        // Compared as parsed kinds, so a row still saying `credential` matches
+        // the `login` it is read as.
+        if kind != ItemKind::parse(&existing_kind) {
             return Err(Error::ItemKindMismatch {
                 id,
                 actual: existing_kind,
@@ -355,6 +498,10 @@ pub fn update_item(
         }
         delete_payload(&transaction, id)?;
         insert_payload(&transaction, id, &payload)?;
+        transaction.execute(
+            "UPDATE items SET kind = ?2 WHERE id = ?1",
+            params![id, kind.as_str()],
+        )?;
     }
 
     if let Some(tags) = tags {
@@ -391,19 +538,10 @@ pub fn get_item(connection: &Connection, id: i64) -> Result<Item> {
             )?;
             Payload::Note { text }
         }
-        ItemKind::Credential => connection.query_row(
-            "SELECT login, password, url, totp, notes FROM credentials WHERE item_id = ?1",
-            params![id],
-            |row| {
-                Ok(Payload::Credential(Credential {
-                    login: row.get(0)?,
-                    password: row.get(1)?,
-                    url: row.get(2)?,
-                    totp: row.get(3)?,
-                    notes: row.get(4)?,
-                }))
-            },
-        )?,
+        ItemKind::Login | ItemKind::Card | ItemKind::SshKey => Payload::Fields {
+            kind: summary.kind.clone(),
+            fields: read_fields(connection, id)?,
+        },
         ItemKind::File => connection.query_row(
             "SELECT filename, bytes FROM files WHERE item_id = ?1",
             params![id],
@@ -470,15 +608,26 @@ fn tags_of(connection: &Connection, id: i64) -> Result<Vec<String>> {
 pub fn search(connection: &Connection, query: &Query) -> Result<Vec<ItemSummary>> {
     let mut sql = String::from(
         "SELECT DISTINCT i.id FROM items i
-         LEFT JOIN notes n       ON n.item_id = i.id
-         LEFT JOIN credentials c ON c.item_id = i.id
+         LEFT JOIN notes n ON n.item_id = i.id
          WHERE 1 = 1",
     );
     let mut arguments: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
     if let Some(kind) = &query.kind {
         arguments.push(Box::new(kind.as_str().to_owned()));
-        sql.push_str(&format!(" AND i.kind = ?{}", arguments.len()));
+        let placeholder = arguments.len();
+        if *kind == ItemKind::Login {
+            // A vault last written by 0.6.0 still says `credential` in its
+            // rows until it is opened for writing, and `ls --kind login` has
+            // to find those too.
+            arguments.push(Box::new(LEGACY_LOGIN_NAME.to_owned()));
+            sql.push_str(&format!(
+                " AND i.kind IN (?{placeholder}, ?{})",
+                arguments.len()
+            ));
+        } else {
+            sql.push_str(&format!(" AND i.kind = ?{placeholder}"));
+        }
     }
 
     if let Some(text) = query
@@ -488,15 +637,17 @@ pub fn search(connection: &Connection, query: &Query) -> Result<Vec<ItemSummary>
         .filter(|t| !t.is_empty())
     {
         // Attachment bytes are deliberately left out: a blob match would say
-        // nothing useful and would mean scanning every file in the vault.
+        // nothing useful and would mean scanning every file in the vault. So
+        // are secret field values — a password is not something to find an item
+        // by, and matching one would tell a bystander it is in there.
         arguments.push(Box::new(format!("%{}%", escape_like(text))));
         let placeholder = arguments.len();
         sql.push_str(&format!(
             " AND (i.title LIKE ?{p} ESCAPE '\\'
                 OR n.text  LIKE ?{p} ESCAPE '\\'
-                OR c.login LIKE ?{p} ESCAPE '\\'
-                OR c.url   LIKE ?{p} ESCAPE '\\'
-                OR c.notes LIKE ?{p} ESCAPE '\\')",
+                OR EXISTS (SELECT 1 FROM fields f
+                           WHERE f.item_id = i.id AND f.secret = 0
+                             AND f.value LIKE ?{p} ESCAPE '\\'))",
             p = placeholder
         ));
     }
@@ -587,5 +738,66 @@ mod tests {
         let reloaded = load(&bytes).unwrap();
 
         assert_eq!(get_item(&reloaded, id).unwrap().summary.title, "note");
+    }
+
+    #[test]
+    fn fields_keep_the_order_they_were_written_in() {
+        let mut connection = create().unwrap();
+        let id = insert_item(
+            &mut connection,
+            NewItem::new(
+                "card",
+                Payload::fields(
+                    ItemKind::Card,
+                    [
+                        Field::secret("number", "4111"),
+                        Field::public("holder", "Ada"),
+                        Field::public("expiry", "01/29"),
+                    ],
+                ),
+            ),
+            10,
+        )
+        .unwrap();
+
+        let Payload::Fields { fields, .. } = get_item(&connection, id).unwrap().payload else {
+            panic!("expected a record made of fields");
+        };
+        let names: Vec<&str> = fields.iter().map(|field| field.name.as_str()).collect();
+        assert_eq!(names, ["number", "holder", "expiry"]);
+        assert!(fields[0].secret);
+        assert!(!fields[1].secret);
+    }
+
+    #[test]
+    fn a_secret_field_is_not_searchable() {
+        let mut connection = create().unwrap();
+        insert_item(
+            &mut connection,
+            NewItem::new(
+                "mail",
+                Payload::fields(
+                    ItemKind::Login,
+                    [
+                        Field::public("login", "ada"),
+                        Field::secret("password", "hunter2"),
+                    ],
+                ),
+            ),
+            10,
+        )
+        .unwrap();
+
+        assert_eq!(
+            search(&connection, &Query::all().text("ada"))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            search(&connection, &Query::all().text("hunter2"))
+                .unwrap()
+                .is_empty()
+        );
     }
 }

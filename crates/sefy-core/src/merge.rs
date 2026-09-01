@@ -164,7 +164,16 @@ fn conflict_title(title: &str) -> String {
 fn same_contents(left: &Payload, right: &Payload) -> bool {
     match (left, right) {
         (Payload::Note { text: a }, Payload::Note { text: b }) => a == b,
-        (Payload::Credential(a), Payload::Credential(b)) => a == b,
+        (
+            Payload::Fields {
+                kind: a,
+                fields: left,
+            },
+            Payload::Fields {
+                kind: b,
+                fields: right,
+            },
+        ) => a == b && left == right,
         (
             Payload::File {
                 filename: a,

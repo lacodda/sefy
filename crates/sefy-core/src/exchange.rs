@@ -13,15 +13,24 @@
 //!   "sefy_export": 1,
 //!   "items": [
 //!     { "title": "bank", "kind": "note", "tags": ["money"], "text": "…" },
-//!     { "title": "mail", "kind": "credential", "login": "…", "password": "…" },
+//!     { "title": "mail", "kind": "login", "login": "…", "password": "…",
+//!       "fields": [ { "name": "login", "value": "…" },
+//!                   { "name": "password", "value": "…", "secret": true } ] },
 //!     { "title": "key",  "kind": "file", "filename": "id_ed25519",
 //!       "bytes_base64": "…" }
 //!   ]
 //! }
 //! ```
+//!
+//! A record made of fields is written twice over: once as `fields`, which is
+//! the whole truth, and once as the flat keys a login used to have. The flat
+//! copy is what another tool — or a reader's eye — finds where it expects it;
+//! `fields` is what carries a card, an SSH key, and any field a template never
+//! heard of. Reading prefers `fields` and falls back to the flat keys, so an
+//! export written by 0.6.0 still imports.
 
 use crate::error::{Error, Result};
-use crate::model::{Credential, ItemKind, NewItem, Payload};
+use crate::model::{Field, ItemKind, NewItem, Payload};
 use crate::vault::Vault;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -62,19 +71,28 @@ pub struct ExportItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
 
-    /// Login of a credential.
+    /// Fields of a record: a login, a card, an SSH key.
+    ///
+    /// The authoritative form. The flat keys below repeat a login's fields
+    /// under the names it carried up to 0.6.0, so an older sefy and anything
+    /// written against it still find them; they say nothing about a card or an
+    /// SSH key, which had no flat form to begin with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fields: Vec<ExportField>,
+
+    /// Login of a record, repeated from its fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login: Option<String>,
-    /// Password of a credential.
+    /// Password of a record, repeated from its fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
-    /// URL of a credential.
+    /// URL of a record, repeated from its fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    /// TOTP secret of a credential.
+    /// TOTP secret of a record, repeated from its fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub totp: Option<String>,
-    /// Notes of a credential.
+    /// Notes of a record, repeated from its fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
 
@@ -95,6 +113,20 @@ pub struct ExportItem {
     pub contents_not_exported: bool,
 }
 
+/// One field of a record in an export.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportField {
+    /// What the field is called.
+    pub name: String,
+    /// What it holds.
+    pub value: String,
+    /// Whether the value is a secret.
+    ///
+    /// Absent means public, so an export stays readable when written by hand.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub secret: bool,
+}
+
 /// Collects everything in a vault into an [`Export`].
 pub fn export(vault: &Vault) -> Result<Export> {
     let mut items = Vec::new();
@@ -106,6 +138,7 @@ pub fn export(vault: &Vault) -> Result<Export> {
             kind: item.summary.kind.as_str().to_owned(),
             tags: item.summary.tags,
             text: None,
+            fields: Vec::new(),
             login: None,
             password: None,
             url: None,
@@ -118,12 +151,31 @@ pub fn export(vault: &Vault) -> Result<Export> {
 
         match item.payload {
             Payload::Note { text } => exported.text = Some(text),
-            Payload::Credential(credential) => {
-                exported.login = Some(credential.login);
-                exported.password = Some(credential.password);
-                exported.url = credential.url;
-                exported.totp = credential.totp;
-                exported.notes = credential.notes;
+            Payload::Fields { fields, .. } => {
+                // The flat keys are filled from whatever the record happens to
+                // carry under those names — a login always, a card or an SSH
+                // key only where it genuinely has a "notes" of its own. A field
+                // outside them travels in `fields` alone, which is why that is
+                // the form a reader should prefer.
+                for field in &fields {
+                    let flat = match field.name.as_str() {
+                        "login" => &mut exported.login,
+                        "password" => &mut exported.password,
+                        "url" => &mut exported.url,
+                        "totp" => &mut exported.totp,
+                        "notes" => &mut exported.notes,
+                        _ => continue,
+                    };
+                    *flat = Some(field.value.clone());
+                }
+                exported.fields = fields
+                    .into_iter()
+                    .map(|field| ExportField {
+                        name: field.name,
+                        value: field.value,
+                        secret: field.secret,
+                    })
+                    .collect();
             }
             // Its contents stay behind: this build cannot read them, and an
             // export that quietly dropped the item would turn "sefy can always
@@ -229,22 +281,16 @@ fn to_new_item(index: usize, item: &ExportItem) -> Result<NewItem> {
                 reason: "a note needs a \"text\" field".to_owned(),
             })?,
         },
-        ItemKind::Credential => Payload::Credential(Credential {
-            login: item.login.clone().ok_or_else(|| Error::MalformedExport {
-                index,
-                reason: "a credential needs a \"login\" field".to_owned(),
-            })?,
-            password: item
-                .password
-                .clone()
-                .ok_or_else(|| Error::MalformedExport {
+        kind @ (ItemKind::Login | ItemKind::Card | ItemKind::SshKey) => {
+            let fields = read_fields(index, &kind, item)?;
+            if fields.is_empty() {
+                return Err(Error::MalformedExport {
                     index,
-                    reason: "a credential needs a \"password\" field".to_owned(),
-                })?,
-            url: item.url.clone(),
-            totp: item.totp.clone(),
-            notes: item.notes.clone(),
-        }),
+                    reason: format!("a {kind} needs at least one field"),
+                });
+            }
+            Payload::Fields { kind, fields }
+        }
         ItemKind::File => {
             let encoded = item
                 .bytes_base64
@@ -281,6 +327,62 @@ fn to_new_item(index: usize, item: &ExportItem) -> Result<NewItem> {
     };
 
     Ok(NewItem::new(item.title.clone(), payload).with_tags(item.tags.clone()))
+}
+
+/// Reads a record's fields out of an exported entry.
+///
+/// `fields` is the authoritative form and wins outright. Only when it is
+/// absent — an export written by 0.6.0, or one produced by another tool — are
+/// the flat keys read instead, in template order and with the template's idea
+/// of what is secret. Both forms are never merged: an entry carrying `fields`
+/// has already said everything it holds, and folding stale flat keys in would
+/// resurrect a value the writer had dropped.
+fn read_fields(index: usize, kind: &ItemKind, item: &ExportItem) -> Result<Vec<Field>> {
+    if !item.fields.is_empty() {
+        let mut seen: Vec<&str> = Vec::new();
+        for field in &item.fields {
+            if seen.contains(&field.name.as_str()) {
+                return Err(Error::MalformedExport {
+                    index,
+                    reason: format!("field {:?} appears twice", field.name),
+                });
+            }
+            seen.push(&field.name);
+        }
+        return Ok(item
+            .fields
+            .iter()
+            .map(|field| Field {
+                name: field.name.clone(),
+                value: field.value.clone(),
+                secret: field.secret,
+            })
+            .collect());
+    }
+
+    let flat = [
+        ("login", &item.login),
+        ("password", &item.password),
+        ("url", &item.url),
+        ("totp", &item.totp),
+        ("notes", &item.notes),
+    ];
+    let template = kind.template();
+    Ok(flat
+        .into_iter()
+        .filter_map(|(name, value)| {
+            value.as_ref().map(|value| Field {
+                name: name.to_owned(),
+                value: value.clone(),
+                // A name the template does not list is taken as secret: for a
+                // value of unknown meaning, hiding it is the mistake that can
+                // be undone.
+                secret: template
+                    .and_then(|template| template.field(name))
+                    .is_none_or(|field| field.secret),
+            })
+        })
+        .collect())
 }
 
 /// Renders an export as indented JSON.

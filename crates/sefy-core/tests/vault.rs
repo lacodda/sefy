@@ -1,7 +1,7 @@
 //! End-to-end behaviour of a vault file: what survives a save, what a wrong
 //! password gets, and what never reaches the disk.
 
-use sefy_core::{Credential, Error, ItemKind, NewItem, Payload, Query, Vault};
+use sefy_core::{Error, Field, ItemKind, NewItem, Payload, Query, Vault};
 use std::fs;
 use std::path::PathBuf;
 
@@ -39,13 +39,15 @@ fn items_survive_a_save_and_reopen() {
         .add(
             NewItem::new(
                 "mail",
-                Payload::Credential(Credential {
-                    login: "someone".to_owned(),
-                    password: "hunter2".to_owned(),
-                    url: Some("https://example.invalid".to_owned()),
-                    totp: Some("JBSWY3DPEHPK3PXP".to_owned()),
-                    notes: None,
-                }),
+                Payload::fields(
+                    ItemKind::Login,
+                    [
+                        Field::public("login", "someone"),
+                        Field::secret("password", "hunter2"),
+                        Field::public("url", "https://example.invalid"),
+                        Field::secret("totp", "JBSWY3DPEHPK3PXP"),
+                    ],
+                ),
             )
             .with_tags(["mail"]),
         )
@@ -62,11 +64,20 @@ fn items_survive_a_save_and_reopen() {
 
     let restored_credential = reopened.get(credential_id).unwrap();
     match restored_credential.payload {
-        Payload::Credential(credential) => {
-            assert_eq!(credential.login, "someone");
-            assert_eq!(credential.password, "hunter2");
-            assert_eq!(credential.totp.as_deref(), Some("JBSWY3DPEHPK3PXP"));
-            assert_eq!(credential.notes, None);
+        Payload::Fields { fields, .. } => {
+            assert_eq!(
+                fields.iter().find(|f| f.name == "login").unwrap().value,
+                "someone"
+            );
+            assert_eq!(
+                fields.iter().find(|f| f.name == "password").unwrap().value,
+                "hunter2"
+            );
+            assert_eq!(
+                fields.iter().find(|f| f.name == "totp").unwrap().value,
+                "JBSWY3DPEHPK3PXP"
+            );
+            assert!(fields.iter().find(|f| f.name == "notes").is_none());
         }
         other => panic!("expected a credential, got {other:?}"),
     }
@@ -266,7 +277,10 @@ fn an_items_kind_cannot_change() {
     let result = vault.update(
         id,
         None,
-        Some(Payload::Credential(Credential::default())),
+        Some(Payload::fields(
+            ItemKind::Login,
+            [Field::public("login", ""), Field::secret("password", "")],
+        )),
         None,
     );
     assert!(matches!(result, Err(Error::ItemKindMismatch { .. })));
@@ -294,12 +308,14 @@ fn search_filters_by_text_kind_and_tags() {
         .add(
             NewItem::new(
                 "bank login",
-                Payload::Credential(Credential {
-                    login: "customer".to_owned(),
-                    password: "s3cret".to_owned(),
-                    url: Some("https://bank.invalid".to_owned()),
-                    ..Credential::default()
-                }),
+                Payload::fields(
+                    ItemKind::Login,
+                    [
+                        Field::public("login", "customer"),
+                        Field::secret("password", "s3cret"),
+                        Field::public("url", "https://bank.invalid"),
+                    ],
+                ),
             )
             .with_tags(["money"]),
         )
@@ -502,13 +518,15 @@ fn an_export_round_trips_through_json() {
     vault
         .add(NewItem::new(
             "mail",
-            Payload::Credential(Credential {
-                login: "someone".to_owned(),
-                password: "hunter2".to_owned(),
-                url: Some("https://example.invalid".to_owned()),
-                totp: Some("JBSWY3DPEHPK3PXP".to_owned()),
-                notes: None,
-            }),
+            Payload::fields(
+                ItemKind::Login,
+                [
+                    Field::public("login", "someone"),
+                    Field::secret("password", "hunter2"),
+                    Field::public("url", "https://example.invalid"),
+                    Field::secret("totp", "JBSWY3DPEHPK3PXP"),
+                ],
+            ),
         ))
         .unwrap();
     vault
@@ -543,10 +561,16 @@ fn an_export_round_trips_through_json() {
         .unwrap()
         .payload
     {
-        Payload::Credential(credential) => {
-            assert_eq!(credential.password, "hunter2");
-            assert_eq!(credential.totp.as_deref(), Some("JBSWY3DPEHPK3PXP"));
-            assert_eq!(credential.notes, None);
+        Payload::Fields { fields, .. } => {
+            assert_eq!(
+                fields.iter().find(|f| f.name == "password").unwrap().value,
+                "hunter2"
+            );
+            assert_eq!(
+                fields.iter().find(|f| f.name == "totp").unwrap().value,
+                "JBSWY3DPEHPK3PXP"
+            );
+            assert!(fields.iter().find(|f| f.name == "notes").is_none());
         }
         other => panic!("expected a credential, got {other:?}"),
     }

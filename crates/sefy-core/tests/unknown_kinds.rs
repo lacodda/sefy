@@ -50,17 +50,17 @@ fn add_item_of_a_future_kind(path: &Path, title: &str) {
     connection
         .execute(
             "INSERT INTO items (uuid, title, kind, created_at, updated_at)
-             VALUES ('11111111-2222-4333-8444-555555555555', ?1, 'card', 1000, 1000)",
+             VALUES ('11111111-2222-4333-8444-555555555555', ?1, 'passport', 1000, 1000)",
             [title],
         )
         .unwrap();
     let id = connection.last_insert_rowid();
     connection
-        .execute_batch("CREATE TABLE cards (item_id INTEGER NOT NULL, number TEXT NOT NULL)")
+        .execute_batch("CREATE TABLE passports (item_id INTEGER NOT NULL, number TEXT NOT NULL)")
         .unwrap();
     connection
         .execute(
-            "INSERT INTO cards (item_id, number) VALUES (?1, '4111111111111111')",
+            "INSERT INTO passports (item_id, number) VALUES (?1, '4111111111111111')",
             [id],
         )
         .unwrap();
@@ -76,7 +76,7 @@ fn vault_with_an_unknown_item(fixture: &Fixture) -> Vault {
         .unwrap();
     vault.save().unwrap();
 
-    add_item_of_a_future_kind(&fixture.path, "my card");
+    add_item_of_a_future_kind(&fixture.path, "my passport");
     Vault::open(&fixture.path, PASSWORD).unwrap()
 }
 
@@ -90,13 +90,13 @@ fn an_item_of_an_unknown_kind_is_listed_rather_than_breaking_the_listing() {
 
     let unknown = items
         .iter()
-        .find(|item| item.title == "my card")
+        .find(|item| item.title == "my passport")
         .expect("the item from a newer sefy is in the listing");
-    assert_eq!(unknown.kind, ItemKind::Unknown("card".to_owned()));
+    assert_eq!(unknown.kind, ItemKind::Unknown("passport".to_owned()));
     assert!(!unknown.kind.is_known());
     assert_eq!(
         unknown.kind.as_str(),
-        "card",
+        "passport",
         "it keeps the name it was stored under"
     );
 }
@@ -112,7 +112,7 @@ fn searching_still_works_with_an_unknown_item_in_the_vault() {
     assert_eq!(found.len(), 1);
 
     // And the unknown one is findable by what this build can see of it.
-    let found = vault.search(&Query::all().text("my card")).unwrap();
+    let found = vault.search(&Query::all().text("my passport")).unwrap();
     assert_eq!(found.len(), 1);
 }
 
@@ -125,7 +125,7 @@ fn reading_an_unknown_item_reports_its_kind_instead_of_guessing() {
         .list()
         .unwrap()
         .into_iter()
-        .find(|i| i.title == "my card")
+        .find(|i| i.title == "my passport")
         .unwrap();
     let item = vault.get(summary.id).unwrap();
 
@@ -133,7 +133,7 @@ fn reading_an_unknown_item_reports_its_kind_instead_of_guessing() {
     assert_eq!(
         item.payload,
         Payload::Unknown {
-            kind: "card".to_owned()
+            kind: "passport".to_owned()
         }
     );
 }
@@ -149,9 +149,9 @@ fn an_export_carries_an_unknown_item_and_says_its_contents_are_missing() {
     let unknown = export
         .items
         .iter()
-        .find(|item| item.title == "my card")
+        .find(|item| item.title == "my passport")
         .expect("an export that dropped it would make the vault a trap");
-    assert_eq!(unknown.kind, "card");
+    assert_eq!(unknown.kind, "passport");
     assert!(
         unknown.contents_not_exported,
         "the entry must admit it is incomplete rather than look like an empty item"
@@ -217,7 +217,7 @@ fn an_unknown_item_can_be_retitled_and_retagged_but_not_rewritten() {
         .list()
         .unwrap()
         .into_iter()
-        .find(|i| i.title == "my card")
+        .find(|i| i.title == "my passport")
         .unwrap()
         .id;
 
@@ -225,7 +225,7 @@ fn an_unknown_item_can_be_retitled_and_retagged_but_not_rewritten() {
     vault
         .update(
             id,
-            Some("my travel card".to_owned()),
+            Some("my travel passport".to_owned()),
             None,
             Some(vec!["wallet".to_owned()]),
         )
@@ -234,9 +234,9 @@ fn an_unknown_item_can_be_retitled_and_retagged_but_not_rewritten() {
 
     let reopened = Vault::open(&fixture.path, PASSWORD).unwrap();
     let summary = reopened.summary(id).unwrap();
-    assert_eq!(summary.title, "my travel card");
+    assert_eq!(summary.title, "my travel passport");
     assert_eq!(summary.tags, vec!["wallet"]);
-    assert_eq!(summary.kind, ItemKind::Unknown("card".to_owned()));
+    assert_eq!(summary.kind, ItemKind::Unknown("passport".to_owned()));
 
     // Replacing the contents is refused: this build cannot read what is there
     // and must not write over it.
@@ -245,7 +245,7 @@ fn an_unknown_item_can_be_retitled_and_retagged_but_not_rewritten() {
         id,
         None,
         Some(Payload::Unknown {
-            kind: "card".to_owned(),
+            kind: "passport".to_owned(),
         }),
         None,
     );
@@ -270,7 +270,7 @@ fn the_contents_of_an_unknown_item_survive_being_carried_by_this_build() {
     let database = sefy_core::format::decode(PASSWORD, &file).unwrap();
     let connection = sefy_core::db::load(&database).unwrap();
     let number: String = connection
-        .query_row("SELECT number FROM cards", [], |row| row.get(0))
+        .query_row("SELECT number FROM passports", [], |row| row.get(0))
         .expect("the newer sefy's table and row are untouched");
     assert_eq!(number, "4111111111111111");
 }
@@ -285,7 +285,7 @@ fn an_entry_of_an_unknown_kind_is_skipped_even_without_the_missing_contents_flag
         "sefy_export": 1,
         "items": [
             { "title": "shed", "kind": "note", "text": "combination 4815" },
-            { "title": "my card", "kind": "card", "number": "4111111111111111" }
+            { "title": "my passport", "kind": "passport", "number": "4111111111111111" }
         ]
     }"#;
 
