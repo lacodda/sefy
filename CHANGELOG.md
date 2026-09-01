@@ -2,48 +2,80 @@
 
 All notable changes to this project are documented in this file.
 
-Vault files stay readable across releases. The **file format** is frozen at
+A vault stays readable by every later sefy. The **file format** is frozen at
 version 1; the **database schema** inside the ciphertext is versioned separately
-and does move — 0.2.0 added an identity to items, which is migrated in on load.
-A vault written by 0.1.x opens in 0.2.0 and remains readable by 0.1.x
-afterwards. Any change that would break an existing file gets its own
-"Breaking Changes" section here, with the migration path or a plain statement
-that there is none. This paragraph survives regenerating the file.
+and does move — 0.2.0 gave items an identity, 0.7.0 turned records into named
+fields — and an older vault is migrated in on load.
 
-## [0.6.0] - 2026-08-27
+What an *older build* makes of a migrated vault depends on the change. The
+0.2.0 migration left everything readable by 0.1.x. The 0.7.0 one does not: a
+login is a kind 0.6.0 has never heard of, so that build lists, exports and syncs
+it while saying to upgrade before reading it — the forward-compatibility
+contract from 0.6.0, not a break.
 
-Existing vaults are unaffected: the file format is still version 1 and the plugin
-protocol is still version 1. What changes is what happens when a vault holds an
-item this build does not understand — one written by a newer sefy. Until now a
-single such item made `ls`, `find`, `export` and `merge` fail outright, claiming
-no item with that id existed while it sat plainly in the file. It is now listed,
-searched, retitled, exported and passed over by a merge, and only the operations
-that would have to invent its contents are refused.
+Any change that would break an existing file gets its own "Breaking Changes"
+section here, with the migration path or a plain statement that there is none.
+This paragraph survives regenerating the file.
 
-That matters a release early: it makes adding a kind of item something an older
-sefy can survive rather than a breaking change for everyone syncing between
-machines.
+## [0.7.0] - 2026-09-01
 
-This release also moves `argon2` from 0.5 to 0.6, its first stable release after
-months of candidates. The derived key is unchanged — a vault written by the
-published 0.5.0 binary opens under this one and vice versa — and a file from that
-binary is now kept in the test suite so any future crypto bump has to prove the
-same thing rather than be reasoned about.
+A login, a payment card and an SSH key differ in which fields they carry and
+which of those are secret — not in how they are stored. From this release every
+such record is an ordered set of named fields, and a kind of record is a
+template over them rather than a table, a payload variant and a branch in every
+function that reads an item. `card` and `ssh-key` arrive as two entries in that
+template list; the next kind costs the same.
+
+A field carries its own secrecy rather than having it looked up by name, so a
+field no template mentions — one you add with `edit --set`, or one a future sefy
+wrote — is still hidden when it should be. `sefy get --field` accordingly takes
+any field name instead of four fixed ones, and without it takes what the kind is
+mostly about: a login's password, a card's number, an SSH key's private key.
+
+The kind `credential` is renamed to `login`. The old name still **parses**
+everywhere it used to appear — in vaults, in exports, as `--kind credential`,
+and as `sefy add credential` — but it is no longer **written**.
 
 ### Breaking Changes
 
-Only for code using the `sefy-core` library; the CLI and vault files are
-unaffected.
+**Vault files.** The file format is still version 1 and nothing about the file
+on disk changes shape. The database schema inside the ciphertext goes from 2 to
+3: a vault written by 0.6.0 or earlier is migrated when it is opened, with each
+`credentials` row becoming fields in the same order and an absent optional
+producing no field rather than an empty one. There is nothing to do by hand.
 
-- `ItemKind` gained an `Unknown(String)` variant and is no longer `Copy`; match
-  arms must handle it, and `as_str` now takes `&self` and returns `&str`.
-- `ItemKind::parse` returns `ItemKind` rather than `Option<ItemKind>`: a name
-  this build has not heard of is no longer a failure.
-- `Payload` gained an `Unknown { kind }` variant. Writing one into a vault is
-  refused with `Error::UnknownItemKind`.
-- `Error::ItemKindMismatch` carries `String` fields instead of `&'static str`.
-- `ImportReport` and `MergeReport` gained an `unsupported` count, and
-  `MergeReport::is_empty` accounts for it.
+**A migrated vault is not fully readable by 0.6.0.** A login is a kind that
+build has never heard of, so it lists the item, exports it, merges it and says
+to upgrade before reading it — the forward-compatibility contract added in
+0.6.0, working as intended. Nothing is lost and the newer build reads
+everything, but if you sync a vault between machines, upgrade both.
+
+**`sefy edit` lost its per-field credential flags.** `--login`, `--password`,
+`--url`, `--totp`, `--notes` and `--item-password-env` are replaced by:
+
+- `--set NAME=VALUE` — set a field; a field the record lacks is added.
+- `--set-secret NAME` — prompt for the value and mark the field secret.
+- `--unset NAME` — remove a field.
+
+`sefy edit mail --login someone` becomes `sefy edit mail --set login=someone`.
+`sefy add login` keeps `--item-password-env`; only `edit` lost it.
+
+**`sefy-core` library.** `Payload::Credential` and the `Credential` struct are
+gone, replaced by `Payload::Fields { kind, fields }` over the new `Field { name,
+value, secret }`. `ItemKind::Credential` is now `ItemKind::Login`, joined by
+`Card` and `SshKey`. `ItemKind::parse` still accepts `"credential"`.
+
+### Documentation
+- Describe records, their fields and the 0.7.0 migration
+
+### Features
+- Make a record a set of named fields
+- Add card and ssh-key, and edit records field by field
+
+### Testing
+- Let the transport gate tell ssh-key from ssh
+
+## [0.6.0] - 2026-08-27
 
 ### Bug Fixes
 - An item from a newer sefy no longer breaks the vault it sits in
@@ -51,6 +83,7 @@ unaffected.
 ### Documentation
 - Publishing a crate by hand does not connect it to this repository
 - Say what holds when two machines run different versions
+- V0.6.0
 
 ## [0.5.0] - 2026-08-21
 
