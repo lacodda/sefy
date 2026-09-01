@@ -263,7 +263,8 @@ pub enum AddKind {
     },
 
     /// A login, its password and where it is used.
-    Credential {
+    #[command(alias = "credential")]
+    Login {
         /// What to call it.
         title: String,
 
@@ -296,6 +297,93 @@ pub enum AddKind {
         tag: Vec<String>,
     },
 
+    /// A payment card.
+    ///
+    /// The number, the CVV and the PIN are secret: they are asked for rather
+    /// than passed as options, so they stay out of the shell history and out of
+    /// every process listing on the machine.
+    Card {
+        /// What to call it.
+        title: String,
+
+        /// Name embossed on the card.
+        #[arg(long)]
+        holder: Option<String>,
+
+        /// Expiry date, as printed on the card.
+        #[arg(long)]
+        expiry: Option<String>,
+
+        /// Anything else worth remembering.
+        #[arg(long)]
+        notes: Option<String>,
+
+        /// Do not ask for the CVV.
+        #[arg(long)]
+        no_cvv: bool,
+
+        /// Do not ask for the PIN.
+        #[arg(long)]
+        no_pin: bool,
+
+        /// Read the card number from this environment variable instead of
+        /// prompting.
+        #[arg(long, value_name = "VAR")]
+        number_env: Option<String>,
+
+        /// Read the CVV from this environment variable instead of prompting.
+        #[arg(long, value_name = "VAR", conflicts_with = "no_cvv")]
+        cvv_env: Option<String>,
+
+        /// Read the PIN from this environment variable instead of prompting.
+        #[arg(long, value_name = "VAR", conflicts_with = "no_pin")]
+        pin_env: Option<String>,
+
+        /// Tags to attach; repeat or separate with commas.
+        #[arg(long, value_delimiter = ',')]
+        tag: Vec<String>,
+    },
+
+    /// An SSH key pair and its passphrase.
+    ///
+    /// The private key is read from a file rather than typed: it is multi-line
+    /// and would not survive a prompt. It is stored as a field, not as an
+    /// attachment, so `sefy get` can hand it to a command directly.
+    SshKey {
+        /// What to call it.
+        title: String,
+
+        /// Private key file to read.
+        #[arg(long, value_name = "PATH")]
+        private_key: PathBuf,
+
+        /// Public key file to read; defaults to the private key's path with
+        /// `.pub` appended, when such a file is there.
+        #[arg(long, value_name = "PATH")]
+        public_key: Option<PathBuf>,
+
+        /// Where the key is used.
+        #[arg(long)]
+        host: Option<String>,
+
+        /// Anything else worth remembering.
+        #[arg(long)]
+        notes: Option<String>,
+
+        /// Do not ask for the passphrase; for a key that has none.
+        #[arg(long)]
+        no_passphrase: bool,
+
+        /// Read the passphrase from this environment variable instead of
+        /// prompting.
+        #[arg(long, value_name = "VAR", conflicts_with = "no_passphrase")]
+        passphrase_env: Option<String>,
+
+        /// Tags to attach; repeat or separate with commas.
+        #[arg(long, value_delimiter = ',')]
+        tag: Vec<String>,
+    },
+
     /// A file, stored byte for byte.
     File {
         /// File to read.
@@ -317,9 +405,13 @@ pub struct GetArgs {
     /// Item id, exact title, or text to search for.
     pub reference: String,
 
-    /// Which field to take from a credential.
-    #[arg(long, value_enum, default_value_t = Field::Password)]
-    pub field: Field,
+    /// Which field to take from a record.
+    ///
+    /// Any field the record carries, by name. Omitted, sefy takes the kind's
+    /// own secret: a login's password, a card's number, an SSH key's private
+    /// key.
+    #[arg(long, value_name = "NAME")]
+    pub field: Option<String>,
 
     /// Print the secret instead of copying it to the clipboard.
     ///
@@ -334,31 +426,6 @@ pub struct GetArgs {
     /// the secret is still the value sitting on it.
     #[arg(long, value_name = "SECONDS", default_value_t = 45)]
     pub clear_after: u64,
-}
-
-/// A field of a credential.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum Field {
-    /// The password.
-    Password,
-    /// The login.
-    Login,
-    /// The URL.
-    Url,
-    /// The TOTP secret.
-    Totp,
-}
-
-impl Field {
-    /// Name of the field as it appears in messages.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Password => "password",
-            Self::Login => "login",
-            Self::Url => "url",
-            Self::Totp => "totp",
-        }
-    }
 }
 
 /// Arguments of `sefy ls`.
@@ -414,33 +481,24 @@ pub struct EditArgs {
     #[arg(long, short = 'e')]
     pub editor: bool,
 
-    /// New login, for a credential.
-    #[arg(long, short = 'l')]
-    pub login: Option<String>,
+    /// Set a field of a record: `--set url=https://example.com`.
+    ///
+    /// Repeat for several. A field the record does not have yet is added, so
+    /// this is how a record grows beyond what its kind suggested.
+    #[arg(long, value_name = "NAME=VALUE")]
+    pub set: Vec<String>,
 
-    /// Prompt for a new password, for a credential.
-    #[arg(long)]
-    pub password: bool,
+    /// Prompt for a field's value instead of passing it on the command line:
+    /// `--set-secret password`.
+    ///
+    /// The value is read the way the master password is — never echoed, never
+    /// in the shell history — and the field is marked secret.
+    #[arg(long, value_name = "NAME")]
+    pub set_secret: Vec<String>,
 
-    /// Read the item's new password from this environment variable.
-    #[arg(
-        long = "item-password-env",
-        value_name = "VAR",
-        conflicts_with = "password"
-    )]
-    pub item_password_env: Option<String>,
-
-    /// New URL, for a credential.
-    #[arg(long, short = 'u')]
-    pub url: Option<String>,
-
-    /// New TOTP secret, for a credential.
-    #[arg(long)]
-    pub totp: Option<String>,
-
-    /// New notes, for a credential.
-    #[arg(long)]
-    pub notes: Option<String>,
+    /// Remove a field from a record.
+    #[arg(long, value_name = "NAME")]
+    pub unset: Vec<String>,
 
     /// Replace the item's tags; repeat or separate with commas.
     #[arg(long, value_delimiter = ',')]
@@ -456,8 +514,13 @@ pub struct EditArgs {
 pub enum Kind {
     /// A free-form note.
     Note,
-    /// A login and its password.
-    Credential,
+    /// An account and its password.
+    #[value(alias = "credential")]
+    Login,
+    /// A payment card.
+    Card,
+    /// An SSH key pair.
+    SshKey,
     /// A stored file.
     File,
 }
@@ -466,7 +529,9 @@ impl From<Kind> for sefy_core::ItemKind {
     fn from(kind: Kind) -> Self {
         match kind {
             Kind::Note => Self::Note,
-            Kind::Credential => Self::Credential,
+            Kind::Login => Self::Login,
+            Kind::Card => Self::Card,
+            Kind::SshKey => Self::SshKey,
             Kind::File => Self::File,
         }
     }

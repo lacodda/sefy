@@ -1,10 +1,10 @@
 //! What each subcommand does once the vault is open.
 
-use crate::cli::{AddKind, EditArgs, Field, FindArgs, GetArgs, ListArgs, PullArgs, RemoteArgs};
+use crate::cli::{AddKind, EditArgs, FindArgs, GetArgs, ListArgs, PullArgs, RemoteArgs};
 use crate::output;
 use crate::session;
 use anyhow::{Context, Result, bail};
-use sefy_core::{Credential, NewItem, Payload, Query, Vault};
+use sefy_core::{Field, ItemKind, NewItem, Payload, Query, Vault};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -38,7 +38,7 @@ pub fn add(vault: &mut Vault, kind: AddKind) -> Result<()> {
                 title,
             )
         }
-        AddKind::Credential {
+        AddKind::Login {
             title,
             login,
             url,
@@ -52,18 +52,89 @@ pub fn add(vault: &mut Vault, kind: AddKind) -> Result<()> {
             // account's password.
             let password =
                 session::secret("Password for this item: ", item_password_env.as_deref())?;
+            let mut fields = vec![
+                Field::public("login", login),
+                Field::secret("password", password),
+            ];
+            push_optional(&mut fields, "url", url, false);
+            push_optional(&mut fields, "totp", totp, true);
+            push_optional(&mut fields, "notes", notes, false);
             (
-                NewItem::new(
-                    title.clone(),
-                    Payload::Credential(Credential {
-                        login,
-                        password,
-                        url,
-                        totp,
-                        notes,
-                    }),
-                )
-                .with_tags(tag),
+                NewItem::new(title.clone(), Payload::fields(ItemKind::Login, fields))
+                    .with_tags(tag),
+                title,
+            )
+        }
+        AddKind::Card {
+            title,
+            holder,
+            expiry,
+            notes,
+            no_cvv,
+            no_pin,
+            number_env,
+            cvv_env,
+            pin_env,
+            tag,
+        } => {
+            let number = session::secret("Card number: ", number_env.as_deref())?;
+            let mut fields = vec![Field::secret("number", number)];
+            push_optional(&mut fields, "holder", holder, false);
+            push_optional(&mut fields, "expiry", expiry, false);
+            if !no_cvv {
+                fields.push(Field::secret(
+                    "cvv",
+                    session::secret("CVV: ", cvv_env.as_deref())?,
+                ));
+            }
+            if !no_pin {
+                fields.push(Field::secret(
+                    "pin",
+                    session::secret("PIN: ", pin_env.as_deref())?,
+                ));
+            }
+            push_optional(&mut fields, "notes", notes, false);
+            (
+                NewItem::new(title.clone(), Payload::fields(ItemKind::Card, fields)).with_tags(tag),
+                title,
+            )
+        }
+        AddKind::SshKey {
+            title,
+            private_key,
+            public_key,
+            host,
+            notes,
+            no_passphrase,
+            passphrase_env,
+            tag,
+        } => {
+            let private = std::fs::read_to_string(&private_key)
+                .with_context(|| format!("cannot read {}", private_key.display()))?;
+            let mut fields = vec![Field::secret("private-key", private)];
+            if !no_passphrase {
+                fields.push(Field::secret(
+                    "passphrase",
+                    session::secret("Passphrase for the key: ", passphrase_env.as_deref())?,
+                ));
+            }
+            // The conventional sibling is picked up when it is there, and its
+            // absence is not an error: a key without its public half is still
+            // worth storing, and the public half can be derived from it.
+            let public_path = public_key.unwrap_or_else(|| sibling_public_key(&private_key));
+            match std::fs::read_to_string(&public_path) {
+                Ok(public) => fields.push(Field::public("public-key", public.trim())),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("cannot read {}", public_path.display()));
+                }
+            }
+            push_optional(&mut fields, "host", host, false);
+            push_optional(&mut fields, "notes", notes, false);
+            (
+                NewItem::new(title.clone(), Payload::fields(ItemKind::SshKey, fields))
+                    .with_tags(tag),
                 title,
             )
         }
@@ -95,16 +166,30 @@ pub fn get(vault: &Vault, args: GetArgs) -> Result<()> {
 
     let (value, description) = match &item.payload {
         Payload::Note { text } => (text.clone(), "text".to_owned()),
-        Payload::Credential(credential) => {
-            let value = match args.field {
-                Field::Password => Some(credential.password.clone()),
-                Field::Login => Some(credential.login.clone()),
-                Field::Url => credential.url.clone(),
-                Field::Totp => credential.totp.clone(),
+        Payload::Fields { kind, fields } => {
+            let name = match args.field.clone() {
+                Some(name) => name,
+                // Nothing was named, so sefy takes what the kind is mostly
+                // about. A record whose fields are all public has no such
+                // field, and guessing at one would hand over the wrong value.
+                None => kind
+                    .template()
+                    .and_then(|template| template.default_field())
+                    .map(|field| field.name.to_owned())
+                    .with_context(|| {
+                        format!(
+                            "{:?} has no default field; name one with --field",
+                            item.summary.title
+                        )
+                    })?,
             };
-            match value {
-                Some(value) => (value, args.field.as_str().to_owned()),
-                None => bail!("{:?} has no {}", item.summary.title, args.field.as_str()),
+            match fields.iter().find(|field| field.name == name) {
+                Some(field) => (field.value.clone(), field.name.clone()),
+                None => bail!(
+                    "{:?} has no {name:?}; it holds: {}",
+                    item.summary.title,
+                    field_names(fields)
+                ),
             }
         }
         Payload::File { .. } => bail!(
@@ -113,8 +198,8 @@ pub fn get(vault: &Vault, args: GetArgs) -> Result<()> {
             item.summary.id
         ),
         Payload::Unknown { kind } => bail!(
-            "{:?} is a {kind}, which this version of sefy does not know\n\
-             it was written by a newer sefy — upgrade to read it\n\
+            "{:?} is a {kind}, which this version of sefy does not know
+             it was written by a newer sefy — upgrade to read it
              (the item is safe: it is listed, exported and synced as it is)",
             item.summary.title
         ),
@@ -170,18 +255,18 @@ pub fn show(vault: &Vault, reference: &str) -> Result<()> {
             println!("---");
             println!("{text}");
         }
-        Payload::Credential(credential) => {
-            field("login", &credential.login);
-            // Never printed here; `sefy get` is the one way a secret leaves.
-            field("password", "<hidden — use sefy get>");
-            if let Some(url) = &credential.url {
-                field("url", url);
-            }
-            if credential.totp.is_some() {
-                field("totp", "<hidden — use sefy get --field totp>");
-            }
-            if let Some(notes) = &credential.notes {
-                field("notes", notes);
+        Payload::Fields { fields, .. } => {
+            for stored in fields {
+                if stored.secret {
+                    // Never printed here; `sefy get` is the one way a secret
+                    // leaves, and it says which field to ask for by name.
+                    field(
+                        &stored.name,
+                        &format!("<hidden — use sefy get --field {}>", stored.name),
+                    );
+                } else {
+                    field(&stored.name, &stored.value);
+                }
             }
         }
         Payload::File { filename, bytes } => {
@@ -204,8 +289,42 @@ pub fn show(vault: &Vault, reference: &str) -> Result<()> {
 /// is longer than the rest, and `password` already had. The width leaves a
 /// space after the longest label rather than butting against it.
 fn field(label: &str, value: &str) {
-    const LABEL_WIDTH: usize = "password:".len() + 1;
+    // Wide enough for the longest label any built-in template uses; a longer
+    // one from a field the user named themselves simply pushes its own value
+    // along rather than shifting every other line.
+    const LABEL_WIDTH: usize = "private-key:".len() + 1;
     println!("{:<LABEL_WIDTH$}{value}", format!("{label}:"));
+}
+
+/// Adds a field when the user gave a value for it, and leaves it out when not.
+///
+/// An absent option stays absent rather than being stored empty: "this login
+/// has no URL" and "its URL is the empty string" are different facts, and only
+/// the first one is true.
+fn push_optional(fields: &mut Vec<Field>, name: &str, value: Option<String>, secret: bool) {
+    if let Some(value) = value {
+        fields.push(if secret {
+            Field::secret(name, value)
+        } else {
+            Field::public(name, value)
+        });
+    }
+}
+
+/// The path a public key conventionally sits at, beside its private half.
+fn sibling_public_key(private_key: &Path) -> PathBuf {
+    let mut name = private_key.as_os_str().to_os_string();
+    name.push(".pub");
+    PathBuf::from(name)
+}
+
+/// Names of a record's fields, for a message that says what is on offer.
+fn field_names(fields: &[Field]) -> String {
+    fields
+        .iter()
+        .map(|field| field.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Lists items, optionally narrowed by kind and tags.
@@ -261,20 +380,13 @@ pub fn edit(vault: &mut Vault, args: EditArgs) -> Result<()> {
 /// has. Flags meant for another kind of item are an error rather than a silent
 /// no-op.
 fn build_edited_payload(existing: &Payload, args: &EditArgs) -> Result<Option<Payload>> {
-    let wants_new_password = args.password || args.item_password_env.is_some();
-    let wants_credential_field = args.login.is_some()
-        || wants_new_password
-        || args.url.is_some()
-        || args.totp.is_some()
-        || args.notes.is_some();
+    let touches_fields =
+        !args.set.is_empty() || !args.set_secret.is_empty() || !args.unset.is_empty();
 
     match existing {
         Payload::Note { text: current } => {
-            if wants_credential_field {
-                bail!(
-                    "this item is a note; --login, --password, --url, --totp and --notes \
-                     apply to credentials"
-                );
+            if touches_fields {
+                bail!("this item is a note; --set, --set-secret and --unset apply to records");
             }
             if args.editor {
                 return Ok(Some(Payload::Note {
@@ -283,37 +395,20 @@ fn build_edited_payload(existing: &Payload, args: &EditArgs) -> Result<Option<Pa
             }
             Ok(args.text.clone().map(|text| Payload::Note { text }))
         }
-        Payload::Credential(credential) => {
+        Payload::Fields { kind, fields } => {
             if args.text.is_some() || args.editor {
-                bail!("this item is a credential; --text and --editor apply to notes");
+                bail!("this item is a {kind}; --text and --editor apply to notes");
             }
-            if !wants_credential_field {
+            if !touches_fields {
                 return Ok(None);
             }
-
-            let mut updated = credential.clone();
-            if let Some(login) = args.login.clone() {
-                updated.login = login;
-            }
-            if wants_new_password {
-                updated.password = session::secret(
-                    "New password for this item: ",
-                    args.item_password_env.as_deref(),
-                )?;
-            }
-            if let Some(url) = args.url.clone() {
-                updated.url = Some(url);
-            }
-            if let Some(totp) = args.totp.clone() {
-                updated.totp = Some(totp);
-            }
-            if let Some(notes) = args.notes.clone() {
-                updated.notes = Some(notes);
-            }
-            Ok(Some(Payload::Credential(updated)))
+            Ok(Some(Payload::Fields {
+                kind: kind.clone(),
+                fields: edit_fields(kind, fields, args)?,
+            }))
         }
         Payload::File { .. } => {
-            if args.text.is_some() || args.editor || wants_credential_field {
+            if args.text.is_some() || args.editor || touches_fields {
                 bail!("this item is a file; only --title and tags can be edited");
             }
             Ok(None)
@@ -323,15 +418,87 @@ fn build_edited_payload(existing: &Payload, args: &EditArgs) -> Result<Option<Pa
         // lets the caller apply them. Anything that would rewrite the contents
         // is refused: this build cannot read them and must not replace them.
         Payload::Unknown { kind } => {
-            if args.text.is_some() || args.editor || wants_credential_field {
+            if args.text.is_some() || args.editor || touches_fields {
                 bail!(
-                    "this item is a {kind}, a kind this version of sefy does not know;\n\
+                    "this item is a {kind}, a kind this version of sefy does not know;
                      only --title and tags can be edited"
                 );
             }
             Ok(None)
         }
     }
+}
+
+/// Applies `--set`, `--set-secret` and `--unset` to a record's fields.
+///
+/// A field keeps its place: an edit changes what a record says, not the order
+/// it reads in. A field that is new lands at the end, unless the kind's
+/// template has an opinion about where it belongs.
+fn edit_fields(kind: &ItemKind, existing: &[Field], args: &EditArgs) -> Result<Vec<Field>> {
+    let mut fields = existing.to_vec();
+
+    for assignment in &args.set {
+        let (name, value) = assignment
+            .split_once('=')
+            .with_context(|| format!("--set takes NAME=VALUE, not {assignment:?}"))?;
+        // A value passed on the command line is public by default: it has
+        // already been through the shell history, so calling it secret would
+        // be a promise sefy cannot keep. An existing field keeps whatever
+        // secrecy it was stored with — the user is changing the value, not
+        // declaring the field harmless.
+        set_field(kind, &mut fields, name, value.to_owned(), None);
+    }
+
+    for name in &args.set_secret {
+        let value = session::secret(&format!("New value for {name}: "), None)?;
+        set_field(kind, &mut fields, name, value, Some(true));
+    }
+
+    for name in &args.unset {
+        let before = fields.len();
+        fields.retain(|field| &field.name != name);
+        if fields.len() == before {
+            bail!(
+                "no field named {name:?}; it holds: {}",
+                field_names(existing)
+            );
+        }
+    }
+
+    if fields.is_empty() {
+        bail!("a {kind} cannot be left without any field");
+    }
+    Ok(fields)
+}
+
+/// Writes one field, in place if it is already there and at the end if not.
+fn set_field(
+    kind: &ItemKind,
+    fields: &mut Vec<Field>,
+    name: &str,
+    value: String,
+    secret: Option<bool>,
+) {
+    if let Some(field) = fields.iter_mut().find(|field| field.name == name) {
+        field.value = value;
+        if let Some(secret) = secret {
+            field.secret = secret;
+        }
+        return;
+    }
+
+    // A name the template knows brings the template's idea of secrecy with it,
+    // so `--set totp=…` on a login is hidden without having to be told.
+    let secret = secret.unwrap_or_else(|| {
+        kind.template()
+            .and_then(|template| template.field(name))
+            .is_some_and(|field| field.secret)
+    });
+    fields.push(Field {
+        name: name.to_owned(),
+        value,
+        secret,
+    });
 }
 
 /// Removes an item, asking first unless told not to.

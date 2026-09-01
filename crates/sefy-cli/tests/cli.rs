@@ -136,7 +136,7 @@ fn a_credential_stores_its_password_and_hides_it_in_show() {
         .env("ITEM_PASSWORD", "hunter2")
         .args([
             "add",
-            "credential",
+            "login",
             "mail",
             "--login",
             "someone",
@@ -181,7 +181,7 @@ fn the_item_password_never_falls_back_to_the_master_password() {
     // quietly storing the master password instead would be far worse.
     fixture
         .sefy()
-        .args(["add", "credential", "mail", "--login", "someone"])
+        .args(["add", "login", "mail", "--login", "someone"])
         .write_stdin("")
         .assert()
         .failure()
@@ -320,7 +320,7 @@ fn ls_and_find_narrow_by_kind_and_tag() {
 
     fixture
         .sefy()
-        .args(["find", "bank", "--kind", "credential"])
+        .args(["find", "bank", "--kind", "login"])
         .assert()
         .success()
         .stdout(contains("no items"));
@@ -367,7 +367,7 @@ fn edit_rejects_flags_meant_for_another_kind() {
 
     fixture
         .sefy()
-        .args(["edit", "a note", "--login", "someone"])
+        .args(["edit", "a note", "--set", "login=someone"])
         .assert()
         .failure()
         .stderr(contains("note"));
@@ -518,7 +518,7 @@ fn an_export_survives_a_round_trip_through_the_command_line() {
         .env("ITEM_PASSWORD", "hunter2")
         .args([
             "add",
-            "credential",
+            "login",
             "mail",
             "--login",
             "someone",
@@ -663,7 +663,7 @@ fn the_editor_flag_is_refused_on_items_that_are_not_notes() {
         .env("ITEM_PASSWORD", "hunter2")
         .args([
             "add",
-            "credential",
+            "login",
             "mail",
             "--login",
             "someone",
@@ -679,7 +679,7 @@ fn the_editor_flag_is_refused_on_items_that_are_not_notes() {
         .args(["edit", "mail", "--editor"])
         .assert()
         .failure()
-        .stderr(contains("credential"));
+        .stderr(contains("login"));
 }
 
 #[test]
@@ -1232,17 +1232,17 @@ fn add_item_of_a_future_kind(fixture: &Fixture, title: &str) {
     connection
         .execute(
             "INSERT INTO items (uuid, title, kind, created_at, updated_at)
-             VALUES ('11111111-2222-4333-8444-555555555555', ?1, 'card', 1000, 1000)",
+             VALUES ('11111111-2222-4333-8444-555555555555', ?1, 'passport', 1000, 1000)",
             [title],
         )
         .unwrap();
     let id = connection.last_insert_rowid();
     connection
-        .execute_batch("CREATE TABLE cards (item_id INTEGER NOT NULL, number TEXT NOT NULL)")
+        .execute_batch("CREATE TABLE passports (item_id INTEGER NOT NULL, number TEXT NOT NULL)")
         .unwrap();
     connection
         .execute(
-            "INSERT INTO cards (item_id, number) VALUES (?1, '4111')",
+            "INSERT INTO passports (item_id, number) VALUES (?1, '4111')",
             [id],
         )
         .unwrap();
@@ -1259,7 +1259,7 @@ fn add_item_of_a_future_kind(fixture: &Fixture, title: &str) {
 fn an_item_from_a_newer_sefy_does_not_break_the_listing() {
     let fixture = Fixture::with_vault();
     add_note(&fixture, "shed", "combination 4815", &[]);
-    add_item_of_a_future_kind(&fixture, "my card");
+    add_item_of_a_future_kind(&fixture, "my passport");
 
     // The whole point: one unreadable item used to take the listing down with
     // it, reporting "no item with id 2" about an item sitting right there.
@@ -1268,25 +1268,25 @@ fn an_item_from_a_newer_sefy_does_not_break_the_listing() {
         .arg("ls")
         .assert()
         .success()
-        .stdout(contains("shed").and(contains("my card")))
+        .stdout(contains("shed").and(contains("my passport")))
         .stdout(contains("needs a newer sefy"));
 }
 
 #[test]
 fn reading_an_item_from_a_newer_sefy_explains_rather_than_denies_it() {
     let fixture = Fixture::with_vault();
-    add_item_of_a_future_kind(&fixture, "my card");
+    add_item_of_a_future_kind(&fixture, "my passport");
 
     fixture
         .sefy()
-        .args(["show", "my card"])
+        .args(["show", "my passport"])
         .assert()
         .success()
-        .stdout(contains("card").and(contains("does not know")));
+        .stdout(contains("passport").and(contains("does not know")));
 
     fixture
         .sefy()
-        .args(["get", "my card", "--stdout"])
+        .args(["get", "my passport", "--stdout"])
         .assert()
         .failure()
         .stderr(contains("upgrade to read it"));
@@ -1295,11 +1295,11 @@ fn reading_an_item_from_a_newer_sefy_explains_rather_than_denies_it() {
 #[test]
 fn an_item_from_a_newer_sefy_can_still_be_retitled() {
     let fixture = Fixture::with_vault();
-    add_item_of_a_future_kind(&fixture, "my card");
+    add_item_of_a_future_kind(&fixture, "my passport");
 
     fixture
         .sefy()
-        .args(["edit", "my card", "--title", "travel card"])
+        .args(["edit", "my passport", "--title", "travel passport"])
         .assert()
         .success();
     fixture
@@ -1307,22 +1307,526 @@ fn an_item_from_a_newer_sefy_can_still_be_retitled() {
         .arg("ls")
         .assert()
         .success()
-        .stdout(contains("travel card"));
+        .stdout(contains("travel passport"));
 
     // Rewriting its contents is refused: this build cannot read what is there.
     fixture
         .sefy()
-        .args(["edit", "travel card", "--text", "nope"])
+        .args(["edit", "travel passport", "--text", "nope"])
         .assert()
         .failure()
         .stderr(contains("only --title and tags"));
+}
+
+/// Adds a login with every option filled in, using environment variables for
+/// the two secrets a login can carry.
+fn add_full_login(fixture: &Fixture, title: &str) {
+    fixture
+        .sefy()
+        .env("ITEM_PASSWORD", "hunter2")
+        .args([
+            "add",
+            "login",
+            title,
+            "--login",
+            "someone",
+            "--url",
+            "https://example.invalid",
+            "--totp",
+            "otpsecret",
+            "--notes",
+            "backup codes in the drawer",
+            "--item-password-env",
+            "ITEM_PASSWORD",
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn a_login_round_trips_every_field_it_was_given() {
+    let fixture = Fixture::with_vault();
+    add_full_login(&fixture, "mail");
+
+    // No --field: the kind's own secret, the password.
+    fixture
+        .sefy()
+        .args(["get", "mail", "--stdout"])
+        .assert()
+        .success()
+        .stdout(contains("hunter2"));
+
+    fixture
+        .sefy()
+        .args(["get", "mail", "--field", "login", "--stdout"])
+        .assert()
+        .success()
+        .stdout(contains("someone"));
+
+    fixture
+        .sefy()
+        .args(["get", "mail", "--field", "totp", "--stdout"])
+        .assert()
+        .success()
+        .stdout(contains("otpsecret"));
+}
+
+#[test]
+fn a_login_option_left_out_produces_no_field_at_all() {
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .env("ITEM_PASSWORD", "hunter2")
+        .args([
+            "add",
+            "login",
+            "bare",
+            "--login",
+            "someone",
+            "--item-password-env",
+            "ITEM_PASSWORD",
+        ])
+        .assert()
+        .success();
+
+    fixture
+        .sefy()
+        .args(["show", "bare"])
+        .assert()
+        .success()
+        .stdout(contains("login:"))
+        .stdout(contains("password:"))
+        // Not asked for, so not a field at all — not an empty one.
+        .stdout(contains("url:").not())
+        .stdout(contains("totp:").not())
+        .stdout(contains("notes:").not());
+}
+
+#[test]
+fn a_card_round_trips_and_get_with_no_field_gives_the_number() {
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .env("CARD_NUMBER", "4111111111111111")
+        .env("CARD_CVV", "123")
+        .env("CARD_PIN", "4815")
+        .args([
+            "add",
+            "card",
+            "wallet",
+            "--holder",
+            "A Cardholder",
+            "--expiry",
+            "12/30",
+            "--number-env",
+            "CARD_NUMBER",
+            "--cvv-env",
+            "CARD_CVV",
+            "--pin-env",
+            "CARD_PIN",
+        ])
+        .assert()
+        .success();
+
+    // A card has no password field; its own secret is the number.
+    fixture
+        .sefy()
+        .args(["get", "wallet", "--stdout"])
+        .assert()
+        .success()
+        .stdout(contains("4111111111111111"));
+
+    fixture
+        .sefy()
+        .args(["get", "wallet", "--field", "cvv", "--stdout"])
+        .assert()
+        .success()
+        .stdout(contains("123"));
+
+    fixture
+        .sefy()
+        .args(["get", "wallet", "--field", "pin", "--stdout"])
+        .assert()
+        .success()
+        .stdout(contains("4815"));
+}
+
+#[test]
+fn no_cvv_and_no_pin_leave_those_fields_out_of_the_card() {
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .env("CARD_NUMBER", "4111111111111111")
+        .args([
+            "add",
+            "card",
+            "bare card",
+            "--number-env",
+            "CARD_NUMBER",
+            "--no-cvv",
+            "--no-pin",
+        ])
+        .assert()
+        .success();
+
+    fixture
+        .sefy()
+        .args(["show", "bare card"])
+        .assert()
+        .success()
+        .stdout(contains("number:"))
+        .stdout(contains("cvv:").not())
+        .stdout(contains("pin:").not());
+}
+
+#[test]
+fn an_ssh_key_stores_a_trimmed_public_key_and_the_private_key_comes_back_exact() {
+    let fixture = Fixture::with_vault();
+    let private_path = fixture.directory().join("id_ed25519");
+    let public_path = fixture.directory().join("id_ed25519.pub");
+    std::fs::write(
+        &private_path,
+        "-----BEGIN PRIVATE KEY-----\nabc\n-----END-----\n",
+    )
+    .unwrap();
+    // A trailing newline is exactly what `ssh-keygen` leaves — trimming it is
+    // the point of this test, not an accident of the fixture.
+    std::fs::write(&public_path, "ssh-ed25519 AAAAC3 comment\n").unwrap();
+
+    fixture
+        .sefy()
+        .args(["add", "ssh-key", "prod server", "--private-key"])
+        .arg(&private_path)
+        .args(["--host", "prod.example.invalid", "--no-passphrase"])
+        .assert()
+        .success();
+
+    fixture
+        .sefy()
+        .args(["show", "prod server"])
+        .assert()
+        .success()
+        .stdout(contains("ssh-ed25519 AAAAC3 comment"));
+
+    fixture
+        .sefy()
+        .args(["get", "prod server", "--field", "private-key", "--stdout"])
+        .assert()
+        .success()
+        .stdout(contains(
+            "-----BEGIN PRIVATE KEY-----\nabc\n-----END-----\n",
+        ));
+}
+
+#[test]
+fn an_ssh_key_with_no_pub_file_beside_it_still_succeeds_and_has_no_public_key_field() {
+    let fixture = Fixture::with_vault();
+    let private_path = fixture.directory().join("lonely_key");
+    std::fs::write(&private_path, "the private half only").unwrap();
+
+    fixture
+        .sefy()
+        .args(["add", "ssh-key", "lonely", "--private-key"])
+        .arg(&private_path)
+        .arg("--no-passphrase")
+        .assert()
+        .success();
+
+    fixture
+        .sefy()
+        .args(["show", "lonely"])
+        .assert()
+        .success()
+        .stdout(contains("private-key:"))
+        .stdout(contains("public-key:").not());
+}
+
+#[test]
+fn get_field_on_a_name_the_record_lacks_lists_what_it_does_have() {
+    let fixture = Fixture::with_vault();
+    add_full_login(&fixture, "mail");
+
+    fixture
+        .sefy()
+        .args(["get", "mail", "--field", "nonexistent"])
+        .assert()
+        .failure()
+        .stderr(contains("nonexistent"))
+        .stderr(contains("login"))
+        .stderr(contains("password"))
+        .stderr(contains("url"))
+        .stderr(contains("totp"))
+        .stderr(contains("notes"));
+}
+
+#[test]
+fn show_hides_every_secret_field_and_names_it_in_the_hint() {
+    let fixture = Fixture::with_vault();
+    add_full_login(&fixture, "mail");
+
+    fixture
+        .sefy()
+        .args(["show", "mail"])
+        .assert()
+        .success()
+        .stdout(contains("hunter2").not())
+        .stdout(contains("otpsecret").not())
+        .stdout(contains("<hidden — use sefy get --field password>"))
+        .stdout(contains("<hidden — use sefy get --field totp>"));
+}
+
+#[test]
+fn edit_set_changes_an_existing_fields_value() {
+    let fixture = Fixture::with_vault();
+    add_full_login(&fixture, "mail");
+
+    fixture
+        .sefy()
+        .args(["edit", "mail", "--set", "login=someone-else"])
+        .assert()
+        .success();
+
+    fixture
+        .sefy()
+        .args(["get", "mail", "--field", "login", "--stdout"])
+        .assert()
+        .success()
+        .stdout(contains("someone-else"));
+}
+
+#[test]
+fn edit_set_adds_a_field_the_record_did_not_have_and_it_is_public() {
+    let fixture = Fixture::with_vault();
+    let private_path = fixture.directory().join("id_ed25519");
+    std::fs::write(&private_path, "private half").unwrap();
+    fixture
+        .sefy()
+        .args(["add", "ssh-key", "box", "--private-key"])
+        .arg(&private_path)
+        .arg("--no-passphrase")
+        .assert()
+        .success();
+
+    fixture
+        .sefy()
+        .args(["edit", "box", "--set", "fingerprint=abc"])
+        .assert()
+        .success();
+
+    // A name the template has no opinion about lands public — visible in
+    // `show`, not "<hidden — ...>".
+    fixture
+        .sefy()
+        .args(["show", "box"])
+        .assert()
+        .success()
+        .stdout(contains("fingerprint: abc"));
+}
+
+#[test]
+fn edit_set_on_an_existing_secret_field_keeps_it_secret() {
+    let fixture = Fixture::with_vault();
+    add_full_login(&fixture, "mail");
+
+    fixture
+        .sefy()
+        .args(["edit", "mail", "--set", "password=newpassword"])
+        .assert()
+        .success();
+
+    // The value on the command line is public by default, but `password`
+    // already existed as a secret field — changing its value must not make it
+    // readable from `show`.
+    fixture
+        .sefy()
+        .args(["show", "mail"])
+        .assert()
+        .success()
+        .stdout(contains("newpassword").not())
+        .stdout(contains("<hidden — use sefy get --field password>"));
+
+    fixture
+        .sefy()
+        .args(["get", "mail", "--stdout"])
+        .assert()
+        .success()
+        .stdout(contains("newpassword"));
+}
+
+#[test]
+fn edit_unset_removes_a_field_and_refuses_a_name_that_is_not_there() {
+    let fixture = Fixture::with_vault();
+    add_full_login(&fixture, "mail");
+
+    fixture
+        .sefy()
+        .args(["edit", "mail", "--unset", "notes"])
+        .assert()
+        .success();
+
+    fixture
+        .sefy()
+        .args(["show", "mail"])
+        .assert()
+        .success()
+        .stdout(contains("notes:").not());
+
+    fixture
+        .sefy()
+        .args(["edit", "mail", "--unset", "notes"])
+        .assert()
+        .failure()
+        .stderr(contains("no field named"))
+        .stderr(contains("login"));
+}
+
+#[test]
+fn edit_unset_of_every_field_is_refused() {
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .env("ITEM_PASSWORD", "hunter2")
+        .args([
+            "add",
+            "login",
+            "bare",
+            "--login",
+            "someone",
+            "--item-password-env",
+            "ITEM_PASSWORD",
+        ])
+        .assert()
+        .success();
+
+    fixture
+        .sefy()
+        .args(["edit", "bare", "--unset", "login", "--unset", "password"])
+        .assert()
+        .failure()
+        .stderr(contains("cannot be left without any field"));
+
+    // Refused, so both fields are still there.
+    fixture
+        .sefy()
+        .args(["show", "bare"])
+        .assert()
+        .success()
+        .stdout(contains("login:"));
+}
+
+#[test]
+fn a_malformed_set_without_an_equals_sign_is_an_error() {
+    let fixture = Fixture::with_vault();
+    add_full_login(&fixture, "mail");
+
+    fixture
+        .sefy()
+        .args(["edit", "mail", "--set", "loginsomeone"])
+        .assert()
+        .failure()
+        .stderr(contains("NAME=VALUE"));
+}
+
+#[test]
+fn set_on_a_note_is_refused_as_a_records_only_option() {
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "a note", "text", &[]);
+
+    fixture
+        .sefy()
+        .args(["edit", "a note", "--set", "anything=value"])
+        .assert()
+        .failure()
+        .stderr(contains("--set, --set-secret and --unset apply to records"));
+}
+
+#[test]
+fn ls_kind_shows_only_that_kind_and_credential_is_an_alias_for_login() {
+    let fixture = Fixture::with_vault();
+    add_full_login(&fixture, "mail");
+    fixture
+        .sefy()
+        .env("CARD_NUMBER", "4111111111111111")
+        .args([
+            "add",
+            "card",
+            "wallet",
+            "--number-env",
+            "CARD_NUMBER",
+            "--no-cvv",
+            "--no-pin",
+        ])
+        .assert()
+        .success();
+
+    fixture
+        .sefy()
+        .args(["ls", "--kind", "card"])
+        .assert()
+        .success()
+        .stdout(contains("wallet"))
+        .stdout(contains("mail").not());
+
+    // `credential` is the old spelling of `login`, kept as an alias.
+    fixture
+        .sefy()
+        .args(["ls", "--kind", "credential"])
+        .assert()
+        .success()
+        .stdout(contains("mail"))
+        .stdout(contains("wallet").not());
+}
+
+#[test]
+fn add_credential_is_still_accepted_and_produces_a_login() {
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .env("ITEM_PASSWORD", "hunter2")
+        .args([
+            "add",
+            "credential",
+            "legacy",
+            "--login",
+            "someone",
+            "--item-password-env",
+            "ITEM_PASSWORD",
+        ])
+        .assert()
+        .success();
+
+    fixture
+        .sefy()
+        .args(["show", "legacy"])
+        .assert()
+        .success()
+        .stdout(contains("kind:        login"));
+}
+
+#[test]
+fn set_secret_needs_a_terminal_it_does_not_have_in_a_script() {
+    // `--set-secret` reads its value the way a password is read, and that
+    // reader refuses anything but a real terminal — a script piping a value
+    // in on stdin is exactly the case --set-secret is not for; --set exists
+    // for that. This is the one edit-flag behaviour a piped test cannot
+    // exercise past this point.
+    let fixture = Fixture::with_vault();
+    add_full_login(&fixture, "mail");
+
+    fixture
+        .sefy()
+        .args(["edit", "mail", "--set-secret", "password"])
+        .write_stdin("newpassword\n")
+        .assert()
+        .failure()
+        .stderr(contains("not a terminal"));
 }
 
 #[test]
 fn an_export_still_runs_with_an_item_from_a_newer_sefy_in_the_vault() {
     let fixture = Fixture::with_vault();
     add_note(&fixture, "shed", "combination 4815", &[]);
-    add_item_of_a_future_kind(&fixture, "my card");
+    add_item_of_a_future_kind(&fixture, "my passport");
 
     let output = fixture.directory().join("export.json");
     fixture
@@ -1336,7 +1840,7 @@ fn an_export_still_runs_with_an_item_from_a_newer_sefy_in_the_vault() {
     // "sefy can always get your data out" has to hold even when part of the
     // vault came from a version this one does not understand.
     let written = std::fs::read_to_string(&output).unwrap();
-    assert!(written.contains("my card"), "the item is in the export");
+    assert!(written.contains("my passport"), "the item is in the export");
     assert!(
         written.contains("contents_not_exported"),
         "and the export says its contents could not be read"
