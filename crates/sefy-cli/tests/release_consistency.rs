@@ -431,7 +431,25 @@ fn nothing_outside_a_transport_knows_which_transport_it_is() {
             let text = fs::read_to_string(&file).unwrap();
             for (number, line) in text.lines().enumerate() {
                 let code = line.split("//").next().unwrap_or("").to_lowercase();
-                for word in ["github", "sftp", " git ", "ssh", "scp"] {
+                // `ssh` alone stopped being a transport word in 0.7.0: `ssh-key`
+                // is a kind of item, stored and read like any other, and it
+                // reaches nothing outside the vault. The gate keeps asking the
+                // same question — does this code know which transport it is
+                // talking to — by naming the transport spellings rather than
+                // the three letters they share with an item kind.
+                // The item kind is the one legitimate `ssh` in here, so it is
+                // subtracted before the line is judged: what is left is `ssh`
+                // meaning the program, which nothing outside a transport may
+                // know about.
+                let without_the_kind = code.replace("ssh-key", "").replace("sshkey", "");
+                let mentions_ssh = without_the_kind.contains("ssh");
+                assert!(
+                    !mentions_ssh,
+                    "{}:{} mentions ssh as a transport; transports are known by the protocol only",
+                    file.display(),
+                    number + 1
+                );
+                for word in ["github", "sftp", " git ", "scp"] {
                     assert!(
                         !code.contains(word),
                         "{}:{} mentions {word:?}; transports are known by the protocol only",
