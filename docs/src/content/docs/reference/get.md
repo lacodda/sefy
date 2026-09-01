@@ -14,7 +14,7 @@ sefy get <REFERENCE>
 
 | Option | Meaning |
 | --- | --- |
-| `--field <FIELD>` | For credentials: `password` (default), `login`, `url`, `totp`. |
+| `--field <NAME>` | Which field of a record to take. Omit for the kind's own secret. |
 | `--stdout` | Print the secret instead of copying it. |
 | `--clear-after <SECONDS>` | Clear the clipboard again after this long. Default `45`; `0` leaves it. |
 
@@ -26,8 +26,30 @@ clipboard cleared
 
 ```sh
 sefy get mail --field login
+sefy get visa --field expiry
 sefy get bank --clear-after 0       # leave it there
 sefy get bank --stdout | wl-copy    # for pipes and scripts
+```
+
+## Which field, when you do not say
+
+`--field` takes any field the record carries, by name. Omitted, sefy takes the
+one the kind is mostly about — its first secret field:
+
+| Kind | Default field |
+| --- | --- |
+| `login` | `password` |
+| `card` | `number` |
+| `ssh-key` | `private-key` |
+| `note` | the text |
+
+A record whose fields are all public has no such default, and sefy says so
+rather than guessing which value you meant. A name the record does not carry is
+an error that lists what it does carry:
+
+```console
+$ sefy get mail --field pin
+error: "mail" has no "pin"; it holds: login, password, url, totp, notes
 ```
 
 `--stdout` is what scripts want, but the secret then lives in the scrollback and

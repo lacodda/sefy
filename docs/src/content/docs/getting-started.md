@@ -90,7 +90,7 @@ would put it in your shell history and in every process listing.
 $ sefy add note "bank card" --text "PIN 4815" --tag money
 added "bank card" as 1
 
-$ sefy add credential mail --login someone@example.com --url https://mail.example.com --tag mail
+$ sefy add login mail --login someone@example.com --url https://mail.example.com --tag mail
 Password for this item:
 added "mail" as 2
 
@@ -109,7 +109,7 @@ sefy add note "journal" --editor
 ```console
 $ sefy ls
 3  id_ed25519  file        [keys]
-2  mail        credential  [mail]
+2  mail        login       [mail]
 1  bank card   note        [money]
 
 $ sefy get mail
@@ -141,7 +141,7 @@ than picking one:
 $ sefy get ma
 error: 2 items match "ma":
      4  mailing list                    note
-     2  mail                            credential
+     2  mail                            login
 narrow the text, or use an id
 ```
 

@@ -32,8 +32,8 @@ The same shape scp takes: `[user@]host:/path`. The username may be left out when
 
 ```console
 $ sefy plugin list
-github  0.6.0     pull, push
-sftp    0.6.0     pull, push
+github  0.7.0     pull, push
+sftp    0.7.0     pull, push
 
 $ sefy sync --transport sftp
 Master password:

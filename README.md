@@ -14,10 +14,11 @@ database". age and gpg write a header. VeraCrypt wants a container and a mount.
 Whoever looks at your disk, your backup drive or your cloud folder can tell
 exactly where the interesting file is.
 
-**sefy is a secret store whose file looks like nothing.** Notes, credentials and
-files live in an encrypted SQLite database sealed into a single blob with no
-magic bytes, no header and no extension convention. Call it `notes.bak`, leave
-it among your other backups, and there is nothing to notice.
+**sefy is a secret store whose file looks like nothing.** Notes, logins, cards,
+ssh keys and files live in an encrypted SQLite database sealed into a single
+blob with no magic bytes, no header and no extension convention. Call it
+`notes.bak`, leave it among your other backups, and there is nothing to
+notice.
 
 ```
 $ head -c 32 notes.bak | xxd
@@ -49,13 +50,13 @@ Master password:
 created /home/you/backups/notes.bak
 ```
 
-Put things in. Notes, logins, and files kept byte for byte.
+Put things in. Notes, logins, cards, ssh keys, and files kept byte for byte.
 
 ```
 $ sefy add note "bank card" --text "PIN 4815" --tag money
 added "bank card" as 1
 
-$ sefy add credential mail --login someone@example.com --url https://mail.example.com --tag mail
+$ sefy add login mail --login someone@example.com --url https://mail.example.com --tag mail
 Password for this item:
 added "mail" as 2
 
@@ -68,13 +69,13 @@ Look around.
 ```
 $ sefy ls
 3  id_ed25519  file        [keys]
-2  mail        credential  [mail]
+2  mail        login       [mail]
 1  bank card   note        [money]
 
 $ sefy show mail
 id:       2
 title:    mail
-kind:     credential
+kind:     login
 tags:     mail
 login:    someone@example.com
 password: <hidden — use sefy get>
@@ -102,7 +103,7 @@ instead of guessing:
 $ sefy get ma
 error: 2 items match "ma":
      4  mailing list                    note
-     2  mail                            credential
+     2  mail                            login
 narrow the text, or use an id
 ```
 
@@ -163,8 +164,8 @@ own - each authenticates the way the machine already does:
 ```
 $ sefy plugin list
 future  9.0.0     unusable: it speaks protocol 99 and this build speaks 1
-github  0.6.0     pull, push
-sftp    0.6.0     pull, push
+github  0.7.0     pull, push
+sftp    0.7.0     pull, push
 ```
 
 With more than one installed, sefy asks which rather than choosing where your
@@ -241,9 +242,18 @@ to read version 1 and migrate it. The Argon2 parameters are part of that
 promise, not a tuning knob.
 
 The database inside the ciphertext is versioned separately, and it does move:
-0.2.0 added an identity to items so two copies of a vault can be merged. A vault
-from 0.1.x opens, is migrated on the way in, and is still readable by 0.1.x
-afterwards - the file on disk did not change shape.
+0.2.0 added an identity to items so two copies of a vault can be merged, and
+0.7.0 replaced the credential table with named fields so that a kind of record
+costs a template rather than a table. A vault from an earlier release opens and
+is migrated on the way in; the file on disk does not change shape.
+
+What an older build makes of it afterwards depends on the change. The 0.2.0
+migration left everything readable by 0.1.x. The 0.7.0 one does not: a login is
+now a kind 0.6.0 has never heard of, so that build lists it, exports it and
+syncs it while saying to upgrade before reading it. That is the
+forward-compatibility contract from 0.6.0 doing its job rather than a break -
+nothing is lost, and the newer build reads everything - but it is why the
+rename happened before 1.0 rather than after.
 
 The **plugin protocol is at version 1** as of 0.3.0. 0.4.0 put it to work and
 0.5.0 added a second transport of a different shape without changing a field of

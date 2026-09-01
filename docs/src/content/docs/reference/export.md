@@ -46,17 +46,39 @@ straight into whatever consumes it, so it never reaches disk.
   "items": [
     { "uuid": "5f2b…", "title": "bank", "kind": "note", "tags": ["money"],
       "text": "code 4815" },
-    { "uuid": "9c14…", "title": "mail", "kind": "credential", "login": "someone",
-      "password": "…", "url": "…", "totp": "…", "notes": "…" },
+    { "uuid": "9c14…", "title": "mail", "kind": "login",
+      "fields": [
+        { "name": "login", "value": "someone", "secret": false },
+        { "name": "password", "value": "…", "secret": true },
+        { "name": "url", "value": "…", "secret": false },
+        { "name": "totp", "value": "…", "secret": true },
+        { "name": "notes", "value": "…", "secret": false }
+      ],
+      "login": "someone", "password": "…", "url": "…", "totp": "…", "notes": "…" },
     { "uuid": "a077…", "title": "key", "kind": "file", "filename": "id_ed25519",
       "bytes_base64": "…" }
   ]
 }
 ```
 
-Notes need `text`; credentials need `login` and `password`; files need
-`filename` and `bytes_base64`. Everything else is optional. This is a plain
-enough shape to generate from another tool by hand.
+Notes need `text`; records need `fields`; files need `filename` and
+`bytes_base64`. Everything else is optional. This is a plain enough shape to
+generate from another tool by hand.
+
+## The `fields` array
+
+A `card`, an `ssh-key` and a `login` all export their fields as one array of
+`{ name, value, secret }` entries — `secret` says whether the field is one
+`sefy get` hides by default, not whether this particular export left it out.
+Everything is written to the file in the clear either way; that is what the
+acknowledgement flag is for.
+
+A `login` writes one more thing: the old flat keys `login`, `password`, `url`,
+`totp` and `notes`, alongside `fields`, as a compatibility copy. That is for
+tools — and older versions of sefy — that only know the flat shape.
+[`import`](/sefy/reference/import/) prefers `fields` when both are present,
+and falls back to the flat keys when they are not, so an export written before
+0.7.0 still imports.
 
 `uuid` is the identity the item had in the vault it came from. It is what lets
 [`import`](/sefy/reference/import/) recognise an item it already holds instead

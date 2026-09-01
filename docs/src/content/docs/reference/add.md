@@ -1,10 +1,16 @@
 ---
 title: "add"
-description: Add a note, a credential or a file to the vault.
+description: Add a note, a login, a card, an SSH key or a file to the vault.
 ---
 
-Adds an item. Three kinds, three subcommands — an item's **kind cannot change**
-later, so this choice is made once.
+Adds an item. One subcommand per kind — an item's **kind cannot change** later,
+so this choice is made once.
+
+A note holds text and a file holds bytes. Everything else — a login, a card, an
+SSH key — is a **record**: a set of named fields, each of which is either
+public or secret. The kind decides which fields `add` offers and which of them
+`show` hides; it does not fence the record in, and
+[`edit --set`](/sefy/reference/edit/) can add a field the kind never mentioned.
 
 ## `sefy add note <TITLE>`
 
@@ -29,7 +35,10 @@ sefy overwrites and deletes that file as soon as the editor exits, but an
 editor's own swap, undo and backup files are its business and outside sefy's
 reach. If that matters for a particular note, use `--text`.
 
-## `sefy add credential <TITLE>`
+## `sefy add login <TITLE>`
+
+Fields: `login`, **`password`**, `url`, **`totp`**, `notes` (secret ones in
+bold).
 
 | Option | Meaning |
 | --- | --- |
@@ -41,7 +50,7 @@ reach. If that matters for a particular note, use `--text`.
 | `--tag <TAG>` | Tags. |
 
 ```console
-$ sefy add credential mail --login someone@example.com --url https://mail.example.com --tag mail
+$ sefy add login mail --login someone@example.com --url https://mail.example.com --tag mail
 Password for this item:
 added "mail" as 2
 ```
@@ -50,6 +59,68 @@ The account password is prompted for separately. Note that
 `--item-password-env` is deliberately distinct from the global
 `--password-env`: with one variable for both, the master password would end up
 stored as the account's password.
+
+This kind was called `credential` up to 0.6.0, and that spelling is still
+accepted — by `add`, by `--kind`, and in vaults and exports written back then.
+Everything sefy writes from now on says `login`.
+
+## `sefy add card <TITLE>`
+
+Fields: **`number`**, `holder`, `expiry`, **`cvv`**, **`pin`**, `notes`.
+
+| Option | Meaning |
+| --- | --- |
+| `--holder <NAME>` | Name embossed on the card. |
+| `--expiry <DATE>` | Expiry date, as printed. |
+| `--notes <TEXT>` | Bank, account, anything else. |
+| `--no-cvv` | Do not ask for the CVV. |
+| `--no-pin` | Do not ask for the PIN. |
+| `--tag <TAG>` | Tags. |
+
+```console
+$ sefy add card "visa" --holder "A LOVELACE" --expiry 01/29 --tag money
+Card number:
+CVV:
+PIN:
+added "visa" as 4
+```
+
+The number, the CVV and the PIN are **prompted for**, never passed as options:
+an argument lands in the shell history and is visible in every process listing
+on the machine while the command runs. A card you do not know the PIN of takes
+`--no-pin`, and one with no CVV takes `--no-cvv`; an empty prompt would store an
+empty field, which is a different claim from "there is none".
+
+## `sefy add ssh-key <TITLE>`
+
+Fields: **`private-key`**, **`passphrase`**, `public-key`, `host`, `notes`.
+
+| Option | Meaning |
+| --- | --- |
+| `--private-key <PATH>` | Private key file to read. Required. |
+| `--public-key <PATH>` | Public key file; defaults to the private key's path with `.pub` appended, when there is such a file. |
+| `--host <HOST>` | Where the key is used. |
+| `--notes <TEXT>` | Anything else worth remembering. |
+| `--no-passphrase` | Do not ask for the passphrase; for a key that has none. |
+| `--tag <TAG>` | Tags. |
+
+```console
+$ sefy add ssh-key "deploy key" --private-key ~/.ssh/id_ed25519 --host example.com --tag keys
+Passphrase for the key:
+added "deploy key" as 5
+```
+
+The private key is read from a file rather than typed — it is multi-line and
+would not survive a prompt — and stored as a **field**, not as an attachment,
+so it can be piped straight into a command:
+
+```sh
+sefy get "deploy key" --field private-key --stdout | ssh-add -
+```
+
+Storing the key as a file instead is still a reasonable choice when what you
+want back is a file on disk with its own path; see
+[Keeping ssh keys in a vault](/sefy/guides/ssh-keys/).
 
 ## `sefy add file <PATH>`
 
@@ -69,7 +140,8 @@ needs its mode set again.
 
 ## Related
 
-- [`edit`](/sefy/reference/edit/) — change an item afterwards
+- [`edit`](/sefy/reference/edit/) — change an item afterwards, and add fields
+- [`get`](/sefy/reference/get/) — take one field out
 - [`extract`](/sefy/reference/extract/) — write a stored file back to disk
 - [`import`](/sefy/reference/import/) — add many items at once
 - [Keeping ssh keys in a vault](/sefy/guides/ssh-keys/)

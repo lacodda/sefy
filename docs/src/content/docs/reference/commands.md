@@ -20,7 +20,7 @@ the installation itself and need neither a vault nor a password.
 
 ### Items
 
-- [`add`](/sefy/reference/add/) — add a note, a credential or a file
+- [`add`](/sefy/reference/add/) — add a note, a login, a card, an ssh key or a file
 - [`get`](/sefy/reference/get/) — copy a secret to the clipboard
 - [`edit`](/sefy/reference/edit/) — change a title, contents or tags
 - [`rm`](/sefy/reference/rm/) — remove an item
@@ -77,8 +77,8 @@ Wherever a command takes a `<REFERENCE>`, it accepts:
 
 1. an **id** — `sefy get 7`;
 2. an **exact title**, case-insensitive — `sefy get bank`;
-3. **text to search for**, matched against titles, note bodies and credential
-   fields — `sefy get grocer`.
+3. **text to search for**, matched against titles, note bodies and a record's
+   public fields — `sefy get grocer`.
 
 An exact title always beats a substring. If more than one item still matches,
 sefy lists the candidates rather than guessing:
@@ -86,8 +86,8 @@ sefy lists the candidates rather than guessing:
 ```console
 $ sefy get mail
 error: 2 items match "mail":
-     3  mail — personal                 credential
-     7  mail — work                     credential
+     3  mail — personal                 login
+     7  mail — work                     login
 narrow the text, or use an id
 ```
 

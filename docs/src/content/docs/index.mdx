@@ -1,6 +1,6 @@
 ---
 title: An inconspicuous encrypted vault
-description: An inconspicuous encrypted store for notes, credentials and files - a vault whose file looks like nothing.
+description: An inconspicuous encrypted store for notes, logins, cards, ssh keys and files - a vault whose file looks like nothing.
 template: splash
 # The hero carries the product name; repeating it as the page title renders as
 # "sefy | sefy" in the browser tab and in search results.
@@ -8,7 +8,7 @@ head:
   - tag: title
     content: sefy - an inconspicuous encrypted vault
 hero:
-  tagline: Notes, credentials and files in one encrypted file with no magic bytes, no header and nothing to recognize. Call it notes.bak and leave it anywhere.
+  tagline: Notes, logins, cards, ssh keys and files in one encrypted file with no magic bytes, no header and nothing to recognize. Call it notes.bak and leave it anywhere.
   image:
     html: |
       <div class="se-install">
@@ -41,7 +41,7 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 ## A day in the life
 
 ```console
-$ sefy add credential mail --login someone@example.com --url https://mail.example.com
+$ sefy add login mail --login someone@example.com --url https://mail.example.com
 Password for this item:
 added "mail" as 2
 
@@ -71,8 +71,8 @@ content share no prefix, because the salt and nonce are fresh every time.
 	<Card title="A file that says nothing" icon="seti:lock">
 		The whole SQLite database is sealed into one blob: `salt ‖ nonce ‖ ciphertext`. Nothing marks it as a secret store - not a header, not an extension, not a recognizable structure.
 	</Card>
-	<Card title="Notes, logins and files" icon="document">
-		Free-form notes, credentials with login, URL and TOTP, and files kept byte for byte. Tags across all of them, and search over titles and contents.
+	<Card title="Notes, logins, cards, keys and files" icon="document">
+		Free-form notes, logins with a password and TOTP, cards, ssh keys, and files kept byte for byte. Tags across all of them, and search over titles and public fields.
 	</Card>
 	<Card title="Nothing plaintext on disk" icon="approve-check">
 		The decrypted database lives only in memory - SQLite is never given a path, so no page, journal or temporary file lands on disk.

@@ -19,10 +19,18 @@ Changing the format — different Argon2 parameters, a different layout — woul
 mean a new format version, and it would be announced as a breaking change with a
 migration path. Nothing does that quietly.
 
+The database *inside* the encrypted blob is a different promise, and it does
+move: 0.7.0 took it from version 2 to 3, replacing the `credentials` table with
+a `fields` table so a record can hold named fields instead of one fixed set. A
+vault written by 0.6.0 is migrated on open, exactly as the earlier uuid
+migration was — the file format stays v1 throughout, so the migration happens
+in memory and the vault remains readable by the same rule as ever.
+
 ## Items from a newer sefy
 
 Inside the encrypted file, the contents can grow: a newer sefy may add a kind of
-item this one has never heard of. When an older build meets one, it:
+item this one has never heard of — a 0.6.0 build meeting a `card` written by
+0.7.0, say. When an older build meets one, it:
 
 - **lists it**, under the name the kind was stored as, marked so you can tell
   why it looks different;

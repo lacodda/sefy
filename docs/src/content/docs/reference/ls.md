@@ -13,18 +13,18 @@ sefy ls [OPTIONS]
 
 | Option | Meaning |
 | --- | --- |
-| `--kind <KIND>` | `note`, `credential` or `file`. |
+| `--kind <KIND>` | `note`, `login`, `card`, `ssh-key` or `file`. |
 | `--tag <TAG>` | Keep only items carrying **every** listed tag. |
 
 ```console
 $ sefy ls
 3  f.bin  file        [misc]
-2  mail   credential  [mail]
+2  mail   login       [mail]
 1  bank   note        [home, money]
 ```
 
 ```sh
-sefy ls --kind credential
+sefy ls --kind login
 sefy ls --tag money,home     # items carrying both, not either
 ```
 

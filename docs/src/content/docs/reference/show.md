@@ -12,32 +12,49 @@ not secret.
 sefy show <REFERENCE>
 ```
 
-For a credential, the password and TOTP secret stay covered, and the output says
-where to get them:
+For a record — a login, a card, an SSH key — every field is printed in the order
+the kind reads in. Secret ones stay covered, and the line says exactly which
+`get` uncovers them:
 
 ```console
 $ sefy show mail
-id:       2
-title:    mail
-kind:     credential
-tags:     mail
-login:    someone@example.com
-password: <hidden — use sefy get>
-url:      https://mail.example.com
-totp:     <hidden — use sefy get --field totp>
-notes:    recovery in the drawer
+id:          2
+title:       mail
+kind:        login
+tags:        mail
+login:       someone@example.com
+password:    <hidden — use sefy get --field password>
+url:         https://mail.example.com
+totp:        <hidden — use sefy get --field totp>
+notes:       recovery in the drawer
 ```
+
+```console
+$ sefy show visa
+id:          3
+title:       visa
+kind:        card
+tags:        money
+number:      <hidden — use sefy get --field number>
+holder:      A LOVELACE
+expiry:      01/29
+cvv:         <hidden — use sefy get --field cvv>
+pin:         <hidden — use sefy get --field pin>
+```
+
+A field the record does not carry is simply not there: `show` prints what is
+stored, so an account with no URL has no `url` line rather than an empty one.
 
 For a file, the stored name and size:
 
 ```console
 $ sefy show id_ed25519
-id:       3
-title:    id_ed25519
-kind:     file
-tags:     keys
-file:     id_ed25519
-size:     387 bytes
+id:          3
+title:       id_ed25519
+kind:        file
+tags:        keys
+file:        id_ed25519
+size:        387 bytes
 ```
 
 ## Notes print in full
@@ -47,10 +64,10 @@ a rule:
 
 ```console
 $ sefy show bank
-id:       1
-title:    bank
-kind:     note
-tags:     home, money
+id:          1
+title:       bank
+kind:        note
+tags:        home, money
 ---
 code 4815
 ```

@@ -10,16 +10,35 @@ passphrase that unlocks it can live beside it.
 This guide covers putting keys in, getting them back onto a machine, and the
 part worth being clear about — what happens between `sefy extract` and `ssh`.
 
-## Storing a key
+sefy 0.7.0 adds a dedicated **`ssh-key`** kind, which stores the private key
+as a field rather than a file — so it can be piped straight into `ssh-add`
+without ever touching disk:
 
-Add the private key as a file and the passphrase as a credential, tagged so they
+```console
+$ sefy add ssh-key "deploy key" --set-secret private-key --tag keys
+Value for private-key:
+added "deploy key" as 6
+
+$ sefy get "deploy key" --field private-key --stdout | ssh-add -
+Identity added: (stdin) ((stdin))
+```
+
+Storing the key as a `file` item, below, is still the right call when you want
+the key back on disk with its own path — restoring `~/.ssh` on a new machine,
+or handing the file to a tool that only accepts a path. Use `ssh-key` when the
+only thing you ever need is the value, piped into something that reads it from
+stdin.
+
+## Storing a key as a file
+
+Add the private key as a file and the passphrase as a login, tagged so they
 come back together:
 
 ```console
 $ sefy add file ~/.ssh/id_ed25519 --tag keys
 added "id_ed25519" as 3
 
-$ sefy add credential "id_ed25519 passphrase" --login you --tag keys
+$ sefy add login "id_ed25519 passphrase" --login you --tag keys
 Password for this item:
 added "id_ed25519 passphrase" as 4
 ```
@@ -49,7 +68,7 @@ Then the set comes back as a set:
 ```console
 $ sefy ls --tag keys
 5  work key               file        [keys, work]
-4  id_ed25519 passphrase  credential  [keys]
+4  id_ed25519 passphrase  login       [keys]
 3  id_ed25519             file        [keys]
 ```
 

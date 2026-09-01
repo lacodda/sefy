@@ -13,23 +13,27 @@ sefy find [TEXT] [OPTIONS]
 
 | Option | Meaning |
 | --- | --- |
-| `--kind <KIND>` | `note`, `credential` or `file`. |
+| `--kind <KIND>` | `note`, `login`, `card`, `ssh-key` or `file`. |
 | `--tag <TAG>` | Keep only items carrying **every** listed tag. |
 
 ```console
 $ sefy find mail
-2  mail  credential  [mail]
+2  mail  login  [mail]
 ```
 
 ```sh
-sefy find bank --kind credential
+sefy find bank --kind login
 ```
 
 ## What is searched
 
-Titles, note bodies and credential fields. The **contents of stored files are
-not**: a match inside a binary would say nothing useful, and searching them
-would mean decompressing and scanning every attachment on every query.
+Titles, note bodies and a record's public fields. The **contents of stored
+files are not**: a match inside a binary would say nothing useful, and
+searching them would mean decompressing and scanning every attachment on every
+query. Secret fields — a login's password and TOTP, a card's number and cvv,
+an ssh key's private key and passphrase — are deliberately not searched
+either: the same reasoning that keeps `find` out of file contents keeps it out
+of anything meant to stay hidden until you ask for it by name.
 
 Finding nothing is a normal result, not an error:
 

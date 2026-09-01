@@ -31,8 +31,8 @@ $ sefy plugin list
 broken  ?         unusable: it refused to describe itself
 ftp     0.2.1     push
 future  9.0.0     unusable: it speaks protocol 99 and this build speaks 1
-github  0.6.0     pull, push
-sftp    0.6.0     pull, push
+github  0.7.0     pull, push
+sftp    0.7.0     pull, push
 ```
 
 Three columns: the plugin's name, its version, and either the operations it
@@ -88,7 +88,7 @@ shell script, a Python file. It answers two invocations.
 {
   "protocol_version": 1,
   "name": "github",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Keeps a vault in a git repository",
   "operations": ["push", "pull"]
 }
