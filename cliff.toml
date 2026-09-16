@@ -9,7 +9,8 @@ All notable changes to this project are documented in this file.
 A vault stays readable by every later sefy. The **file format** is frozen at
 version 1; the **database schema** inside the ciphertext is versioned separately
 and does move — 0.2.0 gave items an identity, 0.7.0 turned records into named
-fields — and an older vault is migrated in on load.
+fields, 0.8.0 gave the vault a place to record facts about itself — and an
+older vault is migrated in on load.
 
 What an *older build* makes of a migrated vault depends on the change. The
 0.2.0 migration left everything readable by 0.1.x. The 0.7.0 one does not: a

@@ -5,7 +5,8 @@ All notable changes to this project are documented in this file.
 A vault stays readable by every later sefy. The **file format** is frozen at
 version 1; the **database schema** inside the ciphertext is versioned separately
 and does move — 0.2.0 gave items an identity, 0.7.0 turned records into named
-fields — and an older vault is migrated in on load.
+fields, 0.8.0 gave the vault a place to record facts about itself — and an
+older vault is migrated in on load.
 
 What an *older build* makes of a migrated vault depends on the change. The
 0.2.0 migration left everything readable by 0.1.x. The 0.7.0 one does not: a
@@ -16,6 +17,70 @@ contract from 0.6.0, not a break.
 Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
+
+## [0.8.0] - 2026-09-16
+
+Three ways into a vault that do not require remembering exactly what you called
+something.
+
+**`sefy` on its own** opens a picker: type a few letters, press Enter. The
+command line is exact and remembering is not — `sefy get github-work` only
+helps someone who knows the title is not `github (work)`. It appears only when
+there is a terminal at both ends; run from a script it says so and stops,
+rather than drawing a prompt into a pipe and waiting for a keystroke that never
+comes. `find` is unchanged and still always prints a listing, so a script and a
+person get the same command.
+
+**`sefy open`** does the two halves of signing in at once: the browser loads
+while the password waits on the clipboard, with the same timeout `get` uses.
+Only `http` and `https` addresses are opened — a `file:///` path or a
+`javascript:` string is something a launcher would act on and is not a site a
+login belongs to, so sefy shows what is stored and refuses.
+
+**`sefy status`** answers the question asked after a new machine, a restore or a
+week away: the file being used, how many items and of what kinds, how many
+tags, the schema version, the installed transports, and when this vault last
+reached a remote. It never prints a title or a value — a status is often read
+with somebody else in the room.
+
+That last line is new information, so the vault now records it. It lives inside
+the sealed file rather than beside it: sefy keeps nothing on disk but the vault
+and its transports, and a state file next to a vault would annotate the one
+file that is deliberately unremarkable. It also travels — copy a vault to
+another machine and it still knows when it last synced, because that is a fact
+about the vault rather than about the computer holding it.
+
+### Breaking Changes
+
+**Vault files: none.** The file format is still version 1 and the file on disk
+does not change shape. The database schema inside the ciphertext goes from 3 to
+4, adding a small table for facts about the vault itself; a vault written by an
+earlier release is migrated when it is opened and there is nothing to do by
+hand.
+
+**A migrated vault stays usable by 0.7.1.** Unlike the 2 → 3 move, this one
+takes nothing away and renames nothing: 0.7.1 does not know the new table,
+writes into the ones it does know, and leaves the rest as it found it. Checked
+with the published 0.7.1 binary in both directions — it opens a migrated vault,
+lists it, writes into it, and the newer build reads back both the new items and
+the record of the last sync. A vault written before 0.8.0 reports `never`,
+which is the honest answer.
+
+**`sefy-core` library.** `sync::push` now takes `&mut Vault` rather than
+`&Vault`: it records the transfer and saves before handing the file over, so
+that the copy arriving at the remote carries the note about its own journey.
+`Vault` gains `stats`, `last_sync` and `record_sync`, and the crate exports
+`Stats` and `SyncStamp`.
+
+### Features
+- Record when a vault last reached a remote
+- Add sefy status
+- Add sefy open
+- Open a picker when sefy is run with no command
+
+### Testing
+- Hold the docs site's mark to the repository's
+- Hold every command to having a reference page
 
 ## [0.7.1] - 2026-09-16
 
