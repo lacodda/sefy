@@ -4,11 +4,14 @@
 //! read the master password, open the vault in memory, act, and — for anything
 //! that changed something — seal it back to disk.
 
+mod browser;
 mod cli;
 mod commands;
 mod editor;
 mod output;
+mod picker;
 mod session;
+mod when;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
@@ -30,8 +33,18 @@ fn run() -> Result<()> {
     let arguments = Cli::parse();
     let password_env = arguments.password_env.as_deref();
 
+    // No subcommand: browse the vault. It still needs the file and the
+    // password, so it falls through to the block below rather than being
+    // handled here with the commands that need neither.
+    let Some(command) = arguments.command else {
+        let path = session::vault_path(arguments.vault)?;
+        let password = session::password(password_env)?;
+        let vault = session::open(&path, &password)?;
+        return commands::browse(&vault);
+    };
+
     // None of these needs a vault, so they come before the file is resolved.
-    match arguments.command {
+    match command {
         Command::Plugin { action } => {
             return match action {
                 PluginAction::List { paths } => commands::plugin_list(paths),
@@ -54,7 +67,7 @@ fn run() -> Result<()> {
     let password = session::password(password_env)?;
     let mut vault = session::open(&path, &password)?;
 
-    match arguments.command {
+    match command {
         Command::Add { kind } => commands::add(&mut vault, kind),
         Command::Get(args) => commands::get(&vault, args),
         Command::Show { reference } => commands::show(&vault, &reference),
@@ -68,6 +81,8 @@ fn run() -> Result<()> {
             force,
         } => commands::extract(&vault, &reference, output, force),
         Command::Tags => commands::tags(&vault),
+        Command::Open(args) => commands::open(&vault, args),
+        Command::Status => commands::status(&vault),
         Command::Export {
             output,
             i_know_this_writes_plaintext,
@@ -81,7 +96,7 @@ fn run() -> Result<()> {
         Command::ChangePassword { new_password_env } => {
             commands::change_password(&mut vault, new_password_env.as_deref())
         }
-        Command::Push(args) => commands::push(&vault, args),
+        Command::Push(args) => commands::push(&mut vault, args),
         Command::Pull(args) => commands::pull(&mut vault, args, &password),
         Command::Sync(args) => commands::sync(&mut vault, args, &password),
         // All three are handled above, before the vault is opened.

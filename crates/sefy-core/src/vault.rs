@@ -187,6 +187,107 @@ impl Vault {
         self.password = Zeroizing::new(password.to_vec());
         self.save()
     }
+
+    /// What this vault holds, without revealing any of it.
+    ///
+    /// Every number here is about shape rather than contents: how many items,
+    /// of which kinds, how many tags. It is what `sefy status` reports, and it
+    /// is deliberately the whole of it — a status that printed a title would
+    /// put a secret's name on a screen that was asked only whether the vault is
+    /// there.
+    pub fn stats(&self) -> Result<Stats> {
+        Ok(Stats {
+            items: db::count_items(&self.connection)?,
+            by_kind: db::count_by_kind(&self.connection)?,
+            tags: self.tags()?.len(),
+            schema: db::schema_version(&self.connection)?,
+            last_sync: self.last_sync()?,
+        })
+    }
+
+    /// When this vault last reached a remote, and through which transport.
+    ///
+    /// `None` means it never has — or that it last did so under a build that
+    /// did not record it, which reads the same way and is the honest answer.
+    pub fn last_sync(&self) -> Result<Option<SyncStamp>> {
+        let Some(raw) = db::meta_get(&self.connection, LAST_SYNC)? else {
+            return Ok(None);
+        };
+        Ok(SyncStamp::parse(&raw))
+    }
+
+    /// Records that this vault has just reached a remote.
+    ///
+    /// The caller saves: a stamp is worth exactly as much as the file it was
+    /// written into, and a push that stamped a vault it then failed to write
+    /// would claim a sync that left no trace.
+    pub fn record_sync(&mut self, transport: &str, operation: &str) -> Result<()> {
+        let stamp = SyncStamp {
+            at: now(),
+            transport: transport.to_owned(),
+            operation: operation.to_owned(),
+        };
+        db::meta_set(&self.connection, LAST_SYNC, &stamp.encode())
+    }
+}
+
+/// `meta` key under which the last sync is recorded.
+const LAST_SYNC: &str = "last_sync";
+
+/// What a vault holds, counted rather than read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stats {
+    /// How many items in total.
+    pub items: usize,
+    /// How many of each kind, in the order the kinds are declared, skipping
+    /// kinds this vault has none of.
+    pub by_kind: Vec<(String, usize)>,
+    /// How many distinct tags are in use.
+    pub tags: usize,
+    /// Schema version of the database inside the blob.
+    pub schema: i64,
+    /// When this vault last reached a remote, if it ever has.
+    pub last_sync: Option<SyncStamp>,
+}
+
+/// A note that this vault reached a remote, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncStamp {
+    /// Unix seconds.
+    pub at: i64,
+    /// Short name of the transport it went through.
+    pub transport: String,
+    /// Which operation wrote it: `push`, `pull` or `sync`.
+    pub operation: String,
+}
+
+impl SyncStamp {
+    /// Renders the stamp for storage: seconds, transport, operation.
+    ///
+    /// A flat string rather than JSON, because it is three fields that will
+    /// stay three fields, and a parser that cannot fail is worth more here
+    /// than one that can express more.
+    fn encode(&self) -> String {
+        format!("{} {} {}", self.at, self.transport, self.operation)
+    }
+
+    /// Reads a stamp back, or nothing if the value is not one.
+    ///
+    /// Unreadable is treated as absent rather than as an error: this is a
+    /// convenience recorded by some build, possibly a future one, and a vault
+    /// that will not open because it carries a note about itself would be a
+    /// poor trade.
+    fn parse(raw: &str) -> Option<Self> {
+        let mut parts = raw.split(' ');
+        let at = parts.next()?.parse().ok()?;
+        let transport = parts.next()?.to_owned();
+        let operation = parts.next().unwrap_or("sync").to_owned();
+        Some(Self {
+            at,
+            transport,
+            operation,
+        })
+    }
 }
 
 impl std::fmt::Debug for Vault {

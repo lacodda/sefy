@@ -40,10 +40,33 @@ pub struct PullReport {
 
 /// Sends this vault's file to the remote, replacing what is there.
 ///
-/// The vault is not saved first: what gets uploaded is the file as it is on
-/// disk. A caller with unsaved changes in memory is expected to have saved
-/// them, the same as every other command that reads the file back.
-pub fn push(vault: &Vault, plugin: &Plugin, name: &str) -> Result<Report> {
+/// The vault is stamped and saved first, so that the file going up is the one
+/// carrying the note about this very transfer. Stamping afterwards would be
+/// the obvious order and the wrong one: the copy at the remote would say it
+/// had never been synced, and pulling it onto another machine would bring back
+/// that answer as if it were true.
+///
+/// A caller with other unsaved changes in memory is still expected to have
+/// saved them, the same as every other command that reads the file back — the
+/// save here writes whatever is in memory, it does not make that the caller's
+/// business.
+pub fn push(vault: &mut Vault, plugin: &Plugin, name: &str) -> Result<Report> {
+    push_labelled(vault, plugin, name, "push")
+}
+
+/// A push that records itself under a given name.
+///
+/// `sync` uses it to stamp the copy it uploads as a sync rather than as the
+/// push it ends with — the user asked for one operation and the file should
+/// say which one it was.
+fn push_labelled(
+    vault: &mut Vault,
+    plugin: &Plugin,
+    name: &str,
+    operation: &str,
+) -> Result<Report> {
+    stamp(vault, plugin, operation)?;
+
     invoke(
         plugin,
         &Request {
@@ -52,6 +75,16 @@ pub fn push(vault: &Vault, plugin: &Plugin, name: &str) -> Result<Report> {
             name,
         },
     )
+}
+
+/// Records the transfer in the vault and writes it to disk.
+///
+/// Its own function because both transfers need it and each calls it at a
+/// different point: a push stamps before uploading, so that the copy going up
+/// carries the note about its own journey.
+fn stamp(vault: &mut Vault, plugin: &Plugin, operation: &str) -> Result<()> {
+    vault.record_sync(plugin.name(), operation)?;
+    vault.save()
 }
 
 /// Fetches the remote copy and folds it into this vault.
@@ -96,6 +129,13 @@ pub fn pull(
     // removed, which is what Windows requires.
     drop(remote);
 
+    // After the merge rather than inside it: `merge` folds one vault into
+    // another and knows nothing about transports, which is what lets it be
+    // called on a file from anywhere. Ordering against the merge's own save is
+    // *not* the reason — a stamp set first would sit in the same in-memory
+    // database that save writes out, so either order reaches the disk.
+    stamp(vault, plugin, "pull")?;
+
     Ok(PullReport { transport, merged })
 }
 
@@ -117,7 +157,9 @@ pub fn sync(
     remote_password: &[u8],
 ) -> Result<SyncReport> {
     let pulled = pull(vault, plugin, name, remote_password)?;
-    let pushed = push(vault, plugin, name)?;
+    // Stamped as a sync, overwriting the "pull" the first leg left: one
+    // operation was asked for, and the file that goes up should say which.
+    let pushed = push_labelled(vault, plugin, name, "sync")?;
 
     Ok(SyncReport { pulled, pushed })
 }
@@ -343,7 +385,7 @@ fi
         file_transport(directory.path(), &remote, &directory.path().join("log"));
         let plugin = installed(directory.path(), "file");
 
-        push(&vault, &plugin, "vault").unwrap();
+        push(&mut vault, &plugin, "vault").unwrap();
 
         assert_eq!(
             std::fs::read(&local).unwrap(),
@@ -362,7 +404,7 @@ fi
         file_transport(directory.path(), &remote, &directory.path().join("log"));
         let plugin = installed(directory.path(), "file");
 
-        push(&vault, &plugin, "vault").unwrap();
+        push(&mut vault, &plugin, "vault").unwrap();
 
         let carried = std::fs::read(&remote).unwrap();
         assert!(
@@ -498,5 +540,108 @@ fi
         let error = pull(&mut vault, &plugin, "vault", PASSWORD).unwrap_err();
 
         assert!(error.to_string().contains("pull"), "got: {error}");
+    }
+
+    #[test]
+    fn a_push_stamps_the_vault_and_the_copy_that_goes_up() {
+        let directory = tempfile::tempdir().unwrap();
+        let local = directory.path().join("notes.bak");
+        let remote = directory.path().join("remote.bin");
+        let mut vault = Vault::create(&local, PASSWORD).unwrap();
+        note(&mut vault, "bank", "vault code 1234");
+        file_transport(directory.path(), &remote, &directory.path().join("log"));
+        let plugin = installed(directory.path(), "file");
+
+        assert!(
+            vault.last_sync().unwrap().is_none(),
+            "a fresh vault has never synced"
+        );
+
+        push(&mut vault, &plugin, "vault").unwrap();
+
+        let stamp = vault.last_sync().unwrap().expect("the push left a stamp");
+        assert_eq!(stamp.transport, "file");
+        assert_eq!(stamp.operation, "push");
+
+        // The half that is easy to get wrong: the file at the remote has to
+        // carry the stamp too. Written afterwards, the copy over there would
+        // say it had never synced, and pulling it onto another machine would
+        // bring that answer back as though it were true.
+        let fetched = directory.path().join("fetched.bak");
+        std::fs::copy(&remote, &fetched).unwrap();
+        let published = Vault::open(&fetched, PASSWORD).unwrap();
+        assert_eq!(
+            published.last_sync().unwrap().map(|s| s.operation),
+            Some("push".to_owned()),
+            "the copy at the remote carries the stamp"
+        );
+    }
+
+    #[test]
+    fn a_pull_records_itself_on_disk_along_with_what_it_brought() {
+        // Reopened from the file rather than read out of the live vault: a
+        // stamp that only reached memory would pass every in-process check and
+        // be gone by the next command.
+        let directory = tempfile::tempdir().unwrap();
+        let remote = remote_holding(directory.path(), "their note", PASSWORD);
+        let local = directory.path().join("notes.bak");
+        let mut vault = Vault::create(&local, PASSWORD).unwrap();
+        note(&mut vault, "my note", "from here");
+        file_transport(directory.path(), &remote, &directory.path().join("log"));
+        let plugin = installed(directory.path(), "file");
+
+        pull(&mut vault, &plugin, "vault", PASSWORD).unwrap();
+        drop(vault);
+
+        // Reopened from disk, which is what makes this test worth having.
+        let reopened = Vault::open(&local, PASSWORD).unwrap();
+        let stamp = reopened
+            .last_sync()
+            .unwrap()
+            .expect("the pull left a stamp");
+        assert_eq!(stamp.operation, "pull");
+        assert_eq!(stamp.transport, "file");
+        // And what the vault holds is the merged result: the stamp must not
+        // cost the pull whatever it went to fetch.
+        assert_eq!(titles(&reopened), vec!["my note", "their note"]);
+    }
+
+    #[test]
+    fn a_sync_is_recorded_as_one_operation_not_as_its_last_leg() {
+        let directory = tempfile::tempdir().unwrap();
+        let remote = remote_holding(directory.path(), "their note", PASSWORD);
+        let local = directory.path().join("notes.bak");
+        let mut vault = Vault::create(&local, PASSWORD).unwrap();
+        note(&mut vault, "my note", "from here");
+        file_transport(directory.path(), &remote, &directory.path().join("log"));
+        let plugin = installed(directory.path(), "file");
+
+        sync(&mut vault, &plugin, "vault", PASSWORD).unwrap();
+
+        // Not "push", although a push is how it ends: the user asked for a
+        // sync and the record should say what they asked for.
+        assert_eq!(
+            vault.last_sync().unwrap().map(|s| s.operation),
+            Some("sync".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_failed_transfer_leaves_no_claim_that_it_happened() {
+        // The stamp says "this vault reached a remote". A transport that
+        // refused the operation did not, and a vault claiming otherwise would
+        // send someone looking for their secrets somewhere they never went.
+        let directory = tempfile::tempdir().unwrap();
+        let local = directory.path().join("notes.bak");
+        let mut vault = Vault::create(&local, PASSWORD).unwrap();
+        silent_transport(directory.path(), r#"["push"]"#);
+        let plugin = installed(directory.path(), "silent");
+
+        pull(&mut vault, &plugin, "vault", PASSWORD).unwrap_err();
+
+        assert!(
+            vault.last_sync().unwrap().is_none(),
+            "a refused pull must not look like a sync that happened"
+        );
     }
 }

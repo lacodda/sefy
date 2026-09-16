@@ -18,8 +18,9 @@ use std::io::Cursor;
 /// written by 0.1.x still opens. Version 3 replaced the `credentials` table
 /// with `fields`, so that a kind of record costs a template rather than a
 /// table — a vault written by 0.6.0 or earlier is migrated on load, not
-/// rejected.
-const SCHEMA_VERSION: i64 = 3;
+/// rejected. Version 4 added `meta`, where a fact about the vault itself lives
+/// rather than about any item in it.
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Opens an empty in-memory database with the current schema.
 pub fn create() -> Result<Connection> {
@@ -63,6 +64,7 @@ fn migrate(connection: &Connection) -> Result<()> {
         migrate_to_v1(connection)?;
         migrate_to_v2(connection)?;
         migrate_to_v3(connection)?;
+        migrate_to_v4(connection)?;
         connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
 
@@ -138,6 +140,64 @@ fn migrate_to_v3(connection: &Connection) -> Result<()> {
     )?;
 
     move_credentials_into_fields(connection)?;
+    Ok(())
+}
+
+/// Adds `meta`: facts about the vault itself rather than about its items.
+///
+/// The first of them is when this vault last reached a remote, which `sefy
+/// status` reports. It has to live *inside* the sealed file rather than in
+/// something beside it: a sidecar would annotate the one file that is
+/// deliberately unremarkable, which is the same reason transports are
+/// installed into the data directory and not next to the vault. It also
+/// travels — "when was this vault last synced" is a fact about the vault, not
+/// about the machine holding it, so carrying the file to another machine has
+/// to carry the answer with it.
+///
+/// A key-value table rather than a column per fact: these are single values
+/// about the whole vault, and a table each would be four tables by 1.0.
+fn migrate_to_v4(connection: &Connection) -> Result<()> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS meta (
+             key   TEXT PRIMARY KEY,
+             value TEXT NOT NULL
+         );",
+    )?;
+    Ok(())
+}
+
+/// Reads a `meta` value, if the vault carries one under that key.
+///
+/// A vault written by an older build has no such table at all, which is a
+/// missing value rather than an error: `status` says "never" and moves on.
+pub fn meta_get(connection: &Connection, key: &str) -> Result<Option<String>> {
+    let table_exists = connection
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'")?
+        .exists([])?;
+    if !table_exists {
+        return Ok(None);
+    }
+
+    Ok(connection
+        .query_row(
+            "SELECT value FROM meta WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// Writes a `meta` value, replacing whatever was under that key.
+pub fn meta_set(connection: &Connection, key: &str, value: &str) -> Result<()> {
+    // The table may be absent on a vault an older build wrote into after this
+    // one migrated it - the same shape of problem the uuid pass solves, and
+    // answered the same way: make sure it is there rather than assume it.
+    migrate_to_v4(connection)?;
+    connection.execute(
+        "INSERT INTO meta (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )?;
     Ok(())
 }
 
@@ -696,6 +756,41 @@ pub fn list_tags(connection: &Connection) -> Result<Vec<(String, i64)>> {
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(tags)
+}
+
+/// How many items the vault holds.
+pub fn count_items(connection: &Connection) -> Result<usize> {
+    let count: i64 = connection.query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))?;
+    Ok(count as usize)
+}
+
+/// How many items of each kind, commonest first.
+///
+/// Kinds are read from the rows rather than from [`ItemKind`], so a kind this
+/// build has never heard of still appears — a vault written by a later sefy is
+/// counted honestly instead of silently dropping part of itself from its own
+/// summary.
+pub fn count_by_kind(connection: &Connection) -> Result<Vec<(String, usize)>> {
+    let mut statement = connection.prepare(
+        "SELECT kind, COUNT(*) FROM items
+         GROUP BY kind
+         ORDER BY COUNT(*) DESC, kind",
+    )?;
+    let counts = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as usize))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(counts)
+}
+
+/// Schema version recorded in the database itself.
+///
+/// Read rather than assumed to be [`SCHEMA_VERSION`]: a vault opened by a
+/// newer build carries a higher number, and reporting the constant would tell
+/// the user about this binary when they asked about their file.
+pub fn schema_version(connection: &Connection) -> Result<i64> {
+    Ok(connection.query_row("PRAGMA user_version", [], |row| row.get(0))?)
 }
 
 #[cfg(test)]

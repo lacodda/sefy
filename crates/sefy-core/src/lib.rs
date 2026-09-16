@@ -58,4 +58,4 @@ pub use model::{
 };
 pub use plugin::{PROTOCOL_VERSION, Plugin};
 pub use sync::{PullReport, SyncReport, pull, push, sync};
-pub use vault::Vault;
+pub use vault::{Stats, SyncStamp, Vault};

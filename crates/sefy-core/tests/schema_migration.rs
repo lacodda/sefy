@@ -288,3 +288,98 @@ fn the_migration_leaves_no_readable_copy_behind_for_an_older_build() {
         == 1;
     assert!(table_survives);
 }
+
+/// The same treatment for the 3 → 4 move, against a file from the published
+/// 0.7.1 binary.
+///
+/// 0.8.0 added `meta`, where a fact about the vault itself lives: the first of
+/// them is when it last reached a remote, which `sefy status` reports. A vault
+/// written before that table existed has to open, keep everything in it, and
+/// answer "never" rather than failing on a table it has never seen.
+mod version_four {
+    use super::PASSWORD;
+    use sefy_core::Vault;
+    use std::fs;
+    use std::path::PathBuf;
+
+    /// Copies the 0.7.1 fixture somewhere writable.
+    fn fixture_copy() -> (tempfile::TempDir, PathBuf) {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("vault-v0.7.1.blob");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notes.bak");
+        fs::copy(&source, &path).unwrap();
+        (directory, path)
+    }
+
+    #[test]
+    fn a_vault_from_0_7_1_opens_and_keeps_everything_in_it() {
+        let (_directory, path) = fixture_copy();
+        let vault = Vault::open(&path, PASSWORD).unwrap();
+
+        let titles: Vec<String> = vault
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|item| item.title)
+            .collect();
+        assert!(
+            titles.contains(&"a note from 0.7.1".to_owned())
+                && titles.contains(&"a login from 0.7.1".to_owned()),
+            "both items survived the migration: {titles:?}"
+        );
+    }
+
+    #[test]
+    fn a_vault_written_before_the_table_existed_says_it_never_synced() {
+        // The answer that matters: "never", rather than an error about a
+        // missing table. A vault older than the feature is the ordinary case
+        // for a long time after it ships.
+        let (_directory, path) = fixture_copy();
+        let vault = Vault::open(&path, PASSWORD).unwrap();
+
+        assert!(vault.last_sync().unwrap().is_none());
+        assert_eq!(vault.stats().unwrap().last_sync, None);
+    }
+
+    #[test]
+    fn the_migration_moves_the_schema_forward_and_the_stamp_survives_a_reopen() {
+        let (_directory, path) = fixture_copy();
+
+        let before = Vault::open(&path, PASSWORD).unwrap().stats().unwrap();
+        assert_eq!(before.schema, 4, "opening brings the schema up to date");
+        assert_eq!(before.items, 2);
+
+        let mut vault = Vault::open(&path, PASSWORD).unwrap();
+        vault.record_sync("file", "push").unwrap();
+        vault.save().unwrap();
+        drop(vault);
+
+        let reopened = Vault::open(&path, PASSWORD).unwrap();
+        let stamp = reopened.last_sync().unwrap().expect("recorded");
+        assert_eq!(stamp.transport, "file");
+        assert_eq!(stamp.operation, "push");
+    }
+
+    #[test]
+    fn the_counts_a_status_reports_come_off_a_real_file() {
+        // Reasoning about the numbers cannot show they are right; a file
+        // written by a binary that is published can.
+        let (_directory, path) = fixture_copy();
+        let stats = Vault::open(&path, PASSWORD).unwrap().stats().unwrap();
+
+        assert_eq!(stats.items, 2);
+        assert_eq!(stats.tags, 1, "both items carry the one tag");
+        let kinds: Vec<&str> = stats
+            .by_kind
+            .iter()
+            .map(|(kind, _)| kind.as_str())
+            .collect();
+        assert!(
+            kinds.contains(&"note") && kinds.contains(&"login"),
+            "both kinds are counted: {kinds:?}"
+        );
+    }
+}
