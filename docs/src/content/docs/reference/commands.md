@@ -9,6 +9,37 @@ password, and does one thing to the items inside it.
 [`completions`](/sefy/reference/completions/) are the exceptions: they report on
 the installation itself and need neither a vault nor a password.
 
+## `sefy` on its own
+
+With no command at all, sefy opens a picker over the vault: type a few letters,
+see what matches, press Enter to show the item.
+
+```console
+$ sefy
+? Item ›
+❯ bank code  note  [money]
+  mail       login  [home, work]
+  example    login  [work]
+```
+
+The command line is exact and remembering is not — `sefy get github-work` only
+helps someone who knows the title is not `github (work)`. This is the way in for
+"it is in there somewhere".
+
+It is offered only when there is a terminal at both ends. Run from a script it
+says so and stops, rather than drawing a prompt into a pipe and waiting for a
+keystroke that is never coming:
+
+```console
+$ sefy | cat
+error: sefy with no command opens an interactive picker, and this is not a terminal
+list items with: sefy ls
+```
+
+[`find`](/sefy/reference/find/) is the opposite choice on purpose: it always
+prints a listing, in a terminal and in a pipe alike, so a script and a person
+get the same command.
+
 ## The commands
 
 ### Making and reading a vault
@@ -17,11 +48,13 @@ the installation itself and need neither a vault nor a password.
 - [`ls`](/sefy/reference/ls/) — list items
 - [`find`](/sefy/reference/find/) — search items by text, kind and tags
 - [`show`](/sefy/reference/show/) — show an item without its secret fields
+- [`status`](/sefy/reference/status/) — what and where this vault is, without its contents
 
 ### Items
 
 - [`add`](/sefy/reference/add/) — add a note, a login, a card, an ssh key or a file
 - [`get`](/sefy/reference/get/) — copy a secret to the clipboard
+- [`open`](/sefy/reference/open/) — open an item's site and copy its password
 - [`edit`](/sefy/reference/edit/) — change a title, contents or tags
 - [`rm`](/sefy/reference/rm/) — remove an item
 - [`extract`](/sefy/reference/extract/) — write a stored file back to disk

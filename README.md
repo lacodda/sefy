@@ -82,6 +82,18 @@ password: <hidden — use sefy get>
 url:      https://mail.example.com
 ```
 
+Or do not look around at all: `sefy` on its own opens a picker over the vault.
+Type a few letters, press Enter. The command line is exact and remembering is
+not.
+
+```
+$ sefy
+? Item ›
+> bank card   note   [money]
+  mail        login  [mail]
+  id_ed25519  file   [keys]
+```
+
 Take a secret out. It goes to the clipboard and is taken back off after 45
 seconds - sefy clears it only if the secret is still what is sitting there, so
 anything you copied meanwhile is left alone.
@@ -93,6 +105,15 @@ clipboard cleared
 
 $ sefy get "bank card" --stdout
 PIN 4815
+```
+
+For a login you are about to use, `sefy open` does both halves at once: the
+browser loads while the password waits on the clipboard.
+
+```
+$ sefy open mail
+opened https://mail.example.com
+copied password of "mail" to the clipboard; clearing in 45s
 ```
 
 Items are addressed by title, by an exact id, or by text to search for. When
@@ -130,6 +151,20 @@ merged: 1 added, 1 updated, 1 unchanged
 This vault's version was kept; the incoming one is beside it:
   "mail" → also kept as "mail (conflicted copy)"
 Compare them, keep the right one, and remove the other.
+```
+
+New machine, or back after a week? `sefy status` says what you are holding
+without saying what is in it - counts and versions, never a title or a value:
+
+```
+$ sefy status
+vault    /home/you/backups/notes.bak
+size     72.1 KB
+items    17 items  (12 login, 4 note, 1 file)
+tags     6 tags
+schema   4
+synced   2026-09-16 19:15 UTC (2 hours ago) through github (sync)
+plugins  github, sftp
 ```
 
 A vault is never a trap. `sefy export` writes everything back out as plain

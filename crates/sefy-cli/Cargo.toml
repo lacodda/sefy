@@ -28,6 +28,7 @@ sefy-core.workspace = true
 anyhow.workspace = true
 arboard.workspace = true
 clap.workspace = true
+dialoguer.workspace = true
 clap_complete.workspace = true
 rpassword.workspace = true
 tempfile.workspace = true

@@ -33,6 +33,11 @@ zeroize = { version = "1", features = ["derive"] }
 anyhow = "1"
 arboard = "3"
 clap = { version = "4", features = ["derive", "env"] }
+# The line's interactive prompt crate (kasl, turnout). Default features off:
+# `editor` and `password` are dialoguer's own takes on two things sefy already
+# does its own way - the editor path shreds its draft, and a password prompt
+# here must be the one that never echoes and never reaches the history.
+dialoguer = { version = "0.12", default-features = false, features = ["fuzzy-select"] }
 clap_complete = "4"
 rpassword = "7"
 tempfile = "3"
