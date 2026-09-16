@@ -232,6 +232,36 @@ fn the_icon_has_no_second_copy() {
     );
 }
 
+/// The docs site shows the mark the repository holds, level for level.
+///
+/// The site keeps its own copies because Astro wants them under `docs/`, and
+/// they are copies, so they can go stale: the exporter rewrites the artwork in
+/// `assets/` and the site keeps serving last month's. The pairing also fixes
+/// which level goes where — the header takes the L tile, the favicon the S
+/// one, and swapping them puts a solid coloured block in a 40px header, which
+/// has happened in this line before.
+#[test]
+fn the_docs_site_carries_the_same_mark_as_the_repository() {
+    for (site, repo) in [
+        ("docs/src/assets/logo.svg", "assets/logo.svg"),
+        ("docs/public/favicon.svg", "assets/logo-s.svg"),
+        (
+            "docs/public/apple-touch-icon.png",
+            "assets/apple-touch-icon.png",
+        ),
+    ] {
+        let from_site = std::fs::read(repo_root().join(site))
+            .unwrap_or_else(|e| panic!("cannot read {site}: {e}"));
+        let from_repo = std::fs::read(repo_root().join(repo))
+            .unwrap_or_else(|e| panic!("cannot read {repo}: {e}"));
+        assert!(
+            from_site == from_repo,
+            "{site} differs from {repo}; the docs site shows a different mark \
+             than the repository - re-run the asset exporter"
+        );
+    }
+}
+
 /// The icon reaches a `cargo install`.
 ///
 /// build.rs embeds it unconditionally, so a package that does not carry it
