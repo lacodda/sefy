@@ -1846,3 +1846,141 @@ fn an_export_still_runs_with_an_item_from_a_newer_sefy_in_the_vault() {
         "and the export says its contents could not be read"
     );
 }
+
+#[test]
+fn status_reports_shape_and_never_contents() {
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "bank code", "vault code 1234", &["money"]);
+    add_note(&fixture, "wifi", "hunter2", &["home", "money"]);
+
+    let output = fixture.sefy().arg("status").assert().success();
+    let printed = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+
+    // What it must say.
+    assert!(printed.contains("2 items"), "item count: {printed}");
+    assert!(printed.contains("2 note"), "kind breakdown: {printed}");
+    // Two distinct tags across the two notes: `money` is on both.
+    assert!(printed.contains("2 tags"), "tag count: {printed}");
+    assert!(printed.contains("schema"), "schema version: {printed}");
+    assert!(printed.contains("never"), "a fresh vault has not synced");
+
+    // What it must not. A status is asked by someone checking they have the
+    // right file, often with somebody else in the room - it answers about the
+    // vault, never about what is in it.
+    for secret in ["vault code 1234", "hunter2", "bank code", "wifi"] {
+        assert!(
+            !printed.contains(secret),
+            "status printed {secret:?}, which is contents:\n{printed}"
+        );
+    }
+}
+
+#[test]
+fn status_counts_a_kind_this_build_does_not_know() {
+    // A vault written by a later sefy must still describe itself honestly,
+    // rather than quietly leaving part of itself out of its own summary.
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "ordinary", "text", &[]);
+    add_item_of_a_future_kind(&fixture, "my passport");
+
+    let output = fixture.sefy().arg("status").assert().success();
+    let printed = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+
+    assert!(printed.contains("2 items"), "both are counted: {printed}");
+    assert!(
+        printed.contains("passport"),
+        "the unknown kind is named as stored: {printed}"
+    );
+}
+
+#[test]
+fn open_refuses_anything_that_is_not_a_web_address() {
+    // The check that keeps a stored value from becoming something a launcher
+    // acts on. No browser is started: each of these fails before that.
+    let fixture = Fixture::with_vault();
+
+    for (title, url) in [
+        ("local", "file:///C:/Windows/System32/calc.exe"),
+        ("script", "javascript:alert(1)"),
+        ("settings", "ms-settings:privacy"),
+        ("bare", "example.com"),
+    ] {
+        fixture
+            .sefy()
+            .args(["add", "login", title, "--login", "someone"])
+            .args(["--item-password-env", "SEFY_TEST_PASSWORD"])
+            .args(["--url", url])
+            .assert()
+            .success();
+
+        fixture
+            .sefy()
+            .args(["open", title])
+            .assert()
+            .failure()
+            .stderr(contains("web address"));
+    }
+}
+
+#[test]
+fn open_says_what_is_missing_rather_than_opening_nothing() {
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "a note", "text", &[]);
+    fixture
+        .sefy()
+        .args(["add", "login", "no-site", "--login", "someone"])
+        .args(["--item-password-env", "SEFY_TEST_PASSWORD"])
+        .assert()
+        .success();
+
+    // A note has no site at all.
+    fixture
+        .sefy()
+        .args(["open", "a note"])
+        .assert()
+        .failure()
+        .stderr(contains("no site to open"));
+
+    // A login without a url says which field is missing and how to add it.
+    fixture
+        .sefy()
+        .args(["open", "no-site"])
+        .assert()
+        .failure()
+        .stderr(contains("has no \"url\" field"))
+        .stderr(contains("--set url="));
+}
+
+#[test]
+fn the_picker_is_refused_off_a_terminal_rather_than_hanging() {
+    // `sefy` with no command opens an interactive picker. Run from a script,
+    // where there is nobody to type, it has to say so and exit - a prompt
+    // drawn into a pipe waits for a keystroke that is never coming, which is a
+    // hang with no explanation anywhere.
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "something", "text", &[]);
+
+    fixture
+        .sefy()
+        .assert()
+        .failure()
+        .stderr(contains("not a terminal"))
+        .stderr(contains("sefy ls"));
+}
+
+#[test]
+fn find_lists_rather_than_picking_wherever_it_runs() {
+    // `find` is what a script calls. It must be the same command in a terminal
+    // and in a pipe: one name, one behaviour.
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "bank code", "text", &["money"]);
+    add_note(&fixture, "wifi", "text", &["home"]);
+
+    fixture
+        .sefy()
+        .args(["find", "--tag", "money"])
+        .assert()
+        .success()
+        .stdout(contains("bank code"))
+        .stdout(contains("wifi").not());
+}

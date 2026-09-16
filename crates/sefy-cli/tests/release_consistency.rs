@@ -556,3 +556,65 @@ fn rust_files(directory: &Path) -> Vec<PathBuf> {
     }
     found
 }
+
+#[test]
+fn every_command_has_a_reference_page() {
+    // The project's release ritual says to check this by hand, in the step
+    // most likely to be rushed: "a command without documentation does not
+    // exist". A new subcommand does not announce itself to the docs, and
+    // nothing fails when it is missing - the site simply has a hole in it that
+    // only a reader finds.
+    //
+    // The standard is one page per top-level command, named after it, with
+    // subcommands living on their parent's page.
+    let help = String::from_utf8(
+        std::process::Command::new(env!("CARGO_BIN_EXE_sefy"))
+            .arg("--help")
+            .output()
+            .expect("cannot run sefy --help")
+            .stdout,
+    )
+    .expect("help output is not utf-8");
+
+    let commands: Vec<String> = help
+        .lines()
+        .skip_while(|line| !line.starts_with("Commands:"))
+        .skip(1)
+        .take_while(|line| line.starts_with("  ") && !line.trim().is_empty())
+        .filter_map(|line| line.split_whitespace().next())
+        // `help` is clap's own, and documenting it would say nothing.
+        .filter(|name| *name != "help")
+        .map(str::to_string)
+        .collect();
+
+    assert!(
+        commands.len() > 10,
+        "could not parse the command list out of --help: {commands:?}"
+    );
+
+    let reference = repo_root().join("docs/src/content/docs/reference");
+    for command in &commands {
+        let page = reference.join(format!("{command}.md"));
+        assert!(
+            page.is_file(),
+            "`sefy {command}` has no page at docs/src/content/docs/reference/{command}.md"
+        );
+    }
+
+    // And the other way, so a page for a command that was renamed or removed
+    // does not sit there describing something that is gone.
+    for entry in fs::read_dir(&reference).expect("cannot read the reference directory") {
+        let path = entry.expect("cannot read a directory entry").path();
+        let Some(name) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        if name == "commands" {
+            continue; // the overview, not a command
+        }
+        assert!(
+            commands.iter().any(|command| command == name),
+            "docs/src/content/docs/reference/{name}.md documents `sefy {name}`, \
+             which is not a command"
+        );
+    }
+}
