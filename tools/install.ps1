@@ -56,9 +56,42 @@ try {
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if (($userPath -split ";") -notcontains $dir) {
-    [Environment]::SetEnvironmentVariable("Path", "$userPath;$dir", "User")
-    Write-Host "Added $dir to your user PATH - restart the terminal to pick it up."
+# Add the directory to the user PATH in the registry, keeping the value's
+# type. PATH is almost always REG_EXPAND_SZ, with entries like %JAVA_HOME%\bin
+# stored unexpanded; the .NET environment API reads them expanded and writes
+# the result back as a plain REG_SZ, so every such entry is frozen at whatever
+# the variable happened to be during the install and stops following it after.
+# The damage is done to somebody else's PATH by an installer for this program,
+# and nothing reports it - found on rigger's own installer at v0.1.0.
+#
+# So: read the raw value unexpanded, compare case-insensitively and without a
+# trailing slash, write it back as an expandable string, and tell running
+# shells about it. A PATH failure must not fail the install - the binary is
+# already in place and can be run by its full path.
+try {
+    $key = Get-Item "HKCU:\Environment"
+    $raw = [string]$key.GetValue("Path", "", "DoNotExpandEnvironmentNames")
+    $entries = @($raw -split ";" | Where-Object { $_ })
+    $wanted = $dir.TrimEnd("\")
+    $present = $entries | Where-Object { $_.TrimEnd("\") -ieq $wanted }
+    if (-not $present) {
+        $value = if ($entries.Count -gt 0) { ($entries + $wanted) -join ";" } else { $wanted }
+        Set-ItemProperty -Path "HKCU:\Environment" -Name Path -Value $value -Type ExpandString
+        # Without the broadcast the new PATH reaches only processes started
+        # after the next sign-in; Explorer picks it up here and hands it to
+        # every terminal opened afterwards.
+        if (-not ("SefyInstall.Env" -as [type])) {
+            Add-Type -Namespace SefyInstall -Name Env -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint Msg, System.UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out System.UIntPtr lpdwResult);
+'@
+        }
+        $result = [System.UIntPtr]::Zero
+        # HWND_BROADCAST = 0xffff, WM_SETTINGCHANGE = 0x1A, SMTO_ABORTIFHUNG = 0x2
+        [SefyInstall.Env]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, "Environment", 0x2, 5000, [ref]$result) | Out-Null
+        Write-Host "Added $dir to your user PATH - open a new terminal to pick it up."
+    }
+} catch {
+    Write-Host "Note: could not update the user PATH ($($_.Exception.Message)); add $dir to it yourself."
 }
 Write-Host "Installed sefy $tag to $dir\sefy.exe"

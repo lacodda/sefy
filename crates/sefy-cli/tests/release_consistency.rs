@@ -417,6 +417,55 @@ fn the_installers_place_the_transports_the_release_carries() {
 }
 
 #[test]
+fn the_windows_installer_does_not_flatten_the_user_path() {
+    // `[Environment]::SetEnvironmentVariable("Path", …, "User")` is the obvious
+    // way to do this and it is destructive. PATH is stored as REG_EXPAND_SZ,
+    // holding entries like `%JAVA_HOME%\bin` unexpanded; the .NET API reads
+    // them expanded and writes the whole value back as a plain REG_SZ. Every
+    // such entry is then frozen at whatever the variable was during the
+    // install and stops following it afterwards.
+    //
+    // Nothing reports it. The install succeeds, sefy runs, and some other
+    // program breaks weeks later when its own variable moves. The damage is
+    // done to somebody else's PATH by an installer for this program - which is
+    // why it is a gate rather than a note: the destructive call is shorter to
+    // type than the correct one, and would come back as a simplification.
+    //
+    // Found on rigger's installer at v0.1.0, and fixed the same way here.
+    let installer = read("tools/install.ps1");
+
+    assert!(
+        !installer.contains("SetEnvironmentVariable"),
+        "install.ps1 writes PATH through the .NET environment API, which rewrites \
+         REG_EXPAND_SZ as REG_SZ and freezes every %VARIABLE% entry already in it"
+    );
+
+    // The pieces of writing it correctly. Each is load-bearing on its own: the
+    // read tells the registry not to expand, the write says what type to keep,
+    // and the broadcast is what lets a terminal opened right after the install
+    // find sefy at all.
+    for (needle, why) in [
+        (
+            "DoNotExpandEnvironmentNames",
+            "reads PATH expanded, so unexpanded entries are written back resolved",
+        ),
+        (
+            "ExpandString",
+            "does not write PATH back as REG_EXPAND_SZ, changing the value's type",
+        ),
+        (
+            "SendMessageTimeout",
+            "does not broadcast WM_SETTINGCHANGE, so the new PATH waits for a sign-out",
+        ),
+    ] {
+        assert!(
+            installer.contains(needle),
+            "install.ps1 {why} (no `{needle}`)"
+        );
+    }
+}
+
+#[test]
 fn nothing_outside_a_transport_knows_which_transport_it_is() {
     // The point of the protocol: sefy moves a sealed file through something it
     // cannot see into. A transport's own vocabulary leaking into the core or
