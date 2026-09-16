@@ -1,10 +1,10 @@
 //! What each subcommand does once the vault is open.
 
-use crate::cli::{AddKind, EditArgs, FindArgs, GetArgs, ListArgs, PullArgs, RemoteArgs};
+use crate::cli::{AddKind, EditArgs, FindArgs, GetArgs, ListArgs, OpenArgs, PullArgs, RemoteArgs};
 use crate::output;
 use crate::session;
 use anyhow::{Context, Result, bail};
-use sefy_core::{Field, ItemKind, NewItem, Payload, Query, Vault};
+use sefy_core::{Field, ItemKind, ItemSummary, NewItem, Payload, Query, Vault};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -346,8 +346,47 @@ pub fn find(vault: &Vault, args: FindArgs) -> Result<()> {
     if let Some(kind) = args.kind {
         query = query.kind(kind.into());
     }
+    // Always a listing. `find` is what a script calls, and a command that
+    // printed a table into a pipe but opened a menu on a terminal would be two
+    // commands wearing one name. Browsing is `sefy` with no arguments.
     output::table(&vault.search(&query)?);
     Ok(())
+}
+
+/// Browses the vault: pick an item, then show it.
+///
+/// What `sefy` with no subcommand does. The command line is exact and
+/// remembering is not - this is the way in for "it is in there somewhere",
+/// and it is a separate command rather than a mode of `find` so that neither
+/// has to ask where it is running.
+pub fn browse(vault: &Vault) -> Result<()> {
+    if !crate::picker::available() {
+        bail!(
+            "sefy with no command opens an interactive picker, and this is not a terminal\n\
+             list items with: sefy ls"
+        );
+    }
+    pick_from(vault, &vault.list()?)
+}
+
+/// Shows the picker over `items` and acts on what comes back.
+///
+/// Acting means `show`: the item without its secrets. Copying the password
+/// straight to the clipboard would be the quicker path and the wrong default -
+/// the picker is also how someone browses their own vault, and browsing should
+/// not leave a secret on the clipboard of a machine they were only looking at.
+pub fn pick_from(vault: &Vault, items: &[ItemSummary]) -> Result<()> {
+    if items.is_empty() {
+        println!("no items");
+        return Ok(());
+    }
+
+    let Some(picked) = crate::picker::choose(items, "Item")? else {
+        // Escape. Nothing to say - the user closed a menu.
+        return Ok(());
+    };
+
+    show(vault, &picked.id.to_string())
 }
 
 /// Changes an item's title, contents or tags.
@@ -663,8 +702,176 @@ pub fn change_password(vault: &mut Vault, password_env: Option<&str>) -> Result<
     Ok(())
 }
 
+/// Opens an item's site and puts its password on the clipboard.
+///
+/// The two halves of signing in, in the order they are used: the browser is
+/// already loading while the password is waiting to be pasted. Doing it as one
+/// command also removes the step where a user goes looking for the URL, finds
+/// it with `show`, and copies it by hand from a terminal.
+///
+/// The clipboard is the same path `get` uses, timeout and all: a password left
+/// on the clipboard after the browser is open is exactly the exposure the
+/// timeout exists for, and the browser being open does not change it.
+pub fn open(vault: &Vault, args: OpenArgs) -> Result<()> {
+    let summary = vault.resolve(&args.reference).map_err(output::explain)?;
+    let item = vault.get(summary.id)?;
+
+    let Payload::Fields { kind, fields } = &item.payload else {
+        bail!(
+            "{:?} is a {}, which has no site to open",
+            item.summary.title,
+            item.summary.kind.as_str()
+        );
+    };
+
+    let url = fields
+        .iter()
+        .find(|field| field.name == URL_FIELD)
+        .with_context(|| {
+            format!(
+                "{:?} has no {URL_FIELD:?} field; it holds: {}\n\
+                 add one with: sefy edit {} --set url=https://…",
+                item.summary.title,
+                field_names(fields),
+                item.summary.id
+            )
+        })?;
+
+    crate::browser::open(&url.value)?;
+    println!("opened {}", url.value);
+
+    if args.no_password {
+        return Ok(());
+    }
+
+    // The password is a convenience on top of opening the site, so a record
+    // without one is not an error: the site is open, which is what was asked.
+    let Some(secret) = kind
+        .template()
+        .and_then(|template| template.default_field())
+        .and_then(|spec| fields.iter().find(|field| field.name == spec.name))
+    else {
+        return Ok(());
+    };
+
+    println!(
+        "copied {} of {:?} to the clipboard; clearing in {}s",
+        secret.name, item.summary.title, args.clear_after
+    );
+    flush_stdout();
+
+    let hold = output::to_clipboard(&secret.value, args.clear_after)?;
+    if hold.cleared {
+        println!("clipboard cleared");
+    }
+    Ok(())
+}
+
+/// The field `sefy open` looks for.
+///
+/// Named here rather than inline so the templates and this command cannot
+/// drift apart silently — a gate checks that every kind which could be opened
+/// declares it.
+const URL_FIELD: &str = "url";
+
+/// Reports what and where this vault is, without revealing any of it.
+///
+/// The question it answers is the one asked after a new machine, a restore or a
+/// week away: is this the right file, is everything in it, and has it reached
+/// the other side lately. Every line is about shape — counts, versions, the
+/// last transfer — and never about contents: a status that named an item would
+/// put a secret's title on a screen that was asked only whether the vault is
+/// there.
+pub fn status(vault: &Vault) -> Result<()> {
+    let stats = vault.stats()?;
+
+    println!("vault    {}", vault.path().display());
+    if let Some(size) = file_size(vault.path()) {
+        println!("size     {size}");
+    }
+    println!(
+        "items    {}{}",
+        output::count(stats.items, "item"),
+        if stats.by_kind.is_empty() {
+            String::new()
+        } else {
+            let breakdown: Vec<String> = stats
+                .by_kind
+                .iter()
+                .map(|(kind, count)| format!("{count} {kind}"))
+                .collect();
+            format!("  ({})", breakdown.join(", "))
+        }
+    );
+    println!("tags     {}", output::count(stats.tags, "tag"));
+
+    // The schema the file carries, with a word about what it means, because
+    // "schema 4" alone tells a user nothing they can act on.
+    let schema = if stats.schema > sefy_core::db::SCHEMA_VERSION {
+        format!("{} (written by a newer sefy)", stats.schema)
+    } else {
+        format!("{}", stats.schema)
+    };
+    println!("schema   {schema}");
+
+    match &stats.last_sync {
+        Some(stamp) => println!(
+            "synced   {} through {} ({})",
+            crate::when::moment(stamp.at, now()),
+            stamp.transport,
+            stamp.operation
+        ),
+        None => println!("synced   never"),
+    }
+
+    let plugins = sefy_core::plugin::discover_in(&sefy_core::plugin::search_paths());
+    if plugins.is_empty() {
+        println!("plugins  none installed");
+    } else {
+        let names: Vec<String> = plugins
+            .iter()
+            .map(|plugin| {
+                if plugin.usable {
+                    plugin.name().to_owned()
+                } else {
+                    format!("{} (unusable)", plugin.name())
+                }
+            })
+            .collect();
+        println!("plugins  {}", names.join(", "));
+    }
+
+    Ok(())
+}
+
+/// The vault file's size, in units a person reads.
+///
+/// Absent rather than an error if the file cannot be measured: the vault is
+/// open, so it plainly exists, and a status that failed over one cosmetic line
+/// would be worse than one missing it.
+fn file_size(path: &Path) -> Option<String> {
+    let bytes = std::fs::metadata(path).ok()?.len();
+    const KB: u64 = 1024;
+    const MB: u64 = 1024 * KB;
+    Some(if bytes < KB {
+        format!("{bytes} B")
+    } else if bytes < MB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    })
+}
+
+/// Unix seconds, for rendering how long ago something happened.
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 /// Sends the vault file to the remote.
-pub fn push(vault: &Vault, args: RemoteArgs) -> Result<()> {
+pub fn push(vault: &mut Vault, args: RemoteArgs) -> Result<()> {
     let plugin = transport(args.transport.as_deref())?;
     let report = sefy_core::push(vault, &plugin, &args.name)?;
 

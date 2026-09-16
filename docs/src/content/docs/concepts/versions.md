@@ -21,10 +21,25 @@ migration path. Nothing does that quietly.
 
 The database *inside* the encrypted blob is a different promise, and it does
 move: 0.7.0 took it from version 2 to 3, replacing the `credentials` table with
-a `fields` table so a record can hold named fields instead of one fixed set. A
-vault written by 0.6.0 is migrated on open, exactly as the earlier uuid
-migration was — the file format stays v1 throughout, so the migration happens
-in memory and the vault remains readable by the same rule as ever.
+a `fields` table so a record can hold named fields instead of one fixed set,
+and 0.8.0 took it to 4, adding a small table for facts about the vault itself —
+the first being when it last reached a remote, which
+[`status`](/sefy/reference/status/) reports. A vault written by an earlier
+release is migrated on open, exactly as the uuid migration was — the file
+format stays v1 throughout, so the migration happens in memory and the vault
+remains readable by the same rule as ever.
+
+The 3 → 4 move takes nothing away, so a vault it has touched stays usable by
+0.7.1: that build does not know the new table, writes into the ones it does
+know, and leaves the rest as it found it. Checked with the published binary in
+both directions, the way every schema move here is.
+
+You can see which version a vault carries:
+
+```console
+$ sefy status
+schema   4
+```
 
 ## Items from a newer sefy
 

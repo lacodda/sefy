@@ -27,8 +27,9 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "VAR")]
     pub password_env: Option<String>,
 
+    /// What to do. Omitted, sefy opens an interactive picker over the vault.
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 /// What the user asked sefy to do.
@@ -88,6 +89,20 @@ pub enum Command {
 
     /// List the tags in use.
     Tags,
+
+    /// Open an item's site and copy its password to the clipboard.
+    ///
+    /// The two halves of signing in, in the order they are used: the browser
+    /// loads while the password waits to be pasted.
+    Open(OpenArgs),
+
+    /// Show what and where this vault is, without revealing any of it.
+    ///
+    /// Counts, versions and the last transfer - never a title or a value. It
+    /// answers the question asked after a new machine, a restore or a week
+    /// away: is this the right file, is everything in it, and has it reached
+    /// the other side lately.
+    Status,
 
     /// Write the vault's contents out as plain, unencrypted JSON.
     Export {
@@ -424,6 +439,21 @@ pub struct GetArgs {
     ///
     /// sefy waits that long before exiting, and clears the clipboard only if
     /// the secret is still the value sitting on it.
+    #[arg(long, value_name = "SECONDS", default_value_t = 45)]
+    pub clear_after: u64,
+}
+
+/// Arguments of `sefy open`.
+#[derive(Debug, Args)]
+pub struct OpenArgs {
+    /// Item id, exact title, or text to search for.
+    pub reference: String,
+
+    /// Open the site without touching the clipboard.
+    #[arg(long)]
+    pub no_password: bool,
+
+    /// Seconds before the clipboard is cleared again; 0 leaves it there.
     #[arg(long, value_name = "SECONDS", default_value_t = 45)]
     pub clear_after: u64,
 }
