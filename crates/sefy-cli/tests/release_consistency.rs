@@ -417,6 +417,35 @@ fn the_installers_place_the_transports_the_release_carries() {
 }
 
 #[test]
+fn the_installers_name_a_tag_that_exists() {
+    // Both installers fall back to "set SEFY_VERSION to a tag like vX.Y.Z"
+    // when they cannot resolve the latest release. The example goes stale at
+    // every release, and it is read by someone whose install has just failed -
+    // the worst moment to hand them a tag that 404s. Cheap to keep honest:
+    // it is a version, and the manifest already knows which one.
+    let version = workspace_version();
+    for file in ["tools/install.sh", "tools/install.ps1"] {
+        let text = read(file);
+        for (line_no, line) in text.lines().enumerate() {
+            let Some(at) = line.find("a tag like ") else {
+                continue;
+            };
+            let named = line[at + "a tag like ".len()..]
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.');
+            assert_eq!(
+                named,
+                format!("v{version}"),
+                "{file} line {} offers `{named}` as an example tag, but this release is v{version}",
+                line_no + 1
+            );
+        }
+    }
+}
+
+#[test]
 fn the_windows_installer_does_not_flatten_the_user_path() {
     // `[Environment]::SetEnvironmentVariable("Path", …, "User")` is the obvious
     // way to do this and it is destructive. PATH is stored as REG_EXPAND_SZ,
