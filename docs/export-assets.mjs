@@ -7,15 +7,40 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Relative to this file, so the script carries no machine-specific paths.
-const ASSETS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "assets");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ASSETS = path.join(ROOT, "assets");
 
-// The S tile (filled hex, bold code) is what reads at icon sizes; the L tile is
-// the one with room for detail.
+// The .ico is a build input of the binary, not brand artwork for a web page:
+// build.rs feeds it to the Windows linker, and `cargo install sefy` packages
+// only what sits under the crate directory. So it is written there, and there
+// is exactly one of it - a second copy in assets/ is what would let the icon
+// Explorer shows drift from the one the exporter draws.
+const ICO = path.join(ROOT, "crates", "sefy-cli", "assets", "icon.ico");
+
+// The three levels of the mark. Which one a raster takes is decided by
+// `levelFor` below, never by habit — the comment that used to sit here said
+// the S tile "is what reads at icon sizes" and the loop below took it for
+// every size, so a 256px icon was a flat teal lozenge with `se` on it, and the
+// M and L masters were rasterized nowhere.
 const S = path.join(ASSETS, "logo-s.svg");
+const M = path.join(ASSETS, "logo-m.svg");
 const L = path.join(ASSETS, "logo.svg");
 const BANNER = path.join(ASSETS, "banner.svg");
 
-const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
+// Which level of the mark survives at which size — the line's rule, not a
+// preference: S ≤ 27px, M 28–63px, L ≥ 64px. Below 28px the outline and the
+// dots of the metaphor collapse into noise, so the filled tile is all that
+// reads; at 64px and up there is room for the mark the product is known by.
+function levelFor(size) {
+  if (size <= 27) return S;
+  if (size <= 63) return M;
+  return L;
+}
+
+// Largest first. Windows picks by *closest size* and ignores order (see
+// "About Icons", Icon Display), but some readers take the first entry
+// verbatim — a 16px first entry is a titlebar stretched from sixteen pixels.
+const ICO_SIZES = [256, 128, 64, 48, 32, 24, 16];
 
 async function png(src, size, out) {
   await sharp(src, { density: 384 }).resize(size, size).png().toFile(out);
@@ -50,15 +75,20 @@ function buildIco(pngBuffers, sizes) {
 
 const icoParts = [];
 for (const size of ICO_SIZES) {
-  icoParts.push(await sharp(S, { density: 384 }).resize(size, size).png().toBuffer());
+  icoParts.push(await sharp(levelFor(size), { density: 384 }).resize(size, size).png().toBuffer());
 }
-fs.writeFileSync(path.join(ASSETS, "icon.ico"), buildIco(icoParts, ICO_SIZES));
+fs.mkdirSync(path.dirname(ICO), { recursive: true });
+fs.writeFileSync(ICO, buildIco(icoParts, ICO_SIZES));
 console.log("wrote icon.ico");
 
 // Favicon and the large mark.
+// The one documented exception to `levelFor`: a favicon is drawn into 16px of
+// browser tab whatever size the file is, and neither the outline nor the dots
+// survive that. The canon names it explicitly, so it is spelled out here
+// rather than left looking like an oversight.
 await png(S, 32, path.join(ASSETS, "favicon-32.png"));
-await png(S, 180, path.join(ASSETS, "apple-touch-icon.png"));
-await png(L, 512, path.join(ASSETS, "logo-512.png"));
+await png(levelFor(180), 180, path.join(ASSETS, "apple-touch-icon.png"));
+await png(levelFor(512), 512, path.join(ASSETS, "logo-512.png"));
 console.log("wrote pngs");
 
 // The docs site serves these from its own public/ directory.

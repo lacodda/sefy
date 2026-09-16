@@ -19,6 +19,9 @@ authors.workspace = true
 name = "sefy"
 path = "src/main.rs"
 
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [dependencies]
 sefy-core.workspace = true
 
@@ -32,3 +35,8 @@ tempfile.workspace = true
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
+# Only to decode the PNGs inside assets/icon.ico, so the icon gate can look at
+# actual pixels rather than at file sizes: the defect it guards against - every
+# entry rasterized from the same master - leaves a container that is perfectly
+# well-formed. Default features off, `png` on: nothing else is read here.
+image = { version = "0.25", default-features = false, features = ["png"] }
