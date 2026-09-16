@@ -52,3 +52,8 @@ opt-level = 3
 # The core crate is a workspace member, so the wildcard above does not cover it.
 [profile.dev.package.sefy-core]
 opt-level = 3
+
+# Line-table debug info keeps backtraces readable while cutting the .pdb weight
+# that dominates target/debug. Full debug info is a one-line revert when needed.
+[profile.dev]
+debug = 1
