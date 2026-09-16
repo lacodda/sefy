@@ -17,6 +17,41 @@ Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
 
+## [0.7.1] - 2026-09-16
+
+A patch about the two things that meet a new user first: the icon on the file
+they downloaded, and what the installer does to their machine.
+
+sefy has carried a mark since 0.1.0, exported to a multi-size `.ico` and read
+by nothing — the CLI had no build step for it, and a Windows executable with no
+icon resource gets the generic one in Explorer, on a pinned shortcut and in the
+properties dialog. It now carries the mark, and carries the right drawing at
+each size: the filled tile up to 27px, the outlined tile to 63, the full mark
+above. The exporter had been taking the smallest master for every size, so a
+256px icon was a flat teal lozenge; that is fixed with it, along with the
+directory order, which was smallest-first where some readers take the first
+entry as the window icon.
+
+The Windows installer no longer damages the user PATH. Writing it through the
+.NET environment API — the obvious way, and what the script did — reads entries
+like `%JAVA_HOME%\bin` expanded and writes the whole value back as a plain
+string, so every such entry freezes at whatever the variable held during the
+install and stops following it afterwards. The install succeeds, sefy runs, and
+some unrelated program breaks weeks later. It now reads the value unexpanded,
+writes it back with its type intact, and tells running shells, so a terminal
+opened right after installing finds `sefy` without a sign-out.
+
+Nothing about the vault file, the schema or any command changes.
+
+### Bug Fixes
+- Stop the Windows installer flattening the user PATH
+
+### Features
+- Give the executable its mark, one level per size
+
+### Testing
+- Hold the installers' example tag to the current release
+
 ## [0.7.0] - 2026-09-01
 
 A login, a payment card and an SSH key differ in which fields they carry and
