@@ -50,7 +50,7 @@ Master password:
 created /home/you/backups/notes.bak
 ```
 
-Put things in. Notes, logins, cards, ssh keys, and files kept byte for byte.
+Put things in - notes, logins, cards, ssh keys, and files kept byte for byte:
 
 ```
 $ sefy add note "bank card" --text "PIN 4815" --tag money
@@ -64,177 +64,49 @@ $ sefy add file ~/.ssh/id_ed25519 --tag keys
 added "id_ed25519" as 3
 ```
 
-Look around.
-
-```
-$ sefy ls
-3  id_ed25519  file        [keys]
-2  mail        login       [mail]
-1  bank card   note        [money]
-
-$ sefy show mail
-id:       2
-title:    mail
-kind:     login
-tags:     mail
-login:    someone@example.com
-password: <hidden — use sefy get>
-url:      https://mail.example.com
-```
-
-Or do not look around at all: `sefy` on its own opens a picker over the vault.
-Type a few letters, press Enter. The command line is exact and remembering is
-not.
+Bare `sefy` opens a picker over everything in the vault:
 
 ```
 $ sefy
-? Item ›
+? Item >
 > bank card   note   [money]
   mail        login  [mail]
   id_ed25519  file   [keys]
 ```
 
 Take a secret out. It goes to the clipboard and is taken back off after 45
-seconds - sefy clears it only if the secret is still what is sitting there, so
-anything you copied meanwhile is left alone.
+seconds - and only if the secret is still what is sitting there, so anything
+you copied meanwhile is left alone.
 
 ```
 $ sefy get mail
 copied password of "mail" to the clipboard; clearing in 45s
 clipboard cleared
-
-$ sefy get "bank card" --stdout
-PIN 4815
 ```
 
-For a login you are about to use, `sefy open` does both halves at once: the
-browser loads while the password waits on the clipboard.
+Items are addressed by title, by an exact id, or by text to search for; when
+the words could mean more than one thing, sefy shows what they could mean
+rather than guessing. `sefy open` loads the site and puts the password on the
+clipboard in one step, `sefy sync` carries the vault through a transport and
+folds what comes back into this one, and `sefy status` says what you are
+holding without saying what is in it.
 
-```
-$ sefy open mail
-opened https://mail.example.com
-copied password of "mail" to the clipboard; clearing in 45s
-```
+Every command, with its flags: **[the reference](https://lacodda.github.io/sefy/reference/commands/)**.
 
-Items are addressed by title, by an exact id, or by text to search for. When
-your words could mean more than one thing, sefy shows what they could mean
-instead of guessing:
+## What you get
 
-```
-$ sefy get ma
-error: 2 items match "ma":
-     4  mailing list                    note
-     2  mail                            login
-narrow the text, or use an id
-```
-
-Several machines? `sefy sync` carries the vault through a transport and folds
-what comes back into this one:
-
-```
-$ sefy sync
-Master password:
-synced "vault" through github
-merged: 2 added, 0 updated, 14 unchanged
-```
-
-Or fold in a copy you carried across by hand. Either way, where the two disagree
-about the same item, sefy keeps both versions rather than letting a timestamp
-decide which password you get to keep:
-
-```
-$ sefy merge ~/from-laptop.bak
-Password for /home/you/from-laptop.bak:
-merged: 1 added, 1 updated, 1 unchanged
-
-1 item changed on both sides and could not be resolved here.
-This vault's version was kept; the incoming one is beside it:
-  "mail" → also kept as "mail (conflicted copy)"
-Compare them, keep the right one, and remove the other.
-```
-
-New machine, or back after a week? `sefy status` says what you are holding
-without saying what is in it - counts and versions, never a title or a value:
-
-```
-$ sefy status
-vault    /home/you/backups/notes.bak
-size     72.1 KB
-items    17 items  (12 login, 4 note, 1 file)
-tags     6 tags
-schema   4
-synced   2026-09-16 19:15 UTC (2 hours ago) through github (sync)
-plugins  github, sftp
-```
-
-A vault is never a trap. `sefy export` writes everything back out as plain
-JSON - which is exactly as sensitive as the vault and protects nothing, so the
-command makes you say so out loud:
-
-```
-$ sefy export -o backup.json
-error: export writes every secret in this vault in the clear
-the resulting file protects nothing — encrypt it, or delete it when done
-pass --i-know-this-writes-plaintext to go ahead
-```
-
-Full command reference: **[lacodda.github.io/sefy](https://lacodda.github.io/sefy/)**.
-
-## Transports
-
-Carrying a vault to another machine is the job of a **plugin**: any executable
-named `sefy-plugin-*`, found in sefy's data directory or on `PATH`. sefy knows
-nothing about git, FTP or any cloud drive - it asks a plugin what it can do and
-what happened.
-
-Two transports ship alongside the CLI, and neither stores a credential of its
-own - each authenticates the way the machine already does:
-
-- **github** keeps the vault in a git repository. Point `SEFY_GITHUB_REPO` at
-  one; version history comes free with it.
-- **sftp** keeps it on a server you control, over OpenSSH. Point
-  `SEFY_SFTP_DESTINATION` at `you@server:/path`; nothing lands there but the
-  blob.
-
-```
-$ sefy plugin list
-future  9.0.0     unusable: it speaks protocol 99 and this build speaks 1
-github  0.7.0     pull, push
-sftp    0.7.0     pull, push
-```
-
-With more than one installed, sefy asks which rather than choosing where your
-vault goes: `sefy sync --transport sftp`, or `SEFY_TRANSPORT=sftp` once.
-
-A transport is handed the **path of the sealed file** and nothing else - no
-master password, no key, no item. What it carries is what anyone would find on
-your disk: a blob it cannot read. That is also why a plugin cannot merge: it
-moves the other copy to a file, and sefy folds the two together itself, where
-both sides can actually be read.
-
-Broken plugins are listed with the reason rather than skipped: an omitted line
-would look exactly like a plugin that was never installed.
-
-The protocol is small enough to implement in a shell script - manifest on
-`--manifest`, one JSON request on stdin for `run`. Writing one:
-[plugin reference](https://lacodda.github.io/sefy/reference/plugin/) ·
-[ADR-0002](https://github.com/lacodda/sefy/blob/main/docs/adr/0002-plugin-protocol.md).
-
-## How it works
-
-- The master password is stretched into a key with **Argon2id**.
-- The whole SQLite database is sealed with **XChaCha20-Poly1305** (AEAD).
-- The file on disk is `salt ‖ nonce ‖ ciphertext`. Salt and nonce are fresh on
-  every save, so two saves of identical content share no prefix - and the
-  format version lives *inside* the ciphertext, because a version byte in the
-  clear would be the signature the format exists to avoid.
-- The decrypted database exists **only in memory**. SQLite is never given a
-  path, so no page, journal or temporary file lands on disk.
-- Saves are atomic: ciphertext goes to a temporary file, is synced, and is
-  renamed over the vault. A crash leaves either the old vault or the new one,
-  and never plaintext.
-
-Details and rationale: [ADR-0001](https://github.com/lacodda/sefy/blob/main/docs/adr/0001-vault-file-format-and-cryptography.md).
+- **A file that looks like nothing.** No magic bytes, no header, no extension
+  convention - salt and nonce fresh on every save, so two saves of identical
+  content share no prefix.
+- **Notes, logins, cards, ssh keys and files** in one vault, tagged and
+  searchable, with files kept byte for byte.
+- **Transports, not lock-in.** `sefy sync` carries the vault through a
+  `sefy-plugin-*` executable - github and sftp ship today - and folds what
+  comes back in without a credential ever passing through the transport.
+- **Merge instead of overwrite.** Where two copies disagree about an item,
+  both are kept rather than letting a timestamp pick a winner.
+- **A vault that is never a trap.** `export` writes plaintext JSON only after
+  you say so explicitly.
 
 ## Install
 
@@ -269,50 +141,29 @@ place any transport the archive carries into sefy's plugins directory, so
 Shell completions: `sefy completions bash` (also `zsh`, `fish`, `powershell`,
 `elvish`).
 
-## Stability
+## Documentation
 
-The **vault file format is stable at version 1**. Files written by this release
-will stay readable: any future change to the format arrives as version 2, able
-to read version 1 and migrate it. The Argon2 parameters are part of that
-promise, not a tuning knob.
+Full command reference, concepts and guides:
+**[lacodda.github.io/sefy](https://lacodda.github.io/sefy/)** - including
+[how the vault works](https://lacodda.github.io/sefy/concepts/vault-format/)
+and the [plugin reference](https://lacodda.github.io/sefy/reference/plugin/)
+for transports.
 
-The database inside the ciphertext is versioned separately, and it does move:
-0.2.0 added an identity to items so two copies of a vault can be merged, and
-0.7.0 replaced the credential table with named fields so that a kind of record
-costs a template rather than a table. A vault from an earlier release opens and
-is migrated on the way in; the file on disk does not change shape.
+## Status
 
-What an older build makes of it afterwards depends on the change. The 0.2.0
-migration left everything readable by 0.1.x. The 0.7.0 one does not: a login is
-now a kind 0.6.0 has never heard of, so that build lists it, exports it and
-syncs it while saying to upgrade before reading it. That is the
-forward-compatibility contract from 0.6.0 doing its job rather than a break -
-nothing is lost, and the newer build reads everything - but it is why the
-rename happened before 1.0 rather than after.
-
-The **plugin protocol is at version 1** as of 0.3.0. 0.4.0 put it to work and
-0.5.0 added a second transport of a different shape without changing a field of
-it, which is the evidence that it was not built around the first one. Optional
-fields may be added to the manifest without breaking a plugin that predates
-them; changing what an existing field means would arrive as version 2, with both
-accepted for a time.
+The vault file format is stable at version 1, and the plugin protocol at
+version 1 since 0.3.0; both promises hold across every release below. The
+database schema inside the ciphertext moves between releases, and older
+builds keep reading a vault safely even when they cannot see everything in
+it - the [versions and compatibility](https://lacodda.github.io/sefy/concepts/versions/)
+page has the detail.
 
 Released versions and what landed in each: [CHANGELOG on the Releases page](https://github.com/lacodda/sefy/releases).
 
-## Building
+## Contributing
 
-```
-cargo build --release   # workspace: sefy-core (library) + sefy (CLI)
-cargo test              # unit, integration and doc tests
-```
-
-Use a release build for daily work: Argon2id is deliberately expensive, and an
-unoptimized build makes it several times slower still.
-
-The library is published separately as [`sefy-core`](https://crates.io/crates/sefy-core)
-if you want vaults from your own code. The documentation site lives in
-[`docs/`](https://github.com/lacodda/sefy/tree/main/docs); architecture decision
-records are in [`docs/adr/`](https://github.com/lacodda/sefy/tree/main/docs/adr).
+Building the workspace, repository layout and commit conventions:
+[CONTRIBUTING.md](https://github.com/lacodda/sefy/blob/main/CONTRIBUTING.md).
 
 ## License
 
