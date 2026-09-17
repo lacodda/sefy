@@ -7,7 +7,7 @@
   <a href="https://github.com/lacodda/sefy/blob/main/LICENSE"><img src="https://img.shields.io/crates/l/sefy?style=flat-square" alt="MIT"></a>
 </p>
 
-# sefy
+> An encrypted store for notes, credentials and files that does not announce itself: one file with no header, no extension it must keep, and no name that gives it away.
 
 Every way of storing secrets announces itself. A `.kdbx` file says "password
 database". age and gpg write a header. VeraCrypt wants a container and a mount.
@@ -167,4 +167,4 @@ Building the workspace, repository layout and commit conventions:
 
 ## License
 
-[MIT](https://github.com/lacodda/sefy/blob/main/LICENSE)
+MIT (c) [Kirill Lakhtachev](https://lacodda.com)
