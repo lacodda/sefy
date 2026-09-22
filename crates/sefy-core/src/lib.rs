@@ -42,20 +42,24 @@ pub mod db;
 pub mod error;
 pub mod exchange;
 pub mod format;
+pub mod generate;
 pub mod merge;
 pub mod model;
 pub mod plugin;
+pub mod strength;
 pub mod sync;
 pub mod vault;
 
 pub use error::{Error, Result};
 pub use exchange::{EXPORT_VERSION, Export, ExportField, ExportItem, ImportReport};
 pub use format::FORMAT_VERSION;
+pub use generate::{Classes, Generated, Language, Recipe, generate};
 pub use merge::{Conflict, MergeReport, merge};
 pub use model::{
     Field, FieldSpec, Item, ItemKind, ItemSummary, LEGACY_LOGIN_NAME, NewItem, Payload, Query,
     Template,
 };
 pub use plugin::{PROTOCOL_VERSION, Plugin};
+pub use strength::{Strength, estimate, estimate_generated};
 pub use sync::{PullReport, SyncReport, pull, push, sync};
 pub use vault::{Stats, SyncStamp, Vault};

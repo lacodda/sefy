@@ -29,6 +29,9 @@ serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled", "serialize"] }
 thiserror = "2"
 zeroize = { version = "1", features = ["derive"] }
+# Offline strength estimate. Default features off: `builder` only adds a
+# derive_builder API for tuning the matcher, which sefy does not do.
+zxcvbn = { version = "3", default-features = false }
 
 anyhow = "1"
 arboard = "3"

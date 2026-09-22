@@ -126,6 +126,20 @@ pub enum Error {
     #[error("system random number generator unavailable")]
     Random,
 
+    /// A generated secret was asked to be shorter than its recipe allows, or
+    /// longer than sefy generates.
+    #[error("cannot generate {length} {unit}; the range is {minimum} to {maximum}")]
+    GeneratorLength {
+        /// What was asked for.
+        length: usize,
+        /// The fewest the recipe can work with.
+        minimum: usize,
+        /// The most sefy generates.
+        maximum: usize,
+        /// What is being counted: characters or words.
+        unit: &'static str,
+    },
+
     /// A filesystem operation failed.
     #[error("{context}: {source}")]
     Io {
