@@ -18,6 +18,61 @@ Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
 
+## [0.9.0] - 2026-09-22
+
+New passwords, made where they are kept.
+
+**`sefy gen`** makes a secret and puts it on the clipboard, with the same
+timeout `get` uses. It needs no vault. There are three recipes: random
+characters (the default: 20 of them, every class that is in appearing at least
+once), pronounceable consonant-vowel strings for secrets that are read out, and
+**diceware passphrases** (`--words N`) for secrets typed by hand, such as a
+master password. The word lists are built into the binary: the EFF large list
+for English, and Russian Diceware 4d6 for Russian, where `ё` is written as `е`
+so a keyboard layout cannot turn a correctly remembered phrase into a failed
+sign-in.
+
+**`--save TITLE`** keeps the result as a new login in the same gesture, with
+`--login`, `--url` and `--tag` for the rest of the record. The record is written
+before the clipboard is touched, and a wrong master password stops the command
+before anything is generated. A password a site has already accepted should
+never exist only on a clipboard.
+
+**Each secret reports its strength twice.** The first figure is its entropy in
+bits, which is exact because it is counted from how the secret was drawn. The
+second is a 0-4 score from **zxcvbn**, worked out offline. zxcvbn judges a
+string by how it looks, and it rates two words from the list at the top of its
+scale. So for a generated secret the score is capped by the entropy: two words
+are 26 bits, and they score as 26 bits. Anything under 64 bits also gets a
+warning: that is enough behind a site that limits sign-in attempts, but too few
+for a master password, which can be attacked offline.
+
+Every draw comes from the operating system's random source. Each choice is
+made by rejection sampling, never by a bare modulo, and the tests are shown to
+fail when either guarantee is removed.
+
+### Breaking Changes
+
+**Vault files: none.** The file format is still version 1 and the database
+schema is still 4. A login saved by `gen` is an ordinary login. We checked with
+the published 0.8.0 binary, which shows a record `gen --save` wrote, hands back
+its password and writes to the same vault. The new build then reads everything
+back.
+
+**`sefy-core` library:** additions only. The new `generate` module holds
+`Recipe`, `Classes`, `Language`, `Generated`, `generate` and `OFFLINE_BITS`.
+The new `strength` module holds `Strength`, `estimate` and
+`estimate_generated`. `Error` gains `GeneratorLength`.
+
+### Documentation
+- Make the readme a shopfront
+- Drop the duplicate heading and lead with the promise
+- Introduce gen in the readme, landing page and getting started
+
+### Features
+- Generate passwords and passphrases, and estimate strength offline
+- Add sefy gen
+
 ## [0.8.0] - 2026-09-16
 
 Three ways into a vault that do not require remembering exactly what you called
