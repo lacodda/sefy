@@ -84,6 +84,17 @@ copied password of "mail" to the clipboard; clearing in 45s
 clipboard cleared
 ```
 
+A new account needs a new password, and `sefy gen` makes one and keeps it in
+the same breath - stored as a login, then put on the clipboard for the sign-up
+form:
+
+```
+$ sefy gen --save forum --login someone@example.com --url https://forum.example.com
+added "forum" as 4
+generated 20 characters: 130 bits of entropy, strength 4/4
+copied it to the clipboard; clearing in 45s
+```
+
 Items are addressed by title, by an exact id, or by text to search for; when
 the words could mean more than one thing, sefy shows what they could mean
 rather than guessing. `sefy open` loads the site and puts the password on the
@@ -100,6 +111,10 @@ Every command, with its flags: **[the reference](https://lacodda.github.io/sefy/
   content share no prefix.
 - **Notes, logins, cards, ssh keys and files** in one vault, tagged and
   searchable, with files kept byte for byte.
+- **Passwords made where they are kept.** `sefy gen` draws random characters,
+  pronounceable ones or a diceware passphrase (English or Russian lists built
+  in), reports its exact entropy beside an offline zxcvbn score, and can save
+  the result as a login in the same command.
 - **Transports, not lock-in.** `sefy sync` carries the vault through a
   `sefy-plugin-*` executable - github and sftp ship today - and folds what
   comes back in without a credential ever passing through the transport.

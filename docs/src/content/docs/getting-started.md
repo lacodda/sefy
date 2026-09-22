@@ -84,6 +84,16 @@ The password is asked for twice, because a typo here would lock you out of the
 vault forever. It is never echoed, and it cannot be passed as an argument: that
 would put it in your shell history and in every process listing.
 
+The master password is the one secret sefy cannot keep for you, and it is typed
+by hand. A passphrase of random words is the kind that is both strong and
+typeable — [`gen`](/sefy/reference/gen/) makes one, no vault needed:
+
+```console
+$ sefy gen --words 6 --stdout
+generated 6 words: 78 bits of entropy, strength 4/4
+agreeably-cape-valid-unwary-widget-prozac
+```
+
 ## Put things in
 
 ```console
@@ -96,6 +106,17 @@ added "mail" as 2
 
 $ sefy add file ~/.ssh/id_ed25519 --tag keys
 added "id_ed25519" as 3
+```
+
+For a new account, let sefy make the password and keep it in one step — it is
+stored as a login and then copied, ready for the sign-up form:
+
+```console
+$ sefy gen --save forum --login someone@example.com --url https://forum.example.com
+added "forum" as 4
+generated 20 characters: 130 bits of entropy, strength 4/4
+copied it to the clipboard; clearing in 45s
+clipboard cleared
 ```
 
 A long note is easier in your editor:

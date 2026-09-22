@@ -80,6 +80,9 @@ content share no prefix, because the salt and nonce are fresh every time.
 	<Card title="Secrets leave one way" icon="rocket">
 		`sefy get` copies to the clipboard and clears it on a timer; `show` prints an item's surroundings but never its secret. Printing is possible, but you have to ask.
 	</Card>
+	<Card title="New passwords, kept as they are made" icon="pencil">
+		`sefy gen` makes a random password, a pronounceable one or a diceware passphrase in English or Russian, says exactly how many bits it holds, and with `--save` stores it as a login before handing it over.
+	</Card>
 	<Card title="You do not have to remember the title" icon="magnifier">
 		`sefy` on its own opens a picker: type a few letters, press Enter. `sefy open` goes further and loads the site while the password waits on the clipboard.
 	</Card>
