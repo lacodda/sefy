@@ -56,6 +56,8 @@ fn run() -> Result<()> {
             clap_complete::generate(shell, &mut command, name, &mut std::io::stdout());
             return Ok(());
         }
+        // Only keeping the result needs the vault.
+        Command::Gen(args) if args.save.is_none() => return commands::generate(None, args),
         Command::Init => {
             let path = session::vault_path(arguments.vault)?;
             return commands::init(&path, password_env);
@@ -81,6 +83,7 @@ fn run() -> Result<()> {
             force,
         } => commands::extract(&vault, &reference, output, force),
         Command::Tags => commands::tags(&vault),
+        Command::Gen(args) => commands::generate(Some(&mut vault), args),
         Command::Open(args) => commands::open(&vault, args),
         Command::Status => commands::status(&vault),
         Command::Export {

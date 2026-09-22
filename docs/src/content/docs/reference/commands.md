@@ -7,7 +7,8 @@ Every command that touches items works on one vault file, asks for one master
 password, and does one thing to the items inside it.
 [`plugin`](/sefy/reference/plugin/) and
 [`completions`](/sefy/reference/completions/) are the exceptions: they report on
-the installation itself and need neither a vault nor a password.
+the installation itself and need neither a vault nor a password. So is
+[`gen`](/sefy/reference/gen/), until it is asked to keep what it made.
 
 ## `sefy` on its own
 
@@ -54,6 +55,7 @@ get the same command.
 
 - [`add`](/sefy/reference/add/) — add a note, a login, a card, an ssh key or a file
 - [`get`](/sefy/reference/get/) — copy a secret to the clipboard
+- [`gen`](/sefy/reference/gen/) — generate a password or a passphrase, and keep it as a login
 - [`open`](/sefy/reference/open/) — open an item's site and copy its password
 - [`edit`](/sefy/reference/edit/) — change a title, contents or tags
 - [`rm`](/sefy/reference/rm/) — remove an item

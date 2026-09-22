@@ -1,10 +1,14 @@
 //! What each subcommand does once the vault is open.
 
-use crate::cli::{AddKind, EditArgs, FindArgs, GetArgs, ListArgs, OpenArgs, PullArgs, RemoteArgs};
+use crate::cli::{
+    AddKind, EditArgs, FindArgs, GenArgs, GetArgs, ListArgs, OpenArgs, PullArgs, RemoteArgs,
+};
 use crate::output;
 use crate::session;
 use anyhow::{Context, Result, bail};
-use sefy_core::{Field, ItemKind, ItemSummary, NewItem, Payload, Query, Vault};
+use sefy_core::{
+    Classes, Field, ItemKind, ItemSummary, NewItem, Payload, Query, Recipe, Strength, Vault,
+};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
@@ -226,6 +230,112 @@ pub fn get(vault: &Vault, args: GetArgs) -> Result<()> {
     flush_stdout();
 
     let hold = output::to_clipboard(&value, args.clear_after)?;
+    if hold.cleared {
+        println!("clipboard cleared");
+    }
+    Ok(())
+}
+
+/// Generates a password or a passphrase, keeps it if asked, and hands it over.
+///
+/// `vault` is there exactly when `--save` is. The record is written before the
+/// value goes to the clipboard: a clipboard that cannot be reached must not
+/// cost a password the site has already accepted.
+pub fn generate(vault: Option<&mut Vault>, args: GenArgs) -> Result<()> {
+    let recipe = if let Some(count) = args.words {
+        Recipe::Words {
+            count,
+            language: args.lang.into(),
+            separator: args.separator.clone(),
+        }
+    } else if args.pronounceable {
+        Recipe::Pronounceable {
+            length: args.length,
+        }
+    } else {
+        Recipe::Characters {
+            length: args.length,
+            classes: Classes {
+                uppercase: !args.no_uppercase,
+                digits: !args.no_digits,
+                symbols: !args.no_symbols,
+            },
+        }
+    };
+    let generated = sefy_core::generate(&recipe)?;
+
+    // What the password must not lean on: the words of the record it is for.
+    let context: Vec<&str> = [
+        args.save.as_deref(),
+        args.login.as_deref(),
+        args.url.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let strength = sefy_core::estimate_generated(&generated.value, generated.bits, &context);
+
+    let unit = match recipe {
+        Recipe::Words { count, .. } => format!("{count} words"),
+        _ => format!("{} characters", generated.value.chars().count()),
+    };
+    let mut description = format!(
+        "generated {unit}: {:.0} bits of entropy, strength {}/{}",
+        generated.bits,
+        strength.score,
+        Strength::MAX_SCORE
+    );
+    if let Some(warning) = &strength.warning {
+        description.push_str(&format!(" - {warning}"));
+    }
+
+    // Under --stdout everything but the secret goes to stderr, so a pipe
+    // receives the secret and nothing else.
+    let say = |line: &str| {
+        if args.stdout {
+            eprintln!("{line}");
+        } else {
+            println!("{line}");
+        }
+    };
+
+    if let (Some(vault), Some(title)) = (vault, &args.save) {
+        let mut fields = Vec::new();
+        push_optional(&mut fields, "login", args.login.clone(), false);
+        fields.push(Field::secret("password", generated.value.as_str()));
+        push_optional(&mut fields, "url", args.url.clone(), false);
+        let id = vault.add(
+            NewItem::new(title.clone(), Payload::fields(ItemKind::Login, fields))
+                .with_tags(args.tag.clone()),
+        )?;
+        vault.save()?;
+        say(&format!("added {title:?} as {id}"));
+    }
+    say(&description);
+    if generated.bits < sefy_core::generate::OFFLINE_BITS {
+        say(&format!(
+            "under {:.0} bits: fine behind a site that limits sign-in attempts, \
+             too few for a master password; add length or words",
+            sefy_core::generate::OFFLINE_BITS
+        ));
+    }
+
+    if args.stdout {
+        println!("{}", generated.value.as_str());
+        return Ok(());
+    }
+
+    if args.clear_after > 0 {
+        println!(
+            "copied it to the clipboard; clearing in {}s",
+            args.clear_after
+        );
+    } else {
+        println!("copied it to the clipboard");
+    }
+    flush_stdout();
+
+    let hold = output::to_clipboard(&generated.value, args.clear_after)?;
     if hold.cleared {
         println!("clipboard cleared");
     }

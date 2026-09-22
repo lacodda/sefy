@@ -1984,3 +1984,151 @@ fn find_lists_rather_than_picking_wherever_it_runs() {
         .stdout(contains("bank code"))
         .stdout(contains("wifi").not());
 }
+
+/// `sefy gen` with no vault anywhere in sight.
+fn sefy_without_a_vault() -> Command {
+    let mut command = Command::cargo_bin("sefy").unwrap();
+    command.env_remove("SEFY_VAULT");
+    command
+}
+
+/// What `sefy gen --stdout` printed on stdout, which should be the secret alone.
+fn generated(command: &mut Command) -> String {
+    let output = command
+        .arg("--stdout")
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "stdout carries more than the secret: {stdout:?}"
+    );
+    lines[0].to_owned()
+}
+
+#[test]
+fn gen_needs_no_vault_and_prints_the_secret_alone() {
+    let password = generated(sefy_without_a_vault().arg("gen"));
+    assert_eq!(password.chars().count(), 20);
+
+    // The description is still there - on stderr, out of the pipe's way.
+    sefy_without_a_vault()
+        .args(["gen", "--stdout"])
+        .assert()
+        .success()
+        .stderr(contains("bits of entropy").and(contains("strength")));
+}
+
+#[test]
+fn gen_does_not_touch_a_vault_it_was_not_asked_to_save_into() {
+    let fixture = Fixture::empty();
+    generated(fixture.sefy().arg("gen"));
+    assert!(!fixture.path.exists());
+}
+
+#[test]
+fn gen_follows_the_policy_it_was_given() {
+    let password = generated(sefy_without_a_vault().args([
+        "gen",
+        "--length",
+        "64",
+        "--no-symbols",
+        "--no-uppercase",
+    ]));
+    assert_eq!(password.len(), 64);
+    assert!(
+        password
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    );
+}
+
+#[test]
+fn gen_makes_a_passphrase_from_the_list_asked_for() {
+    let english = generated(sefy_without_a_vault().args(["gen", "--words", "5"]));
+    assert_eq!(english.split('-').count(), 5);
+
+    let russian = generated(sefy_without_a_vault().args([
+        "gen",
+        "--words",
+        "4",
+        "--lang",
+        "ru",
+        "--separator",
+        " ",
+    ]));
+    let words: Vec<&str> = russian.split(' ').collect();
+    assert_eq!(words.len(), 4);
+    assert!(
+        words
+            .iter()
+            .all(|word| word.chars().all(|c| ('а'..='я').contains(&c)))
+    );
+}
+
+#[test]
+fn gen_refuses_options_that_belong_to_another_recipe() {
+    for arguments in [
+        &["gen", "--words", "4", "--no-symbols"][..],
+        &["gen", "--words", "4", "--length", "30"],
+        &["gen", "--pronounceable", "--no-digits"],
+        &["gen", "--lang", "ru"],
+        &["gen", "--login", "someone"],
+    ] {
+        sefy_without_a_vault().args(arguments).assert().failure();
+    }
+}
+
+#[test]
+fn gen_save_stores_the_very_password_it_hands_over() {
+    let fixture = Fixture::with_vault();
+    let password = generated(fixture.sefy().args([
+        "gen",
+        "--save",
+        "forum",
+        "--login",
+        "someone@example.com",
+        "--url",
+        "https://forum.example.com",
+        "--tag",
+        "web",
+    ]));
+
+    fixture
+        .sefy()
+        .args(["get", "forum", "--stdout"])
+        .assert()
+        .success()
+        .stdout(format!("{password}\n"));
+    fixture
+        .sefy()
+        .args(["show", "forum"])
+        .assert()
+        .success()
+        .stdout(
+            contains("kind:")
+                .and(contains("login"))
+                .and(contains("someone@example.com"))
+                .and(contains("https://forum.example.com"))
+                .and(contains("web"))
+                .and(contains(password.as_str()).not()),
+        );
+}
+
+#[test]
+fn gen_save_with_the_wrong_password_hands_over_nothing() {
+    // A password the vault did not take must not reach the user either: it
+    // would go into a site's form and exist nowhere else.
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .env("SEFY_TEST_PASSWORD", "not the master password")
+        .args(["gen", "--save", "forum", "--stdout"])
+        .assert()
+        .failure()
+        .stdout("");
+}

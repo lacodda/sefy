@@ -90,6 +90,12 @@ pub enum Command {
     /// List the tags in use.
     Tags,
 
+    /// Generate a password or a passphrase and copy it to the clipboard.
+    ///
+    /// No vault is needed unless the result is kept with --save, which stores
+    /// it as a new login in the same gesture.
+    Gen(GenArgs),
+
     /// Open an item's site and copy its password to the clipboard.
     ///
     /// The two halves of signing in, in the order they are used: the browser
@@ -441,6 +447,97 @@ pub struct GetArgs {
     /// the secret is still the value sitting on it.
     #[arg(long, value_name = "SECONDS", default_value_t = 45)]
     pub clear_after: u64,
+}
+
+/// Arguments of `sefy gen`.
+#[derive(Debug, Args)]
+pub struct GenArgs {
+    /// Length in characters.
+    #[arg(
+        long,
+        short = 'n',
+        value_name = "N",
+        default_value_t = 20,
+        conflicts_with = "words"
+    )]
+    pub length: usize,
+
+    /// Leave out upper-case letters.
+    #[arg(long, conflicts_with_all = ["words", "pronounceable"])]
+    pub no_uppercase: bool,
+
+    /// Leave out digits.
+    #[arg(long, conflicts_with_all = ["words", "pronounceable"])]
+    pub no_digits: bool,
+
+    /// Leave out symbols, for the sites that refuse them.
+    #[arg(long, conflicts_with_all = ["words", "pronounceable"])]
+    pub no_symbols: bool,
+
+    /// Alternate consonants and vowels, so it can be read out and typed.
+    ///
+    /// Weaker per character than the default: check the bits it reports and
+    /// make it longer to match.
+    #[arg(long, conflicts_with = "words")]
+    pub pronounceable: bool,
+
+    /// Make a passphrase of this many words instead of a password.
+    ///
+    /// For a secret typed by hand: a master password, a disk encryption key.
+    #[arg(long, short = 'w', value_name = "N")]
+    pub words: Option<usize>,
+
+    /// Which word list a passphrase is drawn from.
+    #[arg(long, value_enum, default_value = "en", requires = "words")]
+    pub lang: WordList,
+
+    /// What goes between the words of a passphrase.
+    #[arg(long, value_name = "TEXT", default_value = "-", requires = "words")]
+    pub separator: String,
+
+    /// Store the result as a new login under this title.
+    #[arg(long, value_name = "TITLE")]
+    pub save: Option<String>,
+
+    /// The login of the saved record.
+    #[arg(long, short = 'l', requires = "save")]
+    pub login: Option<String>,
+
+    /// Where the saved account lives.
+    #[arg(long, short = 'u', requires = "save")]
+    pub url: Option<String>,
+
+    /// Tags for the saved record; repeat or separate with commas.
+    #[arg(long, value_delimiter = ',', requires = "save")]
+    pub tag: Vec<String>,
+
+    /// Print the result instead of copying it to the clipboard.
+    ///
+    /// The description goes to stderr, so a pipe receives the secret alone.
+    #[arg(long)]
+    pub stdout: bool,
+
+    /// Seconds before the clipboard is cleared again; 0 leaves it there.
+    #[arg(long, value_name = "SECONDS", default_value_t = 45)]
+    pub clear_after: u64,
+}
+
+/// A passphrase word list, as spelled on the command line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum WordList {
+    /// The EFF large wordlist: 7776 words, 12.9 bits each.
+    En,
+    /// Russian Diceware 4d6: 1296 words, 10.3 bits each.
+    Ru,
+}
+
+impl From<WordList> for sefy_core::Language {
+    fn from(list: WordList) -> Self {
+        match list {
+            WordList::En => Self::English,
+            WordList::Ru => Self::Russian,
+        }
+    }
 }
 
 /// Arguments of `sefy open`.
