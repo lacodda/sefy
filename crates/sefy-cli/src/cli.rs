@@ -102,6 +102,18 @@ pub enum Command {
     /// loads while the password waits to be pasted.
     Open(OpenArgs),
 
+    /// Copy a record's one-time password to the clipboard.
+    ///
+    /// With --set, store the key a site shows when two-factor sign-in is
+    /// turned on first; with --qr, draw the key for a phone to scan.
+    Otp(OtpArgs),
+
+    /// Hand over a record's fields one at a time, in the order a form asks.
+    ///
+    /// A login gives its login, then its password, then a fresh one-time
+    /// code: each goes to the clipboard, and Enter moves to the next.
+    Fill(FillArgs),
+
     /// Show what and where this vault is, without revealing any of it.
     ///
     /// Counts, versions and the last transfer - never a title or a value. It
@@ -405,6 +417,22 @@ pub enum AddKind {
         tag: Vec<String>,
     },
 
+    /// A Wi-Fi network: ssid, password, security, notes.
+    ///
+    /// The password is asked for; the other fields are passed with --set.
+    Wifi(RecordArgs),
+
+    /// A token for an API: token, url, scopes, expires, notes.
+    ///
+    /// The token is asked for; the other fields are passed with --set.
+    ApiToken(RecordArgs),
+
+    /// A bank account: account, holder, bank, routing, notes.
+    ///
+    /// The account number is asked for; the other fields are passed with
+    /// --set.
+    Bank(RecordArgs),
+
     /// A file, stored byte for byte.
     File {
         /// File to read.
@@ -418,6 +446,38 @@ pub enum AddKind {
         #[arg(long, value_delimiter = ',')]
         tag: Vec<String>,
     },
+}
+
+/// Arguments of the kinds that are nothing but their fields.
+///
+/// A kind like this is a row in the template table: which fields it has, which
+/// are secret. The command line follows from the row rather than growing a
+/// flag per field, so the next kind costs no new options.
+#[derive(Debug, Args)]
+pub struct RecordArgs {
+    /// What to call it.
+    pub title: String,
+
+    /// Set a field: `--set ssid=Home`. Repeat for several.
+    ///
+    /// Secret fields are refused here and asked for instead, so they stay out
+    /// of the shell history. A name the kind does not have is kept as an
+    /// extra field.
+    #[arg(long, value_name = "NAME=VALUE")]
+    pub set: Vec<String>,
+
+    /// Read a secret field from an environment variable instead of asking:
+    /// `--secret-env password=WIFI_KEY`.
+    #[arg(long, value_name = "NAME=VAR")]
+    pub secret_env: Vec<String>,
+
+    /// Do not ask for this secret field.
+    #[arg(long, value_name = "NAME")]
+    pub skip: Vec<String>,
+
+    /// Tags to attach; repeat or separate with commas.
+    #[arg(long, value_delimiter = ',')]
+    pub tag: Vec<String>,
 }
 
 /// Arguments of `sefy get`.
@@ -555,6 +615,53 @@ pub struct OpenArgs {
     pub clear_after: u64,
 }
 
+/// Arguments of `sefy otp`.
+#[derive(Debug, Args)]
+pub struct OtpArgs {
+    /// Item id, exact title, or text to search for.
+    pub reference: String,
+
+    /// Store a key on the record first; it is asked for and never echoed.
+    ///
+    /// Paste the otpauth:// link a setup QR code carries, or the text key the
+    /// page shows beside it. The first code follows, for the site that asks
+    /// for one to confirm.
+    #[arg(long)]
+    pub set: bool,
+
+    /// Read the key to store from this environment variable instead of
+    /// asking.
+    #[arg(long, value_name = "VAR")]
+    pub key_env: Option<String>,
+
+    /// Draw the key as a QR code, for an authenticator app on a phone.
+    ///
+    /// The picture is the key itself: it is drawn only on a terminal and
+    /// cleared from the screen once Enter is pressed.
+    #[arg(long, conflicts_with = "stdout")]
+    pub qr: bool,
+
+    /// Print the code instead of copying it to the clipboard.
+    #[arg(long)]
+    pub stdout: bool,
+
+    /// Seconds before the clipboard is cleared again; 0 leaves it there.
+    #[arg(long, value_name = "SECONDS", default_value_t = 45)]
+    pub clear_after: u64,
+}
+
+/// Arguments of `sefy fill`.
+#[derive(Debug, Args)]
+pub struct FillArgs {
+    /// Item id, exact title, or text to search for.
+    pub reference: String,
+
+    /// Seconds before the last field is cleared from the clipboard; 0 leaves
+    /// it there.
+    #[arg(long, value_name = "SECONDS", default_value_t = 45)]
+    pub clear_after: u64,
+}
+
 /// Arguments of `sefy ls`.
 #[derive(Debug, Args)]
 pub struct ListArgs {
@@ -648,6 +755,12 @@ pub enum Kind {
     Card,
     /// An SSH key pair.
     SshKey,
+    /// A Wi-Fi network.
+    Wifi,
+    /// A token for an API.
+    ApiToken,
+    /// A bank account.
+    Bank,
     /// A stored file.
     File,
 }
@@ -659,6 +772,9 @@ impl From<Kind> for sefy_core::ItemKind {
             Kind::Login => Self::Login,
             Kind::Card => Self::Card,
             Kind::SshKey => Self::SshKey,
+            Kind::Wifi => Self::Wifi,
+            Kind::ApiToken => Self::ApiToken,
+            Kind::Bank => Self::Bank,
             Kind::File => Self::File,
         }
     }

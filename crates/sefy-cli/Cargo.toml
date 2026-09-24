@@ -30,6 +30,8 @@ arboard.workspace = true
 clap.workspace = true
 dialoguer.workspace = true
 clap_complete.workspace = true
+console.workspace = true
+qrcodegen.workspace = true
 rpassword.workspace = true
 tempfile.workspace = true
 

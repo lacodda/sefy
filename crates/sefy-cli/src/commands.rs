@@ -1,13 +1,14 @@
 //! What each subcommand does once the vault is open.
 
 use crate::cli::{
-    AddKind, EditArgs, FindArgs, GenArgs, GetArgs, ListArgs, OpenArgs, PullArgs, RemoteArgs,
+    AddKind, EditArgs, FillArgs, FindArgs, GenArgs, GetArgs, ListArgs, OpenArgs, OtpArgs, PullArgs,
+    RecordArgs, RemoteArgs,
 };
 use crate::output;
 use crate::session;
 use anyhow::{Context, Result, bail};
 use sefy_core::{
-    Classes, Field, ItemKind, ItemSummary, NewItem, Payload, Query, Recipe, Strength, Vault,
+    Classes, Field, ItemKind, ItemSummary, NewItem, Payload, Query, Recipe, Strength, Totp, Vault,
 };
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -61,7 +62,10 @@ pub fn add(vault: &mut Vault, kind: AddKind) -> Result<()> {
                 Field::secret("password", password),
             ];
             push_optional(&mut fields, "url", url, false);
-            push_optional(&mut fields, "totp", totp, true);
+            let totp = totp
+                .map(|key| checked(sefy_core::otp::FIELD, key))
+                .transpose()?;
+            push_optional(&mut fields, sefy_core::otp::FIELD, totp, true);
             push_optional(&mut fields, "notes", notes, false);
             (
                 NewItem::new(title.clone(), Payload::fields(ItemKind::Login, fields))
@@ -86,16 +90,18 @@ pub fn add(vault: &mut Vault, kind: AddKind) -> Result<()> {
             push_optional(&mut fields, "holder", holder, false);
             push_optional(&mut fields, "expiry", expiry, false);
             if !no_cvv {
-                fields.push(Field::secret(
+                push_typed(
+                    &mut fields,
                     "cvv",
-                    session::secret("CVV: ", cvv_env.as_deref())?,
-                ));
+                    session::secret("CVV (empty if there is none): ", cvv_env.as_deref())?,
+                )?;
             }
             if !no_pin {
-                fields.push(Field::secret(
+                push_typed(
+                    &mut fields,
                     "pin",
-                    session::secret("PIN: ", pin_env.as_deref())?,
-                ));
+                    session::secret("PIN (empty if unknown): ", pin_env.as_deref())?,
+                )?;
             }
             push_optional(&mut fields, "notes", notes, false);
             (
@@ -117,10 +123,14 @@ pub fn add(vault: &mut Vault, kind: AddKind) -> Result<()> {
                 .with_context(|| format!("cannot read {}", private_key.display()))?;
             let mut fields = vec![Field::secret("private-key", private)];
             if !no_passphrase {
-                fields.push(Field::secret(
+                push_typed(
+                    &mut fields,
                     "passphrase",
-                    session::secret("Passphrase for the key: ", passphrase_env.as_deref())?,
-                ));
+                    session::secret(
+                        "Passphrase for the key (empty if it has none): ",
+                        passphrase_env.as_deref(),
+                    )?,
+                )?;
             }
             // The conventional sibling is picked up when it is there, and its
             // absence is not an error: a key without its public half is still
@@ -142,6 +152,9 @@ pub fn add(vault: &mut Vault, kind: AddKind) -> Result<()> {
                 title,
             )
         }
+        AddKind::Wifi(args) => record(ItemKind::Wifi, args)?,
+        AddKind::ApiToken(args) => record(ItemKind::ApiToken, args)?,
+        AddKind::Bank(args) => record(ItemKind::Bank, args)?,
         AddKind::File { path, title, tag } => {
             let bytes =
                 std::fs::read(&path).with_context(|| format!("cannot read {}", path.display()))?;
@@ -161,6 +174,128 @@ pub fn add(vault: &mut Vault, kind: AddKind) -> Result<()> {
     vault.save()?;
     println!("added {description:?} as {id}");
     Ok(())
+}
+
+/// Builds a record of a kind that is nothing but its template.
+///
+/// Every field comes from the template's row: public ones from `--set`, secret
+/// ones asked for in the order the row lists them, or read from the variable
+/// `--secret-env` names. A name the row does not have is kept as an extra
+/// field, the way `edit --set` keeps one.
+fn record(kind: ItemKind, args: RecordArgs) -> Result<(NewItem, String)> {
+    let template = kind
+        .template()
+        .with_context(|| format!("a {kind} is not a record"))?;
+    let given = assignments("--set", "NAME=VALUE", &args.set)?;
+    let from_env = assignments("--secret-env", "NAME=VAR", &args.secret_env)?;
+    let secret_names = || {
+        template
+            .fields
+            .iter()
+            .filter(|spec| spec.secret)
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    for (name, _) in &given {
+        if template.field(name).is_some_and(|spec| spec.secret) {
+            bail!(
+                "{name} is secret, so it is not taken on the command line\n\
+                 leave it to the prompt, or pass --secret-env {name}=VAR"
+            );
+        }
+    }
+    for (name, _) in &from_env {
+        if template.field(name).is_some_and(|spec| !spec.secret) {
+            bail!("{name} is not secret; pass it with --set {name}=VALUE");
+        }
+    }
+    for name in &args.skip {
+        if !template.field(name).is_some_and(|spec| spec.secret) {
+            bail!(
+                "--skip names a secret field of a {kind}, and {name:?} is not one; \
+                 those are: {}",
+                secret_names()
+            );
+        }
+    }
+
+    let mut fields = Vec::new();
+    for spec in template.fields {
+        if spec.secret {
+            if args.skip.iter().any(|name| name == spec.name) {
+                continue;
+            }
+            let value = match from_env.iter().find(|(name, _)| name == spec.name) {
+                Some((_, variable)) => session::secret("", Some(variable))?,
+                None => session::secret(
+                    &format!("{} ({}; empty to leave out): ", spec.name, spec.description),
+                    None,
+                )?,
+            };
+            push_typed(&mut fields, spec.name, value)?;
+        } else if let Some((_, value)) = given.iter().find(|(name, _)| name == spec.name) {
+            fields.push(Field::public(spec.name, value.clone()));
+        }
+    }
+    for (name, value) in &given {
+        if template.field(name).is_none() {
+            fields.push(Field::public(name.clone(), value.clone()));
+        }
+    }
+    for (name, variable) in &from_env {
+        if template.field(name).is_none() {
+            push_typed(&mut fields, name, session::secret("", Some(variable))?)?;
+        }
+    }
+
+    if fields.is_empty() {
+        bail!("a {kind} needs at least one field; nothing was given or typed");
+    }
+    Ok((
+        NewItem::new(args.title.clone(), Payload::fields(kind, fields)).with_tags(args.tag),
+        args.title,
+    ))
+}
+
+/// Adds a secret that was typed or read from a variable, unless it was empty.
+///
+/// Nothing typed is nothing stored: "no PIN" and "a PIN that is the empty
+/// string" are different facts, and only the first is ever meant.
+fn push_typed(fields: &mut Vec<Field>, name: &str, value: String) -> Result<()> {
+    if !value.is_empty() {
+        fields.push(Field::secret(name, checked(name, value)?));
+    }
+    Ok(())
+}
+
+/// Splits `NAME=VALUE` options, refusing a malformed one or a name given twice.
+fn assignments(option: &str, shape: &str, raw: &[String]) -> Result<Vec<(String, String)>> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for assignment in raw {
+        let (name, value) = assignment
+            .split_once('=')
+            .filter(|(name, _)| !name.is_empty())
+            .with_context(|| format!("{option} takes {shape}, not {assignment:?}"))?;
+        if pairs.iter().any(|(seen, _)| seen == name) {
+            bail!("{option} names {name:?} twice");
+        }
+        pairs.push((name.to_owned(), value.to_owned()));
+    }
+    Ok(pairs)
+}
+
+/// Checks a value on its way into a field, for the fields that have a shape.
+///
+/// Only a one-time password key has one: a key that cannot make a code is
+/// found out now, when the site that issued it is still open, rather than at
+/// the next sign-in, when it is too late to fetch it again.
+fn checked(name: &str, value: String) -> Result<String> {
+    if name == sefy_core::otp::FIELD {
+        return Ok(sefy_core::otp::normalize(&value)?);
+    }
+    Ok(value)
 }
 
 /// Copies a secret to the clipboard, or prints it when asked to.
@@ -202,8 +337,8 @@ pub fn get(vault: &Vault, args: GetArgs) -> Result<()> {
             item.summary.id
         ),
         Payload::Unknown { kind } => bail!(
-            "{:?} is a {kind}, which this version of sefy does not know
-             it was written by a newer sefy — upgrade to read it
+            "{:?} is a {kind}, which this version of sefy does not know\n\
+             it was written by a newer sefy — upgrade to read it\n\
              (the item is safe: it is listed, exported and synced as it is)",
             item.summary.title
         ),
@@ -367,7 +502,10 @@ pub fn show(vault: &Vault, reference: &str) -> Result<()> {
         }
         Payload::Fields { fields, .. } => {
             for stored in fields {
-                if stored.secret {
+                if stored.name == sefy_core::otp::FIELD {
+                    // The key is rarely what is wanted; the code it makes is.
+                    field(&stored.name, "<hidden — sefy otp gives the code>");
+                } else if stored.secret {
                     // Never printed here; `sefy get` is the one way a secret
                     // leaves, and it says which field to ask for by name.
                     field(
@@ -569,7 +707,7 @@ fn build_edited_payload(existing: &Payload, args: &EditArgs) -> Result<Option<Pa
         Payload::Unknown { kind } => {
             if args.text.is_some() || args.editor || touches_fields {
                 bail!(
-                    "this item is a {kind}, a kind this version of sefy does not know;
+                    "this item is a {kind}, a kind this version of sefy does not know;\n\
                      only --title and tags can be edited"
                 );
             }
@@ -595,12 +733,18 @@ fn edit_fields(kind: &ItemKind, existing: &[Field], args: &EditArgs) -> Result<V
         // be a promise sefy cannot keep. An existing field keeps whatever
         // secrecy it was stored with — the user is changing the value, not
         // declaring the field harmless.
-        set_field(kind, &mut fields, name, value.to_owned(), None);
+        set_field(
+            kind,
+            &mut fields,
+            name,
+            checked(name, value.to_owned())?,
+            None,
+        );
     }
 
     for name in &args.set_secret {
         let value = session::secret(&format!("New value for {name}: "), None)?;
-        set_field(kind, &mut fields, name, value, Some(true));
+        set_field(kind, &mut fields, name, checked(name, value)?, Some(true));
     }
 
     for name in &args.unset {
@@ -875,6 +1019,211 @@ pub fn open(vault: &Vault, args: OpenArgs) -> Result<()> {
         println!("clipboard cleared");
     }
     Ok(())
+}
+
+/// Copies a record's current one-time code, storing or drawing its key first
+/// when asked.
+///
+/// `--set` is the moment of enrolment: the site shows a key and asks for the
+/// first code to prove it was taken. Storing and answering are one command so
+/// the key is in the vault before the site considers two-factor sign-in on.
+pub fn otp(vault: &mut Vault, args: OtpArgs) -> Result<()> {
+    let summary = vault.resolve(&args.reference).map_err(output::explain)?;
+    let item = vault.get(summary.id)?;
+    let title = &item.summary.title;
+    let Payload::Fields { kind, fields } = &item.payload else {
+        bail!(
+            "{title:?} is a {}; one-time passwords belong to a record such as a login",
+            item.summary.kind
+        );
+    };
+    let mut fields = fields.clone();
+
+    // Under --stdout everything but the code goes to stderr, so a pipe
+    // receives the code and nothing else.
+    let say = |line: &str| {
+        if args.stdout {
+            eprintln!("{line}");
+        } else {
+            println!("{line}");
+        }
+    };
+
+    if args.set || args.key_env.is_some() {
+        let key = session::secret("Setup key or otpauth:// link: ", args.key_env.as_deref())?;
+        let key = checked(sefy_core::otp::FIELD, key)?;
+        set_field(kind, &mut fields, sefy_core::otp::FIELD, key, Some(true));
+        vault.update(
+            summary.id,
+            None,
+            Some(Payload::Fields {
+                kind: kind.clone(),
+                fields: fields.clone(),
+            }),
+            None,
+        )?;
+        vault.save()?;
+        say(&format!("stored the one-time password key of {title:?}"));
+    }
+
+    let stored = fields
+        .iter()
+        .find(|field| field.name == sefy_core::otp::FIELD)
+        .with_context(|| {
+            format!(
+                "{title:?} has no one-time password key\n\
+                 store the one the site shows with: sefy otp {} --set",
+                summary.id
+            )
+        })?;
+    let totp = Totp::parse(&stored.value).with_context(|| {
+        format!(
+            "the {} field of {title:?} cannot make a code\n\
+             replace it with: sefy otp {} --set",
+            sefy_core::otp::FIELD,
+            summary.id
+        )
+    })?;
+
+    if args.qr {
+        let login = fields
+            .iter()
+            .find(|field| field.name == "login")
+            .map(|field| field.value.as_str());
+        return crate::qr::show(&totp.link(title, login));
+    }
+
+    let now = unix_now()?;
+    let code = totp.code_at(now);
+    if args.stdout {
+        println!("{code}");
+        return Ok(());
+    }
+
+    let valid = totp.remaining(now);
+    if args.clear_after > 0 {
+        println!(
+            "copied the one-time code of {title:?} to the clipboard; \
+             valid for {valid}s, clearing in {}s",
+            args.clear_after
+        );
+    } else {
+        println!("copied the one-time code of {title:?} to the clipboard; valid for {valid}s");
+    }
+    flush_stdout();
+
+    let hold = output::to_clipboard(&code, args.clear_after)?;
+    if hold.cleared {
+        println!("clipboard cleared");
+    }
+    Ok(())
+}
+
+/// Hands over a record's fields one at a time, Enter between them.
+///
+/// Which fields, and in what order, is the template's word: a login gives its
+/// login, its password and a one-time code, a card its number, holder, expiry
+/// and CVV. A one-time code is made when its turn comes rather than up front,
+/// so time spent on the fields before it does not eat into its life.
+pub fn fill(vault: &Vault, args: FillArgs) -> Result<()> {
+    use std::io::IsTerminal;
+
+    let summary = vault.resolve(&args.reference).map_err(output::explain)?;
+    let item = vault.get(summary.id)?;
+    let title = &item.summary.title;
+    let Payload::Fields { kind, fields } = &item.payload else {
+        bail!(
+            "{title:?} is a {}; fill hands over the fields of a record such as a login",
+            item.summary.kind
+        );
+    };
+
+    let steps: Vec<&Field> = kind
+        .template()
+        .into_iter()
+        .flat_map(|template| template.fill_order())
+        .filter_map(|spec| fields.iter().find(|field| field.name == spec.name))
+        .collect();
+    if steps.is_empty() {
+        bail!(
+            "{title:?} holds nothing a {kind} fills in; it holds: {}\n\
+             take a field with: sefy get {} --field NAME",
+            field_names(fields),
+            summary.id
+        );
+    }
+    if !std::io::stdin().is_terminal() {
+        bail!(
+            "fill waits for Enter between fields, and input is not a terminal\n\
+             take one field at a time with: sefy get {} --field NAME --stdout",
+            summary.id
+        );
+    }
+
+    let mut clipboard = output::Clipboard::open()?;
+    let total = steps.len();
+    for (index, field) in steps.iter().enumerate() {
+        let (value, label) = if field.name == sefy_core::otp::FIELD {
+            let totp = Totp::parse(&field.value).with_context(|| {
+                format!(
+                    "the {} field of {title:?} cannot make a code\n\
+                     replace it with: sefy otp {} --set",
+                    sefy_core::otp::FIELD,
+                    summary.id
+                )
+            })?;
+            let now = unix_now()?;
+            (
+                totp.code_at(now),
+                format!("one-time code (valid for {}s)", totp.remaining(now)),
+            )
+        } else {
+            (field.value.clone(), field.name.clone())
+        };
+        let position = format!("{}/{total}", index + 1);
+
+        if index + 1 < total {
+            clipboard.put(&value)?;
+            print!("{position} {label} is on the clipboard; paste it, then press Enter ");
+            flush_stdout();
+            let mut line = String::new();
+            if std::io::stdin().read_line(&mut line)? == 0 {
+                // Input closed mid-way: nothing more will be pasted, so what
+                // is on the clipboard now has no reason to stay there.
+                clipboard.take_back(&value);
+                println!();
+                bail!("input closed before the last field; the clipboard is cleared");
+            }
+        } else {
+            if args.clear_after > 0 {
+                println!(
+                    "{position} {label} is on the clipboard; clearing in {}s",
+                    args.clear_after
+                );
+            } else {
+                println!("{position} {label} is on the clipboard");
+            }
+            flush_stdout();
+            let hold = clipboard.hold(&value, args.clear_after)?;
+            if hold.cleared {
+                println!("clipboard cleared");
+            }
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Seconds since the epoch, for making a one-time code.
+///
+/// An error rather than a zero when the clock is set before 1970: a code made
+/// for the wrong time is not a code, and failing to sign in with it would say
+/// nothing about why.
+fn unix_now() -> Result<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .context("the system clock is set before 1970; a one-time code needs the real time")
 }
 
 /// The field `sefy open` looks for.

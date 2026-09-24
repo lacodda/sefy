@@ -14,11 +14,50 @@ use sefy_core::{Error, ItemSummary};
 /// timer fired. There the wait is the mechanism — sefy keeps serving the
 /// selection for the timeout and then lets go.
 pub fn to_clipboard(value: &str, seconds: u64) -> Result<ClipboardHold> {
-    let mut clipboard = arboard::Clipboard::new().context(
-        "cannot reach the clipboard\n\
-         use --stdout to print the value instead",
-    )?;
+    Clipboard::open()?.hold(value, seconds)
+}
 
+/// The clipboard, held open across several values.
+///
+/// `sefy fill` puts one field after another on it; on X11 and Wayland the
+/// value is served by this process, so the handle has to outlive every one of
+/// them rather than be opened and dropped per field.
+pub struct Clipboard {
+    inner: arboard::Clipboard,
+}
+
+impl Clipboard {
+    /// Reaches the clipboard, or says how to do without it.
+    pub fn open() -> Result<Self> {
+        let inner = arboard::Clipboard::new().context(
+            "cannot reach the clipboard\n\
+             use --stdout to print the value instead",
+        )?;
+        Ok(Self { inner })
+    }
+
+    /// Puts a value on the clipboard and leaves it there while this handle
+    /// lives.
+    pub fn put(&mut self, value: &str) -> Result<()> {
+        self.inner
+            .set_text(value.to_owned())
+            .context("cannot write to the clipboard")
+    }
+
+    /// Takes `value` back off the clipboard, if it is still what is there.
+    pub fn take_back(&mut self, value: &str) {
+        if matches!(self.inner.get_text(), Ok(current) if current == value) {
+            let _ = self.inner.clear();
+        }
+    }
+
+    /// Puts the last value on the clipboard and keeps it there for `seconds`.
+    pub fn hold(self, value: &str, seconds: u64) -> Result<ClipboardHold> {
+        hold(self.inner, value, seconds)
+    }
+}
+
+fn hold(mut clipboard: arboard::Clipboard, value: &str, seconds: u64) -> Result<ClipboardHold> {
     #[cfg(target_os = "linux")]
     {
         use arboard::SetExtLinux;

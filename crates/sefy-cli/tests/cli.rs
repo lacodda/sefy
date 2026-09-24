@@ -1289,7 +1289,10 @@ fn reading_an_item_from_a_newer_sefy_explains_rather_than_denies_it() {
         .args(["get", "my passport", "--stdout"])
         .assert()
         .failure()
-        .stderr(contains("upgrade to read it"));
+        .stderr(contains("upgrade to read it"))
+        // Each line of the message starts at the margin, not indented by the
+        // source it was written in.
+        .stderr(contains("does not know\nit was written"));
 }
 
 #[test]
@@ -1333,7 +1336,9 @@ fn add_full_login(fixture: &Fixture, title: &str) {
             "--url",
             "https://example.invalid",
             "--totp",
-            "otpsecret",
+            // Spaced and lower-cased, the way a setup page prints a key for
+            // typing: stored as the key, without the dressing.
+            "jbsw y3dp ehpk 3pxp",
             "--notes",
             "backup codes in the drawer",
             "--item-password-env",
@@ -1368,7 +1373,7 @@ fn a_login_round_trips_every_field_it_was_given() {
         .args(["get", "mail", "--field", "totp", "--stdout"])
         .assert()
         .success()
-        .stdout(contains("otpsecret"));
+        .stdout("JBSWY3DPEHPK3PXP\n");
 }
 
 #[test]
@@ -1570,9 +1575,9 @@ fn show_hides_every_secret_field_and_names_it_in_the_hint() {
         .assert()
         .success()
         .stdout(contains("hunter2").not())
-        .stdout(contains("otpsecret").not())
+        .stdout(contains("JBSWY3DP").not())
         .stdout(contains("<hidden — use sefy get --field password>"))
-        .stdout(contains("<hidden — use sefy get --field totp>"));
+        .stdout(contains("<hidden — sefy otp gives the code>"));
 }
 
 #[test]
@@ -2131,4 +2136,467 @@ fn gen_save_with_the_wrong_password_hands_over_nothing() {
         .assert()
         .failure()
         .stdout("");
+}
+
+// ---------------------------------------------------------------------------
+// One-time passwords
+
+const OTP_KEY: &str = "JBSWY3DPEHPK3PXP";
+
+/// Adds a login with no one-time password key yet.
+fn add_plain_login(fixture: &Fixture, title: &str) {
+    fixture
+        .sefy()
+        .env("ITEM_PASSWORD", "hunter2")
+        .args(["add", "login", title, "--login", "someone"])
+        .args(["--item-password-env", "ITEM_PASSWORD"])
+        .assert()
+        .success();
+}
+
+/// The codes `key` makes around now: the one before the command ran and the
+/// one after, since a window can close while the command is running.
+fn codes_around_now(key: &str, run: impl FnOnce() -> String) -> (String, [String; 2]) {
+    let totp = sefy_core::Totp::parse(key).unwrap();
+    let now = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    let before = totp.code_at(now());
+    let output = run();
+    let after = totp.code_at(now());
+    (output, [before, after])
+}
+
+#[test]
+fn otp_set_stores_the_key_and_answers_with_the_first_code() {
+    let fixture = Fixture::with_vault();
+    add_plain_login(&fixture, "forge");
+
+    let (stdout, expected) = codes_around_now(OTP_KEY, || {
+        let output = fixture
+            .sefy()
+            .env("OTP_KEY", "jbsw-y3dp ehpk-3pxp")
+            .args(["otp", "forge", "--key-env", "OTP_KEY", "--stdout"])
+            .assert()
+            .success()
+            // The note about storing goes to stderr: a pipe gets the code.
+            .stderr(contains("stored the one-time password key of \"forge\""))
+            .get_output()
+            .stdout
+            .clone();
+        String::from_utf8(output).unwrap()
+    });
+    let code = stdout.trim_end();
+    assert_eq!(stdout, format!("{code}\n"), "stdout carries the code alone");
+    assert!(
+        expected.contains(&code.to_owned()),
+        "{code} not in {expected:?}"
+    );
+
+    // The key is on the record, as the key.
+    fixture
+        .sefy()
+        .args(["get", "forge", "--field", "totp", "--stdout"])
+        .assert()
+        .success()
+        .stdout(format!("{OTP_KEY}\n"));
+
+    // And a later call makes codes from it without being told again.
+    let (stdout, expected) = codes_around_now(OTP_KEY, || {
+        let output = fixture
+            .sefy()
+            .args(["otp", "forge", "--stdout"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        String::from_utf8(output).unwrap()
+    });
+    assert!(expected.contains(&stdout.trim_end().to_owned()));
+}
+
+#[test]
+fn otp_follows_the_parameters_of_a_link() {
+    let fixture = Fixture::with_vault();
+    add_plain_login(&fixture, "bank portal");
+    let link = format!(
+        "otpauth://totp/Example%20Bank:someone?secret={OTP_KEY}&issuer=Example%20Bank&digits=8&algorithm=SHA256"
+    );
+
+    let (stdout, expected) = codes_around_now(&link, || {
+        let output = fixture
+            .sefy()
+            .env("OTP_KEY", &link)
+            .args(["otp", "bank portal", "--key-env", "OTP_KEY", "--stdout"])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        String::from_utf8(output).unwrap()
+    });
+    let code = stdout.trim_end();
+    assert_eq!(code.len(), 8, "{code}");
+    assert!(expected.contains(&code.to_owned()));
+
+    // A link is kept as given: its issuer and parameters are the site's words.
+    fixture
+        .sefy()
+        .args(["get", "bank portal", "--field", "totp", "--stdout"])
+        .assert()
+        .success()
+        .stdout(format!("{link}\n"));
+}
+
+#[test]
+fn otp_refuses_what_is_not_a_key_and_leaves_the_record_alone() {
+    let fixture = Fixture::with_vault();
+    add_plain_login(&fixture, "forge");
+
+    fixture
+        .sefy()
+        .env("OTP_KEY", "hunter2-is-not-base32!")
+        .args(["otp", "forge", "--key-env", "OTP_KEY", "--stdout"])
+        .assert()
+        .failure()
+        .stderr(contains("not a one-time password key"))
+        .stderr(contains("hunter2").not())
+        .stdout("");
+
+    fixture
+        .sefy()
+        .args(["get", "forge", "--field", "totp", "--stdout"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn otp_refuses_a_counter_based_key_by_name() {
+    let fixture = Fixture::with_vault();
+    add_plain_login(&fixture, "forge");
+    fixture
+        .sefy()
+        .env(
+            "OTP_KEY",
+            format!("otpauth://hotp/x?secret={OTP_KEY}&counter=3"),
+        )
+        .args(["otp", "forge", "--key-env", "OTP_KEY"])
+        .assert()
+        .failure()
+        .stderr(contains("HOTP"));
+}
+
+#[test]
+fn otp_on_a_login_without_a_key_says_how_to_store_one() {
+    let fixture = Fixture::with_vault();
+    add_plain_login(&fixture, "forge");
+    fixture
+        .sefy()
+        .args(["otp", "forge", "--stdout"])
+        .assert()
+        .failure()
+        .stderr(contains("has no one-time password key"))
+        .stderr(contains("sefy otp 1 --set"));
+}
+
+#[test]
+fn otp_on_a_note_is_refused() {
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "diary", "dear diary", &[]);
+    fixture
+        .sefy()
+        .args(["otp", "diary", "--stdout"])
+        .assert()
+        .failure()
+        .stderr(contains("is a note"));
+}
+
+#[test]
+fn otp_qr_draws_only_on_a_terminal() {
+    let fixture = Fixture::with_vault();
+    add_full_login(&fixture, "mail");
+    fixture
+        .sefy()
+        .args(["otp", "mail", "--qr"])
+        .assert()
+        .failure()
+        .stderr(contains("only on a terminal"))
+        .stdout(contains(OTP_KEY).not())
+        .stdout(contains("\u{2580}").not());
+}
+
+#[test]
+fn a_key_that_cannot_make_a_code_is_refused_on_the_way_in() {
+    let fixture = Fixture::with_vault();
+
+    fixture
+        .sefy()
+        .env("ITEM_PASSWORD", "hunter2")
+        .args(["add", "login", "mail", "--login", "someone"])
+        .args(["--totp", "hunter1!", "--item-password-env", "ITEM_PASSWORD"])
+        .assert()
+        .failure()
+        .stderr(contains("not a one-time password key"));
+
+    add_plain_login(&fixture, "forge");
+    fixture
+        .sefy()
+        .args(["edit", "forge", "--set", "totp=1234"])
+        .assert()
+        .failure()
+        .stderr(contains("not a one-time password key"));
+}
+
+// ---------------------------------------------------------------------------
+// Filling in a form
+
+#[test]
+fn fill_needs_a_terminal_to_wait_on_and_says_what_to_do_instead() {
+    let fixture = Fixture::with_vault();
+    add_full_login(&fixture, "mail");
+    fixture
+        .sefy()
+        .args(["fill", "mail"])
+        .assert()
+        .failure()
+        .stderr(contains("waits for Enter"))
+        .stderr(contains("not a terminal\ntake one field at a time"))
+        .stderr(contains("sefy get 1 --field NAME --stdout"))
+        .stdout("");
+}
+
+#[test]
+fn fill_refuses_a_record_with_nothing_to_fill() {
+    let fixture = Fixture::with_vault();
+    let key = fixture.directory().join("id_test");
+    std::fs::write(&key, "-----BEGIN TEST KEY-----\n").unwrap();
+    fixture
+        .sefy()
+        .args(["add", "ssh-key", "box", "--no-passphrase", "--private-key"])
+        .arg(&key)
+        .assert()
+        .success();
+
+    fixture
+        .sefy()
+        .args(["fill", "box"])
+        .assert()
+        .failure()
+        .stderr(contains("holds nothing a ssh-key fills in"))
+        .stderr(contains("private-key"));
+}
+
+#[test]
+fn fill_on_a_note_is_refused() {
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "diary", "dear diary", &[]);
+    fixture
+        .sefy()
+        .args(["fill", "diary"])
+        .assert()
+        .failure()
+        .stderr(contains("is a note"));
+}
+
+// ---------------------------------------------------------------------------
+// Kinds that are nothing but their template
+
+#[test]
+fn a_wifi_network_takes_its_public_fields_on_the_line_and_its_key_from_aside() {
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .env("WIFI_KEY", "correct horse")
+        .args([
+            "add",
+            "wifi",
+            "home",
+            "--set",
+            "security=WPA3",
+            "--set",
+            "ssid=HomeNet",
+        ])
+        .args(["--secret-env", "password=WIFI_KEY", "--tag", "house"])
+        .assert()
+        .success()
+        .stdout(contains("added \"home\""));
+
+    // The template's order, not the order of the options.
+    let shown = fixture
+        .sefy()
+        .args(["show", "home"])
+        .assert()
+        .success()
+        .stdout(contains("correct horse").not())
+        .get_output()
+        .stdout
+        .clone();
+    let shown = String::from_utf8(shown).unwrap();
+    let ssid = shown.find("ssid:").unwrap();
+    let password = shown.find("password:").unwrap();
+    let security = shown.find("security:").unwrap();
+    assert!(ssid < password && password < security, "{shown}");
+    assert!(shown.contains("kind:        wifi"), "{shown}");
+
+    // The default field is the network key.
+    fixture
+        .sefy()
+        .args(["get", "home", "--stdout"])
+        .assert()
+        .success()
+        .stdout("correct horse\n");
+
+    fixture
+        .sefy()
+        .args(["ls", "--kind", "wifi"])
+        .assert()
+        .success()
+        .stdout(contains("home"));
+}
+
+#[test]
+fn a_secret_field_is_never_taken_on_the_command_line() {
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .args([
+            "add",
+            "wifi",
+            "home",
+            "--set",
+            "password=in the history now",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("password is secret"))
+        .stderr(contains("--secret-env password=VAR"));
+}
+
+#[test]
+fn a_secret_field_left_to_the_prompt_needs_a_terminal() {
+    // Proof that the key is asked for: with no terminal and no variable, the
+    // prompt is what fails.
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .args([
+            "add",
+            "api-token",
+            "ci",
+            "--set",
+            "url=https://example.invalid",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("input is not a terminal"));
+}
+
+#[test]
+fn skip_leaves_a_secret_out_and_names_only_secret_fields() {
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .args(["add", "api-token", "ci", "--skip", "token"])
+        .args([
+            "--set",
+            "url=https://example.invalid",
+            "--set",
+            "scopes=read",
+        ])
+        .assert()
+        .success();
+    fixture
+        .sefy()
+        .args(["show", "ci"])
+        .assert()
+        .success()
+        .stdout(contains("token:").not())
+        .stdout(contains("scopes:"));
+
+    fixture
+        .sefy()
+        .args(["add", "api-token", "other", "--skip", "url"])
+        .assert()
+        .failure()
+        .stderr(contains("those are: token"));
+}
+
+#[test]
+fn a_bank_account_keeps_extra_fields_and_leaves_an_empty_secret_out() {
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .env("ACCOUNT", "DE00 1234 5678")
+        .env("EMPTY", "")
+        .args(["add", "bank", "savings", "--secret-env", "account=ACCOUNT"])
+        .args(["--set", "holder=Someone", "--set", "branch=Main street"])
+        .args(["--secret-env", "online-pin=EMPTY"])
+        .assert()
+        .success();
+
+    fixture
+        .sefy()
+        .args(["show", "savings"])
+        .assert()
+        .success()
+        .stdout(contains("branch:"))
+        .stdout(contains("Main street"))
+        .stdout(contains("online-pin").not())
+        .stdout(contains("1234").not());
+    fixture
+        .sefy()
+        .args(["get", "savings", "--stdout"])
+        .assert()
+        .success()
+        .stdout("DE00 1234 5678\n");
+}
+
+#[test]
+fn a_name_given_twice_is_refused_rather_than_guessed() {
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .args(["add", "wifi", "home", "--skip", "password"])
+        .args(["--set", "ssid=one", "--set", "ssid=two"])
+        .assert()
+        .failure()
+        .stderr(contains("names \"ssid\" twice"));
+}
+
+#[test]
+fn the_new_kinds_survive_an_export_and_an_import() {
+    let source = Fixture::with_vault();
+    source
+        .sefy()
+        .env("WIFI_KEY", "correct horse")
+        .args(["add", "wifi", "home", "--set", "ssid=HomeNet"])
+        .args(["--secret-env", "password=WIFI_KEY"])
+        .assert()
+        .success();
+    let export = source.directory().join("export.json");
+    source
+        .sefy()
+        .args(["export", "--i-know-this-writes-plaintext", "--output"])
+        .arg(&export)
+        .assert()
+        .success();
+
+    let target = Fixture::with_vault();
+    target
+        .sefy()
+        .arg("import")
+        .arg(&export)
+        .assert()
+        .success()
+        .stdout(contains("imported 1 item"));
+    target
+        .sefy()
+        .args(["get", "home", "--stdout"])
+        .assert()
+        .success()
+        .stdout("correct horse\n");
 }

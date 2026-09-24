@@ -10,6 +10,7 @@ mod commands;
 mod editor;
 mod output;
 mod picker;
+mod qr;
 mod session;
 mod when;
 
@@ -85,6 +86,8 @@ fn run() -> Result<()> {
         Command::Tags => commands::tags(&vault),
         Command::Gen(args) => commands::generate(Some(&mut vault), args),
         Command::Open(args) => commands::open(&vault, args),
+        Command::Otp(args) => commands::otp(&mut vault, args),
+        Command::Fill(args) => commands::fill(&vault, args),
         Command::Status => commands::status(&vault),
         Command::Export {
             output,
