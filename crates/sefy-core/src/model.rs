@@ -20,6 +20,12 @@ pub enum ItemKind {
     Card,
     /// An SSH key pair and its passphrase.
     SshKey,
+    /// A wireless network and how to join it.
+    Wifi,
+    /// A token for an API: the kind of secret a program presents, not a person.
+    ApiToken,
+    /// A bank account.
+    Bank,
     /// Arbitrary bytes kept verbatim.
     File,
     /// A kind this build does not know, carrying the name it was stored under.
@@ -44,6 +50,9 @@ impl ItemKind {
             Self::Login => "login",
             Self::Card => "card",
             Self::SshKey => "ssh-key",
+            Self::Wifi => "wifi",
+            Self::ApiToken => "api-token",
+            Self::Bank => "bank",
             Self::File => "file",
             Self::Unknown(name) => name,
         }
@@ -64,6 +73,9 @@ impl ItemKind {
             "login" | LEGACY_LOGIN_NAME => Self::Login,
             "card" => Self::Card,
             "ssh-key" => Self::SshKey,
+            "wifi" => Self::Wifi,
+            "api-token" => Self::ApiToken,
+            "bank" => Self::Bank,
             "file" => Self::File,
             other => Self::Unknown(other.to_owned()),
         }
@@ -82,13 +94,24 @@ impl ItemKind {
         TEMPLATES.iter().find(|template| &template.kind == self)
     }
 
+    /// Whether items of this kind are records made of named fields.
+    ///
+    /// Asked instead of listing the kinds by name, so a new kind of record is
+    /// a row in the template table and nothing else.
+    pub fn is_record(&self) -> bool {
+        self.template().is_some()
+    }
+
     /// Every kind this build knows how to create.
-    pub fn known() -> [Self; 5] {
+    pub fn known() -> [Self; 8] {
         [
             Self::Note,
             Self::Login,
             Self::Card,
             Self::SshKey,
+            Self::Wifi,
+            Self::ApiToken,
+            Self::Bank,
             Self::File,
         ]
     }
@@ -135,6 +158,11 @@ impl Template {
     pub fn default_field(&self) -> Option<&FieldSpec> {
         self.fields.iter().find(|field| field.secret)
     }
+
+    /// The fields `sefy fill` hands over, in the order a form asks for them.
+    pub fn fill_order(&self) -> impl Iterator<Item = &FieldSpec> {
+        self.fields.iter().filter(|field| field.fill)
+    }
 }
 
 /// One field of a template: its name, what it is for, and whether it is secret.
@@ -147,7 +175,27 @@ pub struct FieldSpec {
     /// Whether its value is a secret: hidden by `sefy show`, prompted for
     /// rather than passed on the command line, and what `sefy get` copies.
     pub secret: bool,
+    /// Whether `sefy fill` hands it over: something typed into a form when
+    /// the record is used, as a login is and a note is not.
+    pub fill: bool,
 }
+
+impl FieldSpec {
+    const fn new(name: &'static str, description: &'static str, secret: bool, fill: bool) -> Self {
+        Self {
+            name,
+            description,
+            secret,
+            fill,
+        }
+    }
+}
+
+// Spelled out once, so a row of the table below reads as what it says.
+const PUBLIC: bool = false;
+const SECRET: bool = true;
+const FILL: bool = true;
+const KEEP: bool = false;
 
 /// Every kind that is made of fields, and what those fields are.
 ///
@@ -158,96 +206,83 @@ static TEMPLATES: &[Template] = &[
     Template {
         kind: ItemKind::Login,
         fields: &[
-            FieldSpec {
-                name: "login",
-                description: "username, email, or whatever the service calls it",
-                secret: false,
-            },
-            FieldSpec {
-                name: "password",
-                description: "the secret itself",
-                secret: true,
-            },
-            FieldSpec {
-                name: "url",
-                description: "where the account lives",
-                secret: false,
-            },
-            FieldSpec {
-                name: "totp",
-                description: "shared secret for one-time passwords",
-                secret: true,
-            },
-            FieldSpec {
-                name: "notes",
-                description: "anything else worth remembering",
-                secret: false,
-            },
+            FieldSpec::new(
+                "login",
+                "username, email, or whatever the service calls it",
+                PUBLIC,
+                FILL,
+            ),
+            FieldSpec::new("password", "the secret itself", SECRET, FILL),
+            FieldSpec::new("url", "where the account lives", PUBLIC, KEEP),
+            // Filled as the code it makes at that moment, never as itself.
+            FieldSpec::new(
+                crate::otp::FIELD,
+                "key for one-time passwords",
+                SECRET,
+                FILL,
+            ),
+            FieldSpec::new("notes", "anything else worth remembering", PUBLIC, KEEP),
         ],
     },
     Template {
         kind: ItemKind::Card,
         fields: &[
-            FieldSpec {
-                name: "number",
-                description: "the card number",
-                secret: true,
-            },
-            FieldSpec {
-                name: "holder",
-                description: "name embossed on the card",
-                secret: false,
-            },
-            FieldSpec {
-                name: "expiry",
-                description: "expiry date, as printed",
-                secret: false,
-            },
-            FieldSpec {
-                name: "cvv",
-                description: "verification code on the back",
-                secret: true,
-            },
-            FieldSpec {
-                name: "pin",
-                description: "the PIN",
-                secret: true,
-            },
-            FieldSpec {
-                name: "notes",
-                description: "bank, account, anything else",
-                secret: false,
-            },
+            FieldSpec::new("number", "the card number", SECRET, FILL),
+            FieldSpec::new("holder", "name embossed on the card", PUBLIC, FILL),
+            FieldSpec::new("expiry", "expiry date, as printed", PUBLIC, FILL),
+            FieldSpec::new("cvv", "verification code on the back", SECRET, FILL),
+            // Typed at a terminal, never into a form.
+            FieldSpec::new("pin", "the PIN", SECRET, KEEP),
+            FieldSpec::new("notes", "bank, account, anything else", PUBLIC, KEEP),
         ],
     },
     Template {
         kind: ItemKind::SshKey,
         fields: &[
-            FieldSpec {
-                name: "private-key",
-                description: "the private key, as it appears in the file",
-                secret: true,
-            },
-            FieldSpec {
-                name: "passphrase",
-                description: "passphrase protecting the private key",
-                secret: true,
-            },
-            FieldSpec {
-                name: "public-key",
-                description: "the public key",
-                secret: false,
-            },
-            FieldSpec {
-                name: "host",
-                description: "where the key is used",
-                secret: false,
-            },
-            FieldSpec {
-                name: "notes",
-                description: "anything else worth remembering",
-                secret: false,
-            },
+            FieldSpec::new(
+                "private-key",
+                "the private key, as it appears in the file",
+                SECRET,
+                KEEP,
+            ),
+            FieldSpec::new(
+                "passphrase",
+                "passphrase protecting the private key",
+                SECRET,
+                FILL,
+            ),
+            FieldSpec::new("public-key", "the public key", PUBLIC, KEEP),
+            FieldSpec::new("host", "where the key is used", PUBLIC, KEEP),
+            FieldSpec::new("notes", "anything else worth remembering", PUBLIC, KEEP),
+        ],
+    },
+    Template {
+        kind: ItemKind::Wifi,
+        fields: &[
+            FieldSpec::new("ssid", "the network's name", PUBLIC, FILL),
+            FieldSpec::new("password", "the network key", SECRET, FILL),
+            FieldSpec::new("security", "WPA2, WPA3, open", PUBLIC, KEEP),
+            FieldSpec::new("notes", "where it is, whose it is", PUBLIC, KEEP),
+        ],
+    },
+    Template {
+        kind: ItemKind::ApiToken,
+        fields: &[
+            FieldSpec::new("token", "the token itself", SECRET, FILL),
+            FieldSpec::new("url", "where it is issued and revoked", PUBLIC, KEEP),
+            FieldSpec::new("scopes", "what it is allowed to do", PUBLIC, KEEP),
+            FieldSpec::new("expires", "when it stops working", PUBLIC, KEEP),
+            FieldSpec::new("notes", "what uses it", PUBLIC, KEEP),
+        ],
+    },
+    Template {
+        kind: ItemKind::Bank,
+        fields: &[
+            FieldSpec::new("account", "account number or IBAN", SECRET, FILL),
+            FieldSpec::new("holder", "whose name the account is in", PUBLIC, FILL),
+            FieldSpec::new("bank", "the bank", PUBLIC, FILL),
+            FieldSpec::new("routing", "SWIFT/BIC, routing or sort code", PUBLIC, FILL),
+            FieldSpec::new("notes", "branch, contact, anything else", PUBLIC, KEEP),
         ],
     },
 ];
@@ -503,6 +538,9 @@ mod tests {
         assert!(ItemKind::Login.template().is_some());
         assert!(ItemKind::Card.template().is_some());
         assert!(ItemKind::SshKey.template().is_some());
+        assert!(ItemKind::Wifi.template().is_some());
+        assert!(ItemKind::ApiToken.template().is_some());
+        assert!(ItemKind::Bank.template().is_some());
         assert!(ItemKind::Note.template().is_none());
         assert!(ItemKind::File.template().is_none());
         assert!(
@@ -557,6 +595,42 @@ mod tests {
                 .name,
             "private-key"
         );
+    }
+
+    #[test]
+    fn every_kind_but_a_note_and_a_file_is_a_record_with_a_template_row() {
+        for kind in ItemKind::known() {
+            let expected = !matches!(kind, ItemKind::Note | ItemKind::File);
+            assert_eq!(kind.is_record(), expected, "{kind}");
+        }
+        // And every row describes a kind this build knows.
+        for template in TEMPLATES {
+            assert!(
+                ItemKind::known().contains(&template.kind),
+                "{}",
+                template.kind
+            );
+        }
+    }
+
+    #[test]
+    fn a_one_time_password_key_is_secret_wherever_a_template_has_one() {
+        for template in TEMPLATES {
+            if let Some(field) = template.field(crate::otp::FIELD) {
+                assert!(field.secret, "{} keeps its key in the open", template.kind);
+            }
+        }
+    }
+
+    #[test]
+    fn a_login_fills_in_the_order_a_sign_in_form_asks() {
+        let order: Vec<&str> = ItemKind::Login
+            .template()
+            .unwrap()
+            .fill_order()
+            .map(|field| field.name)
+            .collect();
+        assert_eq!(order, ["login", "password", crate::otp::FIELD]);
     }
 
     #[test]

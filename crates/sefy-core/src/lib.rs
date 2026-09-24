@@ -45,6 +45,7 @@ pub mod format;
 pub mod generate;
 pub mod merge;
 pub mod model;
+pub mod otp;
 pub mod plugin;
 pub mod strength;
 pub mod sync;
@@ -59,6 +60,7 @@ pub use model::{
     Field, FieldSpec, Item, ItemKind, ItemSummary, LEGACY_LOGIN_NAME, NewItem, Payload, Query,
     Template,
 };
+pub use otp::Totp;
 pub use plugin::{PROTOCOL_VERSION, Plugin};
 pub use strength::{Strength, estimate, estimate_generated};
 pub use sync::{PullReport, SyncReport, pull, push, sync};

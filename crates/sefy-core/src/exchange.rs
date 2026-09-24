@@ -281,7 +281,12 @@ fn to_new_item(index: usize, item: &ExportItem) -> Result<NewItem> {
                 reason: "a note needs a \"text\" field".to_owned(),
             })?,
         },
-        kind @ (ItemKind::Login | ItemKind::Card | ItemKind::SshKey) => {
+        kind @ (ItemKind::Login
+        | ItemKind::Card
+        | ItemKind::SshKey
+        | ItemKind::Wifi
+        | ItemKind::ApiToken
+        | ItemKind::Bank) => {
             let fields = read_fields(index, &kind, item)?;
             if fields.is_empty() {
                 return Err(Error::MalformedExport {

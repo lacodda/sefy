@@ -24,6 +24,11 @@ argon2 = "0.6"
 base64 = "0.23"
 chacha20poly1305 = { version = "0.11", features = ["alloc"] }
 getrandom = "0.4"
+# One-time passwords (RFC 6238): HMAC over SHA-1, SHA-256 or SHA-512, from the
+# same audited RustCrypto family as the vault's own primitives.
+hmac = "0.13"
+sha1 = "0.11"
+sha2 = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.40", features = ["bundled", "serialize"] }
@@ -42,6 +47,13 @@ clap = { version = "4", features = ["derive", "env"] }
 # here must be the one that never echoes and never reaches the history.
 dialoguer = { version = "0.12", default-features = false, features = ["fuzzy-select"] }
 clap_complete = "4"
+# Already in the tree through dialoguer. Taken directly for one thing: asking
+# whether stdout draws colour, which on Windows is what switches the console
+# into reading the escapes a QR code is drawn with.
+console = { version = "0.16", default-features = false }
+# Draws an otpauth URI as a QR code for a phone to scan. No dependencies of its
+# own; the terminal rendering around it is sefy's.
+qrcodegen = "1.8"
 rpassword = "7"
 tempfile = "3"
 

@@ -140,6 +140,13 @@ pub enum Error {
         unit: &'static str,
     },
 
+    /// What was offered as a one-time password key is not one.
+    ///
+    /// The reason is one of a fixed set of phrases: the text itself is a
+    /// secret and is never quoted back.
+    #[error("not a one-time password key: {0}")]
+    InvalidOtpKey(&'static str),
+
     /// A filesystem operation failed.
     #[error("{context}: {source}")]
     Io {

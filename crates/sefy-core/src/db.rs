@@ -598,7 +598,12 @@ pub fn get_item(connection: &Connection, id: i64) -> Result<Item> {
             )?;
             Payload::Note { text }
         }
-        ItemKind::Login | ItemKind::Card | ItemKind::SshKey => Payload::Fields {
+        ItemKind::Login
+        | ItemKind::Card
+        | ItemKind::SshKey
+        | ItemKind::Wifi
+        | ItemKind::ApiToken
+        | ItemKind::Bank => Payload::Fields {
             kind: summary.kind.clone(),
             fields: read_fields(connection, id)?,
         },
