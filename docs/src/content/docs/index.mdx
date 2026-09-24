@@ -72,7 +72,7 @@ content share no prefix, because the salt and nonce are fresh every time.
 		The whole SQLite database is sealed into one blob: `salt ‖ nonce ‖ ciphertext`. Nothing marks it as a secret store - not a header, not an extension, not a recognizable structure.
 	</Card>
 	<Card title="Notes, logins, cards, keys and files" icon="document">
-		Free-form notes, logins with a password and TOTP, cards, ssh keys, and files kept byte for byte. Tags across all of them, and search over titles and public fields.
+		Free-form notes, logins, cards, ssh keys, Wi-Fi networks, API tokens, bank accounts, and files kept byte for byte. Tags across all of them, and search over titles and public fields.
 	</Card>
 	<Card title="Nothing plaintext on disk" icon="approve-check">
 		The decrypted database lives only in memory - SQLite is never given a path, so no page, journal or temporary file lands on disk.
@@ -82,6 +82,9 @@ content share no prefix, because the salt and nonce are fresh every time.
 	</Card>
 	<Card title="New passwords, kept as they are made" icon="pencil">
 		`sefy gen` makes a random password, a pronounceable one or a diceware passphrase in English or Russian, says exactly how many bits it holds, and with `--save` stores it as a login before handing it over.
+	</Card>
+	<Card title="Two-factor sign-in without a second app" icon="setting">
+		`sefy otp` makes the one-time code from the key the site showed, and stores that key in the same gesture that answers the site. `sefy fill` puts the login, the password and a fresh code on the clipboard in turn; `--qr` draws the key for a phone and wipes the screen after.
 	</Card>
 	<Card title="You do not have to remember the title" icon="magnifier">
 		`sefy` on its own opens a picker: type a few letters, press Enter. `sefy open` goes further and loads the site while the password waits on the clipboard.

@@ -25,7 +25,7 @@ tags:        mail
 login:       someone@example.com
 password:    <hidden — use sefy get --field password>
 url:         https://mail.example.com
-totp:        <hidden — use sefy get --field totp>
+totp:        <hidden — sefy otp gives the code>
 notes:       recovery in the drawer
 ```
 

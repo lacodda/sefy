@@ -53,10 +53,12 @@ get the same command.
 
 ### Items
 
-- [`add`](/sefy/reference/add/) — add a note, a login, a card, an ssh key or a file
+- [`add`](/sefy/reference/add/) — add a note, a login, a card, an ssh key, a Wi-Fi network, an API token, a bank account or a file
 - [`get`](/sefy/reference/get/) — copy a secret to the clipboard
 - [`gen`](/sefy/reference/gen/) — generate a password or a passphrase, and keep it as a login
 - [`open`](/sefy/reference/open/) — open an item's site and copy its password
+- [`otp`](/sefy/reference/otp/) — copy a one-time code, store its key, or draw it for a phone
+- [`fill`](/sefy/reference/fill/) — login, password and code to the clipboard in turn
 - [`edit`](/sefy/reference/edit/) — change a title, contents or tags
 - [`rm`](/sefy/reference/rm/) — remove an item
 - [`extract`](/sefy/reference/extract/) — write a stored file back to disk

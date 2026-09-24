@@ -1,13 +1,13 @@
 ---
 title: "add"
-description: Add a note, a login, a card, an SSH key or a file to the vault.
+description: Add a note, a login, a card, an SSH key, a Wi-Fi network, an API token, a bank account or a file to the vault.
 ---
 
 Adds an item. One subcommand per kind — an item's **kind cannot change** later,
 so this choice is made once.
 
 A note holds text and a file holds bytes. Everything else — a login, a card, an
-SSH key — is a **record**: a set of named fields, each of which is either
+SSH key, a Wi-Fi network, an API token, a bank account — is a **record**: a set of named fields, each of which is either
 public or secret. The kind decides which fields `add` offers and which of them
 `show` hides; it does not fence the record in, and
 [`edit --set`](/sefy/reference/edit/) can add a field the kind never mentioned.
@@ -44,7 +44,7 @@ bold).
 | --- | --- |
 | `-l, --login <LOGIN>` | Username, email, whatever the service calls it. Required. |
 | `-u, --url <URL>` | Where the account lives. |
-| `--totp <SECRET>` | Shared secret for one-time passwords. |
+| `--totp <KEY>` | Key for one-time passwords: the text key or the `otpauth://` link. Checked on the way in. |
 | `--notes <TEXT>` | Anything else worth remembering. |
 | `--item-password-env <VAR>` | Read the account password from this variable instead of prompting. |
 | `--tag <TAG>` | Tags. |
@@ -55,7 +55,10 @@ Password for this item:
 added "mail" as 2
 ```
 
-The account password is prompted for separately. Note that
+The account password is prompted for separately. `--totp` passes the key on
+the command line, where it reaches the shell history; the quieter way is to add
+the login without it and store the key with
+[`sefy otp <TITLE> --set`](/sefy/reference/otp/), which asks for it. Note that
 `--item-password-env` is deliberately distinct from the global
 `--password-env`: with one variable for both, the master password would end up
 stored as the account's password.
@@ -88,8 +91,10 @@ added "visa" as 4
 The number, the CVV and the PIN are **prompted for**, never passed as options:
 an argument lands in the shell history and is visible in every process listing
 on the machine while the command runs. A card you do not know the PIN of takes
-`--no-pin`, and one with no CVV takes `--no-cvv`; an empty prompt would store an
-empty field, which is a different claim from "there is none".
+`--no-pin`, and one with no CVV takes `--no-cvv`; answering a prompt with
+nothing does the same. Nothing typed is nothing stored — the field is left out
+rather than kept empty, since "there is none" and "it is the empty string" are
+different claims.
 
 ## `sefy add ssh-key <TITLE>`
 
@@ -121,6 +126,44 @@ sefy get "deploy key" --field private-key --stdout | ssh-add -
 Storing the key as a file instead is still a reasonable choice when what you
 want back is a file on disk with its own path; see
 [Keeping ssh keys in a vault](/sefy/guides/ssh-keys/).
+
+## `sefy add wifi <TITLE>`, `api-token`, `bank`
+
+Three kinds that are nothing but their fields, and take them the same way:
+public fields with `--set NAME=VALUE`, secret ones asked for one after another.
+
+| Kind | Fields (secret ones in bold) |
+| --- | --- |
+| `wifi` | `ssid`, **`password`**, `security`, `notes` |
+| `api-token` | **`token`**, `url`, `scopes`, `expires`, `notes` |
+| `bank` | **`account`**, `holder`, `bank`, `routing`, `notes` |
+
+| Option | Meaning |
+| --- | --- |
+| `--set <NAME=VALUE>` | Set a public field. Repeat for several. |
+| `--secret-env <NAME=VAR>` | Read a secret field from this variable instead of asking. |
+| `--skip <NAME>` | Do not ask for this secret field. |
+| `--tag <TAG>` | Tags. |
+
+```console
+$ sefy add wifi home --set ssid=HomeNet --set security=WPA3 --tag house
+password (the network key; empty to leave out):
+added "home" as 2
+
+$ sefy add api-token ci --set url=https://example.com/settings/tokens --set scopes=read
+token (the token itself; empty to leave out):
+added "ci" as 3
+```
+
+A secret field passed with `--set` is **refused**, not quietly accepted: it
+would already be in the shell history, and calling it secret after that would
+be a promise sefy cannot keep. A prompt answered with nothing, like `--skip`,
+leaves the field out. A name the kind does not have — `--set branch=Main street`
+on a bank account — is kept as an extra field, the way
+[`edit --set`](/sefy/reference/edit/) keeps one.
+
+[`get`](/sefy/reference/get/) with no `--field` takes the first secret: the
+network key, the token, the account number.
 
 ## `sefy add file <PATH>`
 

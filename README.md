@@ -98,7 +98,8 @@ copied it to the clipboard; clearing in 45s
 Items are addressed by title, by an exact id, or by text to search for; when
 the words could mean more than one thing, sefy shows what they could mean
 rather than guessing. `sefy open` loads the site and puts the password on the
-clipboard in one step, `sefy sync` carries the vault through a transport and
+clipboard in one step, `sefy fill` passes login, password and one-time code
+over one Enter at a time, `sefy sync` carries the vault through a transport and
 folds what comes back into this one, and `sefy status` says what you are
 holding without saying what is in it.
 
@@ -109,12 +110,16 @@ Every command, with its flags: **[the reference](https://lacodda.github.io/sefy/
 - **A file that looks like nothing.** No magic bytes, no header, no extension
   convention - salt and nonce fresh on every save, so two saves of identical
   content share no prefix.
-- **Notes, logins, cards, ssh keys and files** in one vault, tagged and
-  searchable, with files kept byte for byte.
+- **Notes, logins, cards, ssh keys, Wi-Fi networks, API tokens, bank
+  accounts and files** in one vault, tagged and searchable, with files kept
+  byte for byte.
 - **Passwords made where they are kept.** `sefy gen` draws random characters,
   pronounceable ones or a diceware passphrase (English or Russian lists built
   in), reports its exact entropy beside an offline zxcvbn score, and can save
   the result as a login in the same command.
+- **Two-factor sign-in built in.** `sefy otp` turns the key a site shows
+  into the one-time code, and `sefy fill` hands over login, password and code
+  one Enter at a time.
 - **Transports, not lock-in.** `sefy sync` carries the vault through a
   `sefy-plugin-*` executable - github and sftp ship today - and folds what
   comes back in without a credential ever passing through the transport.

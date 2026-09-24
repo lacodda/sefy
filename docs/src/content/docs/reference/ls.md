@@ -13,7 +13,7 @@ sefy ls [OPTIONS]
 
 | Option | Meaning |
 | --- | --- |
-| `--kind <KIND>` | `note`, `login`, `card`, `ssh-key` or `file`. |
+| `--kind <KIND>` | `note`, `login`, `card`, `ssh-key`, `wifi`, `api-token`, `bank` or `file`. |
 | `--tag <TAG>` | Keep only items carrying **every** listed tag. |
 
 ```console
