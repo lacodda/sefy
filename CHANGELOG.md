@@ -18,6 +18,68 @@ Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
 
+## [0.10.0] - 2026-09-24
+
+Two-factor sign-in without a second app, and three more kinds of record.
+
+**`sefy otp`** makes the one-time code a site asks for after the password, and
+puts it on the clipboard with the same timeout `get` uses. It says how many
+seconds the code has left. `--set` stores the key the site shows when
+two-factor sign-in is turned on and answers with the first code in the same
+command, because that is what the site asks for next. Either shape works: the
+`otpauth://` link inside the QR code, or the text key printed beside it. A
+link is kept word for word, so its issuer, digits, period and hash are the
+site's own. A text key is kept without the spaces it was printed with.
+`--qr` draws the key as a QR code for an authenticator app on a phone. The
+picture is the key, so it is drawn only on a terminal and wiped from the screen
+and the scrollback once Enter is pressed. Codes follow RFC 6238, with SHA-1,
+SHA-256 or SHA-512, and the tests check them against the RFC's own vectors.
+
+**`sefy fill`** hands over a record's fields one at a time, in the order a
+form asks for them: a login gives its login, then its password, then a fresh
+code. Enter moves to the next. The code is made when its turn comes, so time
+spent on the first two fields does not eat into it. The kind decides what is
+filled, from the template: a card gives number, holder, expiry and CVV, but
+never its PIN.
+
+**Wi-Fi networks, API tokens and bank accounts** join notes, logins, cards,
+ssh keys and files: `sefy add wifi`, `add api-token`, `add bank`. They take
+public fields as `--set NAME=VALUE` and ask for secret ones in turn, or read
+them with `--secret-env NAME=VAR`. A secret passed with `--set` is refused,
+because the shell history already has it.
+
+A one-time password key is now checked on every way in: `add login --totp`,
+`edit --set`, `edit --set-secret` and `otp --set`. A key that cannot make a
+code is found out while the setup page is still open. An empty answer to a
+secret prompt now leaves the field out for every kind; cards and ssh keys used
+to store an empty string. Two error messages about
+items from a newer sefy were printed with stray indentation in the middle;
+they no longer are.
+
+### Breaking Changes
+
+**Vault files: none.** The file format is still version 1 and the database
+schema is still 4. A Wi-Fi network, an API token or a bank account is a kind
+0.9.0 has not heard of: that build lists, exports and syncs one, can retitle
+and retag it, and says to upgrade before reading it - the forward-compatibility
+contract from 0.6.0. We checked with the published 0.9.0 binary, in both
+directions: 0.9.0 created a vault, this build added the new kinds and made a
+code from the key 0.9.0 stored, 0.9.0 wrote to it again, and this build read
+everything back.
+
+**`sefy-core` library:** `ItemKind` gains `Wifi`, `ApiToken` and `Bank`, and
+`ItemKind::known` returns eight kinds. `FieldSpec` gains `fill`, and `Template`
+gains `fill_order`. `Error` gains `InvalidOtpKey`. The new `otp` module holds
+`Totp`, `Algorithm`, `normalize` and `FIELD`. Code that matches `ItemKind` or
+`Error` exhaustively has to follow.
+
+### Documentation
+- Document one-time passwords, fill and the new kinds of record
+
+### Features
+- Make one-time password codes and add wifi, api-token and bank records
+- Add sefy otp, sefy fill and the wifi, api-token and bank kinds
+
 ## [0.9.0] - 2026-09-22
 
 New passwords, made where they are kept.
