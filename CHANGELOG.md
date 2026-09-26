@@ -18,6 +18,17 @@ Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
 
+## [0.11.1] - 2026-09-26
+
+### Fixed
+
+- **The npm launcher no longer dies on Ctrl+C.** Ctrl+C reaches every process
+  on the console, and the `sefy-cli` launcher used to exit at once. The prompt
+  came back while `sefy run` and its command were still running, and the
+  command's exit status was lost. The launcher now waits for sefy and ends the
+  way sefy ended. Installs from crates.io, the installers and the release
+  archives were never affected.
+
 ## [0.11.0] - 2026-09-26
 
 Secrets for a process: a script gets its token from the vault, not from a
