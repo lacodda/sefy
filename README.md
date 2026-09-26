@@ -120,6 +120,9 @@ Every command, with its flags: **[the reference](https://lacodda.github.io/sefy/
 - **Two-factor sign-in built in.** `sefy otp` turns the key a site shows
   into the one-time code, and `sefy fill` hands over login, password and code
   one Enter at a time.
+- **Tokens for scripts without a `.env` file.** `sefy run -e TOKEN=github --
+  ./deploy.sh` puts the secret in the environment of that one command - not in
+  a file, the shell history or a process listing.
 - **Transports, not lock-in.** `sefy sync` carries the vault through a
   `sefy-plugin-*` executable - github and sftp ship today - and folds what
   comes back in without a credential ever passing through the transport.

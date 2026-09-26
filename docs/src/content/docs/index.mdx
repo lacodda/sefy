@@ -86,6 +86,9 @@ content share no prefix, because the salt and nonce are fresh every time.
 	<Card title="Two-factor sign-in without a second app" icon="setting">
 		`sefy otp` makes the one-time code from the key the site showed, and stores that key in the same gesture that answers the site. `sefy fill` puts the login, the password and a fresh code on the clipboard in turn; `--qr` draws the key for a phone and wipes the screen after.
 	</Card>
+	<Card title="Tokens for scripts, not for files" icon="seti:shell">
+		`sefy run -e TOKEN=github -- ./deploy.sh` hands the secret to that one command through its environment - no `.env` file, no `export` in the history - and keeps the master password's variable out of its reach.
+	</Card>
 	<Card title="You do not have to remember the title" icon="magnifier">
 		`sefy` on its own opens a picker: type a few letters, press Enter. `sefy open` goes further and loads the site while the password waits on the clipboard.
 	</Card>

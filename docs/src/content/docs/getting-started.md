@@ -178,6 +178,13 @@ sefy --password-env VAULT_PW ls
 Without a terminal, sefy refuses to prompt rather than hanging — and `sefy rm`
 refuses to assume "yes" unless you pass `--yes`.
 
+A script that needs a token does not have to fetch it and export it: `sefy run`
+puts it in the environment of one command, and nowhere else.
+
+```sh
+sefy run -e GITHUB_TOKEN=github -- ./release.sh
+```
+
 ## Where next
 
 - [Moving a vault between machines](/sefy/guides/moving-a-vault/) — copying it,
