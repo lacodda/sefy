@@ -18,6 +18,39 @@ Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
 
+## [0.11.0] - 2026-09-26
+
+Secrets for a process: a script gets its token from the vault, not from a
+`.env` file or an `export` in the shell history.
+
+**`sefy run`** starts a command with secrets in its environment:
+`sefy run -e GITHUB_TOKEN=github -e DB_USER=db#login -- ./deploy.sh`. Each
+`--env` sets one variable from one item. The value is what `get` would take,
+the item's own secret, and `#FIELD` names another field of a record. Every
+variable is settled before the command starts. A reference that matches
+nothing or several items stops the run, so the command never starts with half
+of what it needs. The variable that carried the master password is left out of
+the command's environment: the command was given a token, not the key to the
+whole vault.
+
+The command behaves as if it had been typed on its own. On Linux and macOS
+sefy replaces itself with it, so signals, job control and the exit status are
+the command's. On Windows sefy starts it, leaves Ctrl+C to it and exits with its
+status. A bare name is found the way a shell finds it, so `npm`, `pnpm` and
+other `.cmd` tools work as typed. When the command never ran, the exit status
+says why, the way `env` does: 125 when sefy could not set the variables, 126
+when the program would not start, 127 when there is no such program.
+
+### Fixed
+
+- **The master password is asked for with stdin piped.** The prompt reads the
+  terminal itself, yet sefy refused to ask whenever stdin was not a terminal.
+  Now `echo text | sefy add note draft` and `cat data | sefy run ...` ask as
+  they should. With no terminal at all, sefy still refuses rather than hanging.
+- **`get --field` on a note is refused.** It used to hand back the note's text
+  and ignore the field. Someone who names a field expects a record, and the
+  text may not be what they meant to take.
+
 ## [0.10.0] - 2026-09-24
 
 Two-factor sign-in without a second app, and three more kinds of record.
