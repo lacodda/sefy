@@ -22,7 +22,7 @@ if (-not $tag) {
     }
 }
 if (-not $tag -or $tag -notmatch '^v\d') {
-    throw "Cannot resolve the latest release of $repo - set `$env:SEFY_VERSION to a tag like v0.11.0"
+    throw "Cannot resolve the latest release of $repo - set `$env:SEFY_VERSION to a tag like v0.11.1"
 }
 
 $name = "sefy-$tag-x86_64-pc-windows-msvc"

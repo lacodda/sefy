@@ -31,8 +31,8 @@ $ sefy plugin list
 broken  ?         unusable: it refused to describe itself
 ftp     0.2.1     push
 future  9.0.0     unusable: it speaks protocol 99 and this build speaks 1
-github  0.11.0    pull, push
-sftp    0.11.0    pull, push
+github  0.11.1    pull, push
+sftp    0.11.1    pull, push
 ```
 
 Three columns: the plugin's name, its version, and either the operations it
