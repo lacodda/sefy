@@ -185,7 +185,7 @@ fn the_item_password_never_falls_back_to_the_master_password() {
         .write_stdin("")
         .assert()
         .failure()
-        .stderr(contains("not a terminal"));
+        .stderr(contains("not attached to a terminal"));
 }
 
 #[test]
@@ -1824,7 +1824,7 @@ fn set_secret_needs_a_terminal_it_does_not_have_in_a_script() {
         .write_stdin("newpassword\n")
         .assert()
         .failure()
-        .stderr(contains("not a terminal"));
+        .stderr(contains("not attached to a terminal"));
 }
 
 #[test]
@@ -2492,7 +2492,7 @@ fn a_secret_field_left_to_the_prompt_needs_a_terminal() {
         ])
         .assert()
         .failure()
-        .stderr(contains("input is not a terminal"));
+        .stderr(contains("not attached to a terminal"));
 }
 
 #[test]

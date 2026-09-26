@@ -56,10 +56,19 @@ fn from_env(variable: &str) -> Result<String> {
 }
 
 /// Asks for a password without echoing it.
+///
+/// The prompt talks to the terminal itself (`/dev/tty`, `CONIN$`), not to
+/// stdin, so a command whose input is piped can still ask: `sefy run` hands
+/// its stdin to the command it starts, and `add note` reads the note from it.
+/// What it refuses is asking when no stream is a terminal — a script or a
+/// service, where nobody is there to answer and a prompt would be a hang.
 fn prompt(text: &str) -> Result<String> {
-    if !std::io::stdin().is_terminal() {
+    let someone_is_there = std::io::stdin().is_terminal()
+        || std::io::stdout().is_terminal()
+        || std::io::stderr().is_terminal();
+    if !someone_is_there {
         bail!(
-            "cannot ask for a password: input is not a terminal\n\
+            "cannot ask for a password: sefy is not attached to a terminal\n\
              use --password-env <VAR> to pass it through the environment."
         );
     }
