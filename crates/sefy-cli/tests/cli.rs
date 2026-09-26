@@ -2600,3 +2600,283 @@ fn the_new_kinds_survive_an_export_and_an_import() {
         .success()
         .stdout("correct horse\n");
 }
+
+/// A vault holding an API token and a login, for `sefy run` to hand out.
+fn fixture_for_run() -> Fixture {
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .env("API_TOKEN", "tok-4815")
+        .args(["add", "api-token", "ci"])
+        .args(["--set", "url=https://api.example.invalid"])
+        .args(["--secret-env", "token=API_TOKEN"])
+        .assert()
+        .success();
+    add_full_login(&fixture, "db");
+    fixture
+}
+
+/// A command line that prints `NAME=value`, or `NAME unset`, for each name.
+///
+/// A shell each system has, by absolute path on Windows for the reason the
+/// transport fixture gives. What it prints is what the started command saw,
+/// which is the only place the claim of `sefy run` can be checked.
+fn print_variables(names: &[&str]) -> Vec<String> {
+    #[cfg(windows)]
+    {
+        let list = names
+            .iter()
+            .map(|name| format!("'{name}'"))
+            .collect::<Vec<_>>()
+            .join(",");
+        vec![
+            powershell(),
+            "-NoProfile".into(),
+            "-Command".into(),
+            format!(
+                "foreach ($n in {list}) {{ $v = [Environment]::GetEnvironmentVariable($n); \
+                 if ($null -eq $v) {{ $n + ' unset' }} else {{ $n + '=' + $v }} }}"
+            ),
+        ]
+    }
+
+    #[cfg(not(windows))]
+    {
+        let script = names
+            .iter()
+            .map(|name| {
+                format!(
+                    "if [ -n \"${{{name}+x}}\" ]; then printf '%s\\n' \"{name}=${name}\"; \
+                     else printf '%s\\n' '{name} unset'; fi"
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        vec!["sh".into(), "-c".into(), script]
+    }
+}
+
+/// A command line that exits with `status` and does nothing else.
+fn exit_with(status: i32) -> Vec<String> {
+    #[cfg(windows)]
+    {
+        vec![
+            powershell(),
+            "-NoProfile".into(),
+            "-Command".into(),
+            format!("exit {status}"),
+        ]
+    }
+
+    #[cfg(not(windows))]
+    {
+        vec!["sh".into(), "-c".into(), format!("exit {status}")]
+    }
+}
+
+#[cfg(windows)]
+fn powershell() -> String {
+    PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe")
+        .display()
+        .to_string()
+}
+
+#[test]
+fn run_hands_the_command_what_was_mapped_and_not_the_master_password() {
+    let fixture = fixture_for_run();
+
+    let output = fixture
+        .sefy()
+        .args(["run", "-e", "TOKEN=ci", "-e", "DB_USER=db#login"])
+        .args(["--env", "DB_PASSWORD=db", "--"])
+        .args(print_variables(&[
+            "TOKEN",
+            "DB_USER",
+            "DB_PASSWORD",
+            "SEFY_TEST_PASSWORD",
+        ]))
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let seen = String::from_utf8(output).unwrap().replace("\r\n", "\n");
+
+    // The kind's own secret without a field, the named field with one.
+    assert!(seen.contains("TOKEN=tok-4815\n"), "{seen}");
+    assert!(seen.contains("DB_USER=someone\n"), "{seen}");
+    assert!(seen.contains("DB_PASSWORD=hunter2\n"), "{seen}");
+    // The variable that carried the master password stays with sefy: the
+    // command was given a token, not the key to every other secret.
+    assert!(seen.contains("SEFY_TEST_PASSWORD unset"), "{seen}");
+}
+
+#[test]
+fn run_replaces_a_variable_the_environment_already_has() {
+    let fixture = fixture_for_run();
+
+    fixture
+        .sefy()
+        .env("TOKEN", "stale")
+        .args(["run", "-e", "TOKEN=ci", "--"])
+        .args(print_variables(&["TOKEN"]))
+        .assert()
+        .success()
+        .stdout(contains("TOKEN=tok-4815"));
+}
+
+#[test]
+fn run_ends_with_the_status_the_command_ended_with() {
+    let fixture = fixture_for_run();
+
+    fixture
+        .sefy()
+        .args(["run", "-e", "TOKEN=ci", "--"])
+        .args(exit_with(7))
+        .assert()
+        .code(7);
+    fixture
+        .sefy()
+        .args(["run", "-e", "TOKEN=ci", "--"])
+        .args(exit_with(0))
+        .assert()
+        .success();
+}
+
+#[test]
+fn run_starts_nothing_when_one_variable_cannot_be_set() {
+    let fixture = fixture_for_run();
+
+    // The first mapping is fine and the second matches nothing: the command
+    // must not start with half of what it needs, and the status must not be
+    // one the command could have returned.
+    fixture
+        .sefy()
+        .args(["run", "-e", "TOKEN=ci", "-e", "OTHER=nothing-like-it", "--"])
+        .args(print_variables(&["TOKEN"]))
+        .assert()
+        .code(125)
+        .stdout("")
+        .stderr(contains("cannot set OTHER"))
+        .stderr(contains("nothing-like-it"));
+}
+
+#[test]
+fn run_tells_a_missing_program_from_one_that_failed() {
+    let fixture = fixture_for_run();
+
+    fixture
+        .sefy()
+        .args(["run", "-e", "TOKEN=ci", "--", "sefy-test-no-such-program"])
+        .assert()
+        .code(127)
+        .stderr(contains("no such program"));
+}
+
+#[test]
+fn run_refuses_a_mapping_it_would_have_to_guess_about() {
+    let fixture = fixture_for_run();
+    add_note(&fixture, "diary", "dear diary", &[]);
+
+    for (mappings, expected) in [
+        (vec!["TOKEN"], "VAR=REFERENCE[#FIELD]"),
+        (vec!["=ci"], "VAR=REFERENCE[#FIELD]"),
+        (vec!["TOKEN="], "VAR=REFERENCE[#FIELD]"),
+        (vec!["TOKEN=ci#"], "taken by its id"),
+        (vec!["TOKEN=ci", "TOKEN=db"], "sets TOKEN twice"),
+        // Two variables on Linux, one on Windows: refused everywhere, so a
+        // script does not lose a value when it moves.
+        (vec!["TOKEN=ci", "token=db"], "one variable"),
+        (vec!["TOKEN=ci#scope"], "it holds: token, url"),
+        (vec!["TOKEN=diary#text"], "is a note"),
+    ] {
+        let mut command = fixture.sefy();
+        command.arg("run");
+        for mapping in &mappings {
+            command.args(["-e", mapping]);
+        }
+        command
+            .arg("--")
+            .args(exit_with(0))
+            .assert()
+            .code(125)
+            .stderr(contains(expected));
+    }
+}
+
+#[test]
+fn run_finds_a_script_the_way_a_shell_does() {
+    // On Windows `npm`, `pnpm` and many more are `.cmd` scripts, and a bare
+    // name reaches one only through PATHEXT - which the standard process
+    // search does not consult. Typed into a shell, the same line works.
+    let fixture = fixture_for_run();
+    let tools = tempfile::tempdir().unwrap();
+
+    #[cfg(windows)]
+    std::fs::write(
+        tools.path().join("sefy-test-tool.cmd"),
+        "@echo off\r\necho tool sees %TOKEN%\r\n",
+    )
+    .unwrap();
+
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = tools.path().join("sefy-test-tool");
+        std::fs::write(&path, "#!/bin/sh\nprintf 'tool sees %s\\n' \"$TOKEN\"\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let mut path = tools.path().as_os_str().to_owned();
+    path.push(if cfg!(windows) { ";" } else { ":" });
+    path.push(system_path());
+
+    unless_the_script_is_busy(|| {
+        let mut command = fixture.sefy();
+        command
+            .env("PATH", &path)
+            .args(["run", "-e", "TOKEN=ci", "--", "sefy-test-tool"]);
+        command
+    })
+    .success()
+    .stdout(contains("tool sees tok-4815"));
+}
+
+/// Runs a command that starts a script this test has just written, again if
+/// Linux refuses it as "Text file busy".
+///
+/// While tests run in parallel, another one can fork between this one opening
+/// the script for writing and closing it; the child holds the write handle
+/// until it execs, and the kernel will not run a file open for writing. The
+/// window is microseconds and has nothing to do with the code under test, so
+/// the retry is for that one error and no other.
+fn unless_the_script_is_busy(make: impl Fn() -> Command) -> assert_cmd::assert::Assert {
+    for _ in 0..50 {
+        let assert = make().assert();
+        if !String::from_utf8_lossy(&assert.get_output().stderr).contains("Text file busy") {
+            return assert;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    make().assert()
+}
+
+#[test]
+fn get_refuses_a_field_named_on_a_note() {
+    // It used to hand back the text and ignore the field: whoever named one
+    // expected a record, and the text may not be what they meant to take.
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "diary", "dear diary", &[]);
+
+    fixture
+        .sefy()
+        .args(["get", "diary", "--field", "password", "--stdout"])
+        .assert()
+        .failure()
+        .stdout("")
+        .stderr(contains("is a note"));
+}

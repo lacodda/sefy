@@ -59,6 +59,7 @@ get the same command.
 - [`open`](/sefy/reference/open/) — open an item's site and copy its password
 - [`otp`](/sefy/reference/otp/) — copy a one-time code, store its key, or draw it for a phone
 - [`fill`](/sefy/reference/fill/) — login, password and code to the clipboard in turn
+- [`run`](/sefy/reference/run/) — run a command with secrets in its environment
 - [`edit`](/sefy/reference/edit/) — change a title, contents or tags
 - [`rm`](/sefy/reference/rm/) — remove an item
 - [`extract`](/sefy/reference/extract/) — write a stored file back to disk
@@ -106,7 +107,10 @@ and in every process listing. Password variables are never fixed names either �
 you name them yourself and point sefy at them with `--password-env`,
 `--item-password-env` or `--new-password-env`.
 
-Without a terminal, sefy refuses to prompt rather than hanging.
+The prompt talks to the terminal itself rather than to stdin, so a command
+whose input comes from a pipe can still ask — `cat notes.txt | sefy add note
+draft` works. With no terminal at all — a script, CI, a service — sefy refuses
+to prompt rather than hanging.
 
 ## References
 
@@ -130,6 +134,11 @@ narrow the text, or use an id
 
 ## Exit status
 
-`0` on success, `1` on any error. Errors go to stderr; a wrong password and a
-file that is not a vault produce the same message, because an authenticated
-blob genuinely cannot tell the two apart.
+`0` on success, `1` on any error, `2` when the command line itself is wrong.
+Errors go to stderr; a wrong password and a file that is not a vault produce
+the same message, because an authenticated blob genuinely cannot tell the two
+apart.
+
+[`run`](/sefy/reference/run/) is the exception: it ends with the status of the
+command it started, and uses `125`, `126` and `127` for the ways that command
+can fail to start at all.

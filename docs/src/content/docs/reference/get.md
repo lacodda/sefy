@@ -44,8 +44,9 @@ one the kind is mostly about — its first secret field:
 | `note` | the text |
 
 A record whose fields are all public has no such default, and sefy says so
-rather than guessing which value you meant. A name the record does not carry is
-an error that lists what it does carry:
+rather than guessing which value you meant. A note has no fields at all, so
+`--field` on one is refused rather than quietly handing over its text. A name
+the record does not carry is an error that lists what it does carry:
 
 ```console
 $ sefy get mail --field pin

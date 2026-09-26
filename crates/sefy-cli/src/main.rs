@@ -8,6 +8,7 @@ mod browser;
 mod cli;
 mod commands;
 mod editor;
+mod launch;
 mod output;
 mod picker;
 mod qr;
@@ -17,21 +18,34 @@ mod when;
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 use cli::{Cli, Command, PluginAction};
+use std::process::ExitCode;
 
-fn main() -> std::process::ExitCode {
-    match run() {
-        Ok(()) => std::process::ExitCode::SUCCESS,
+/// What `sefy run` ends with when sefy itself failed before the command
+/// started: the vault, the password, a reference. The status `env` uses for
+/// its own failures, so it is never mistaken for one the command returned.
+const RUN_FAILED: u8 = 125;
+
+fn main() -> ExitCode {
+    let arguments = Cli::parse();
+    let runs_a_command = matches!(arguments.command, Some(Command::Run(_)));
+    match run(arguments) {
+        Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             // `{error:#}` prints the whole context chain on one line, which is
             // what makes "cannot read X: permission denied" readable.
             eprintln!("error: {error:#}");
-            std::process::ExitCode::FAILURE
+            if !runs_a_command {
+                return ExitCode::FAILURE;
+            }
+            match error.downcast_ref::<launch::NotStarted>() {
+                Some(not_started) => ExitCode::from(not_started.status()),
+                None => ExitCode::from(RUN_FAILED),
+            }
         }
     }
 }
 
-fn run() -> Result<()> {
-    let arguments = Cli::parse();
+fn run(arguments: Cli) -> Result<()> {
     let password_env = arguments.password_env.as_deref();
 
     // No subcommand: browse the vault. It still needs the file and the
@@ -88,6 +102,8 @@ fn run() -> Result<()> {
         Command::Open(args) => commands::open(&vault, args),
         Command::Otp(args) => commands::otp(&mut vault, args),
         Command::Fill(args) => commands::fill(&vault, args),
+        // Comes back only when the command could not be started.
+        Command::Run(args) => match commands::run(vault, args, password_env)? {},
         Command::Status => commands::status(&vault),
         Command::Export {
             output,

@@ -1,6 +1,7 @@
 //! Command-line surface: what `sefy` accepts and what each option means.
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// An inconspicuous encrypted store for notes, credentials and files.
@@ -113,6 +114,13 @@ pub enum Command {
     /// A login gives its login, then its password, then a fresh one-time
     /// code: each goes to the clipboard, and Enter moves to the next.
     Fill(FillArgs),
+
+    /// Run a command with secrets from the vault in its environment.
+    ///
+    /// For a script or a tool that reads a token from a variable: the secret
+    /// reaches that one process and never a `.env` file, the shell history or
+    /// a command line. The command's exit status becomes sefy's.
+    Run(RunArgs),
 
     /// Show what and where this vault is, without revealing any of it.
     ///
@@ -660,6 +668,27 @@ pub struct FillArgs {
     /// it there.
     #[arg(long, value_name = "SECONDS", default_value_t = 45)]
     pub clear_after: u64,
+}
+
+/// Arguments of `sefy run`.
+#[derive(Debug, Args)]
+pub struct RunArgs {
+    /// Set a variable from the vault: `--env GITHUB_TOKEN=github`.
+    ///
+    /// The value is the item's own secret, the one `sefy get` takes; add
+    /// `#FIELD` for another field: `--env DB_USER=db#login`. Repeat for
+    /// several.
+    #[arg(
+        long,
+        short = 'e',
+        value_name = "VAR=REFERENCE[#FIELD]",
+        required = true
+    )]
+    pub env: Vec<String>,
+
+    /// The command to run and its arguments, after `--`.
+    #[arg(last = true, required = true, value_name = "COMMAND")]
+    pub command: Vec<OsString>,
 }
 
 /// Arguments of `sefy ls`.

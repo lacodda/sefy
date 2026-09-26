@@ -2,13 +2,14 @@
 
 use crate::cli::{
     AddKind, EditArgs, FillArgs, FindArgs, GenArgs, GetArgs, ListArgs, OpenArgs, OtpArgs, PullArgs,
-    RecordArgs, RemoteArgs,
+    RecordArgs, RemoteArgs, RunArgs,
 };
 use crate::output;
 use crate::session;
 use anyhow::{Context, Result, bail};
 use sefy_core::{
-    Classes, Field, ItemKind, ItemSummary, NewItem, Payload, Query, Recipe, Strength, Totp, Vault,
+    Classes, Field, Item, ItemKind, ItemSummary, NewItem, Payload, Query, Recipe, Strength, Totp,
+    Vault,
 };
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -298,15 +299,24 @@ fn checked(name: &str, value: String) -> Result<String> {
     Ok(value)
 }
 
-/// Copies a secret to the clipboard, or prints it when asked to.
-pub fn get(vault: &Vault, args: GetArgs) -> Result<()> {
-    let summary = vault.resolve(&args.reference).map_err(output::explain)?;
-    let item = vault.get(summary.id)?;
-
-    let (value, description) = match &item.payload {
-        Payload::Note { text } => (text.clone(), "text".to_owned()),
+/// The value an item hands over, and the name of what was taken.
+///
+/// One answer for `get` and `run`: a note gives its text, a record the field
+/// named or else the one its kind is mostly about. A file and a kind this
+/// build does not know give nothing — each with the way to what was meant.
+/// `naming` is how the caller's command line names a field, for the messages.
+fn value_of(item: &Item, field: Option<&str>, naming: &str) -> Result<(String, String)> {
+    let title = &item.summary.title;
+    match &item.payload {
+        // A field named on a note is refused rather than ignored: whoever
+        // named one expected a record, and the text may not be what they
+        // meant to hand over.
+        Payload::Note { text } => match field {
+            None => Ok((text.clone(), "text".to_owned())),
+            Some(_) => bail!("{title:?} is a note, which has no fields; leave out {naming}"),
+        },
         Payload::Fields { kind, fields } => {
-            let name = match args.field.clone() {
+            let name = match field {
                 Some(name) => name,
                 // Nothing was named, so sefy takes what the kind is mostly
                 // about. A record whose fields are all public has no such
@@ -314,35 +324,36 @@ pub fn get(vault: &Vault, args: GetArgs) -> Result<()> {
                 None => kind
                     .template()
                     .and_then(|template| template.default_field())
-                    .map(|field| field.name.to_owned())
+                    .map(|field| field.name)
                     .with_context(|| {
-                        format!(
-                            "{:?} has no default field; name one with --field",
-                            item.summary.title
-                        )
+                        format!("{title:?} has no default field; name one with {naming}")
                     })?,
             };
             match fields.iter().find(|field| field.name == name) {
-                Some(field) => (field.value.clone(), field.name.clone()),
+                Some(field) => Ok((field.value.clone(), field.name.clone())),
                 None => bail!(
-                    "{:?} has no {name:?}; it holds: {}",
-                    item.summary.title,
+                    "{title:?} has no {name:?}; it holds: {}",
                     field_names(fields)
                 ),
             }
         }
         Payload::File { .. } => bail!(
-            "{:?} is a file; write it to disk with: sefy extract {}",
-            item.summary.title,
+            "{title:?} is a file; write it to disk with: sefy extract {}",
             item.summary.id
         ),
         Payload::Unknown { kind } => bail!(
-            "{:?} is a {kind}, which this version of sefy does not know\n\
+            "{title:?} is a {kind}, which this version of sefy does not know\n\
              it was written by a newer sefy — upgrade to read it\n\
-             (the item is safe: it is listed, exported and synced as it is)",
-            item.summary.title
+             (the item is safe: it is listed, exported and synced as it is)"
         ),
-    };
+    }
+}
+
+/// Copies a secret to the clipboard, or prints it when asked to.
+pub fn get(vault: &Vault, args: GetArgs) -> Result<()> {
+    let summary = vault.resolve(&args.reference).map_err(output::explain)?;
+    let item = vault.get(summary.id)?;
+    let (value, description) = value_of(&item, args.field.as_deref(), "--field")?;
 
     if args.stdout {
         println!("{value}");
@@ -1212,6 +1223,114 @@ pub fn fill(vault: &Vault, args: FillArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Starts a command with secrets from the vault in its environment.
+///
+/// Every variable is settled before anything starts: a reference that matches
+/// nothing, or two things, stops the run rather than starting the command with
+/// part of what it needs. The vault is closed first, and the variable that
+/// carried the master password is left out of the command's environment — the
+/// command was given a token, not the key to every other secret.
+pub fn run(
+    vault: Vault,
+    args: RunArgs,
+    password_env: Option<&str>,
+) -> Result<std::convert::Infallible> {
+    let mappings = args
+        .env
+        .iter()
+        .map(|assignment| Mapping::parse(assignment))
+        .collect::<Result<Vec<_>>>()?;
+
+    // Compared without case on every system: Windows holds one variable under
+    // both spellings, and a script refused here is one that would have lost a
+    // value there.
+    for (index, mapping) in mappings.iter().enumerate() {
+        if let Some(earlier) = mappings[..index]
+            .iter()
+            .find(|earlier| earlier.variable.eq_ignore_ascii_case(mapping.variable))
+        {
+            if earlier.variable == mapping.variable {
+                bail!("--env sets {} twice", mapping.variable);
+            }
+            bail!(
+                "--env sets {} and {}, which Windows holds as one variable",
+                earlier.variable,
+                mapping.variable
+            );
+        }
+    }
+
+    let mut set = Vec::with_capacity(mappings.len());
+    for mapping in &mappings {
+        let value = mapping
+            .value(&vault)
+            .with_context(|| format!("cannot set {}", mapping.variable))?;
+        set.push((mapping.variable.to_owned(), value));
+    }
+    drop(vault);
+
+    let (program, arguments) = args
+        .command
+        .split_first()
+        .context("no command to run; name one after --")?;
+    Ok(crate::launch::replace_with(
+        program,
+        arguments,
+        password_env,
+        set,
+    )?)
+}
+
+/// One `--env VAR=REFERENCE[#FIELD]` of `sefy run`.
+struct Mapping<'a> {
+    variable: &'a str,
+    reference: &'a str,
+    field: Option<&'a str>,
+}
+
+impl<'a> Mapping<'a> {
+    fn parse(assignment: &'a str) -> Result<Self> {
+        let malformed = || format!("--env takes VAR=REFERENCE[#FIELD], not {assignment:?}");
+        let (variable, target) = assignment
+            .split_once('=')
+            .filter(|(variable, target)| !variable.is_empty() && !target.is_empty())
+            .with_context(malformed)?;
+        // The last `#` is the one that splits: no field of a template has one
+        // in its name, and a title that does is still reachable by its id.
+        let (reference, field) = match target.rsplit_once('#') {
+            Some((reference, field)) if !reference.is_empty() && !field.is_empty() => {
+                (reference, Some(field))
+            }
+            Some(_) => bail!(
+                "{}\n\
+                 a # starts a field name; an item whose title has one is taken by its id",
+                malformed()
+            ),
+            None => (target, None),
+        };
+        Ok(Self {
+            variable,
+            reference,
+            field,
+        })
+    }
+
+    fn value(&self, vault: &Vault) -> Result<String> {
+        let summary = vault.resolve(self.reference).map_err(output::explain)?;
+        let item = vault.get(summary.id)?;
+        let (value, name) = value_of(&item, self.field, "#FIELD")?;
+        // Refused here rather than left to the system: it would surface as the
+        // command failing to start, which points at the command.
+        if value.contains('\0') {
+            bail!(
+                "the {name} of {:?} holds a NUL character, which a variable cannot carry",
+                item.summary.title
+            );
+        }
+        Ok(value)
+    }
 }
 
 /// Seconds since the epoch, for making a one-time code.

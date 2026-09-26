@@ -33,6 +33,11 @@ everything below is an expansion of it.
 - **Your own clipboard, beyond the timer.** `sefy get` clears the clipboard
   after 45 seconds by default, but anything that reads it during that window —
   including clipboard managers that keep history — gets the secret.
+- **A command's environment.** `sefy run` puts secrets in the environment of
+  the command it starts. Any process running as you can read another's
+  environment, and the command passes it on to every process it starts in
+  turn. It keeps secrets out of files, shell history and process listings —
+  not out of reach of the machine they are used on.
 
 ## Why not deniability
 
