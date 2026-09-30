@@ -507,12 +507,19 @@ mod tests {
     fn a_line_diff_finds_the_longest_shared_run_not_the_first_one() {
         // A greedy walk would pair the first "x" and lose the three lines
         // after it; the table sees that keeping them is the shorter answer.
+        let same = |diff: &[Line<'_>]| {
+            diff.iter()
+                .filter(|line| matches!(line, Line::Same(_)))
+                .count()
+        };
         let diff = lines("x\na\nb\nc", "a\nb\nc\nx");
-        let same = diff
-            .iter()
-            .filter(|line| matches!(line, Line::Same(_)))
-            .count();
-        assert_eq!(same, 3, "{diff:?}");
+        assert_eq!(same(&diff), 3, "{diff:?}");
+
+        // Here the shared run is only reached by stepping over lines of the
+        // newer text first; a table that only ever looks one way along the
+        // older one never finds it, and reports every line as changed.
+        let diff = lines("p\na\nb\nq", "r\ns\na\nb\nt");
+        assert_eq!(same(&diff), 2, "{diff:?}");
     }
 
     #[test]
