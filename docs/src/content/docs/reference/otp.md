@@ -74,6 +74,11 @@ In the record's `totp` field, secret, as it came:
 can still be taken out with `sefy get <REFERENCE> --field totp` — to move it to
 another tool, for instance.
 
+`--set` on a record that already has a key replaces it, and the one it replaces
+stays in the record's [history](/sefy/reference/history/). A site that was
+switched to a new key and never confirmed it still takes the old one:
+`sefy restore <REFERENCE> <VERSION> --field totp` brings it back.
+
 ## Onto a phone
 
 ```console
@@ -101,3 +106,4 @@ show.
 - [`get`](/sefy/reference/get/) — any field, including the key itself
 - [`add`](/sefy/reference/add/) — `add login --totp` stores a key when the login is made
 - [`edit`](/sefy/reference/edit/) — `--set-secret totp` replaces it
+- [`history`](/sefy/reference/history/) — a key replaced by `--set` is kept there

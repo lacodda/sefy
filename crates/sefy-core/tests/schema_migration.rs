@@ -349,7 +349,11 @@ mod version_four {
         let (_directory, path) = fixture_copy();
 
         let before = Vault::open(&path, PASSWORD).unwrap().stats().unwrap();
-        assert_eq!(before.schema, 4, "opening brings the schema up to date");
+        assert_eq!(
+            before.schema,
+            sefy_core::db::SCHEMA_VERSION,
+            "opening brings the schema up to date"
+        );
         assert_eq!(before.items, 2);
 
         let mut vault = Vault::open(&path, PASSWORD).unwrap();
@@ -361,6 +365,49 @@ mod version_four {
         let stamp = reopened.last_sync().unwrap().expect("recorded");
         assert_eq!(stamp.transport, "file");
         assert_eq!(stamp.operation, "push");
+    }
+
+    #[test]
+    fn every_item_of_a_vault_from_before_history_starts_with_one_version() {
+        // Nothing before 0.12.0 kept a history, so there is none to invent:
+        // each item's contents become its first known version, dated by the
+        // last change the row records, on a machine nobody wrote down.
+        let (_directory, path) = fixture_copy();
+        let vault = Vault::open(&path, PASSWORD).unwrap();
+
+        for summary in vault.list().unwrap() {
+            let history = vault.history(summary.id).unwrap();
+            assert_eq!(history.len(), 1, "{}", summary.title);
+            assert_eq!(history[0].seq, 1);
+            assert_eq!(history[0].made_at, summary.updated_at);
+            assert_eq!(history[0].device, None);
+            assert!(history[0].current);
+        }
+    }
+
+    #[test]
+    fn the_first_edit_after_the_migration_keeps_what_0_7_1_wrote() {
+        let (_directory, path) = fixture_copy();
+        let mut vault = Vault::open(&path, PASSWORD).unwrap();
+        let id = vault.resolve("a note from 0.7.1").unwrap().id;
+        let written_then = vault.get(id).unwrap().payload;
+
+        vault
+            .update(
+                id,
+                None,
+                Some(sefy_core::Payload::Note {
+                    text: "rewritten".to_owned(),
+                }),
+                None,
+            )
+            .unwrap();
+        vault.save().unwrap();
+
+        let reopened = Vault::open(&path, PASSWORD).unwrap();
+        let history = reopened.history(id).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].payload, written_then);
     }
 
     #[test]
@@ -380,6 +427,164 @@ mod version_four {
         assert!(
             kinds.contains(&"note") && kinds.contains(&"login"),
             "both kinds are counted: {kinds:?}"
+        );
+    }
+}
+
+/// The 4 → 5 move seen from the other end: a vault this build has migrated,
+/// written into by 0.11.x, which knows nothing of history.
+///
+/// The writes below are the SQL that build issues, run against the migrated
+/// database, the same way the 0.6.0 case above does it. The live check with the
+/// published binary is part of every release; these keep it from regressing in
+/// between.
+mod version_five {
+    use super::PASSWORD;
+    use sefy_core::{NewItem, Payload, Vault};
+    use std::fs;
+    use std::path::Path;
+
+    fn note(text: &str) -> Payload {
+        Payload::Note {
+            text: text.to_owned(),
+        }
+    }
+
+    /// Runs `sql` against the vault file as an older build would: the database
+    /// decrypted into memory, foreign keys on as that build turns them on, and
+    /// sealed back.
+    fn as_an_older_build(path: &Path, sql: &str) {
+        let sealed = fs::read(path).unwrap();
+        let database = sefy_core::format::decode(PASSWORD, &sealed).unwrap();
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection
+            .deserialize_read_exact(
+                rusqlite::MAIN_DB,
+                std::io::Cursor::new(&database[..]),
+                database.len(),
+                false,
+            )
+            .unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_keys = ON;")
+            .unwrap();
+        connection.execute_batch(sql).unwrap();
+        let bytes = connection.serialize(rusqlite::MAIN_DB).unwrap().to_vec();
+        fs::write(path, sefy_core::format::encode(PASSWORD, &bytes).unwrap()).unwrap();
+    }
+
+    /// A vault written by this build: one note, edited once.
+    fn migrated() -> (tempfile::TempDir, std::path::PathBuf, i64) {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notes.bak");
+        let mut vault = Vault::create(&path, PASSWORD).unwrap();
+        let id = vault.add(NewItem::new("shed", note("one"))).unwrap();
+        vault.update(id, None, Some(note("two")), None).unwrap();
+        vault.save().unwrap();
+        (directory, path, id)
+    }
+
+    #[test]
+    fn an_item_an_older_build_adds_is_given_a_version_on_the_next_open() {
+        let (_directory, path, _) = migrated();
+        as_an_older_build(
+            &path,
+            "INSERT INTO items (uuid, title, kind, created_at, updated_at)
+                 VALUES ('00000000-0000-4000-8000-000000000011', 'added by 0.11', 'note', 900, 900);
+             INSERT INTO notes (item_id, text) VALUES (last_insert_rowid(), 'plain');",
+        );
+
+        let vault = Vault::open(&path, PASSWORD).unwrap();
+        let id = vault.resolve("added by 0.11").unwrap().id;
+        let history = vault.history(id).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].uuid.len(), 36, "a version needs an identity");
+        assert_eq!(history[0].made_at, 900);
+    }
+
+    #[test]
+    fn an_edit_by_an_older_build_becomes_current_and_leaves_the_history_alone() {
+        // 0.11 rewrites the contents in place and keeps nothing: the value it
+        // replaced is gone, which is what that build always did. What must not
+        // happen is losing the history this build already kept, or failing to
+        // open the vault over it.
+        let (_directory, path, id) = migrated();
+        as_an_older_build(
+            &path,
+            &format!("UPDATE notes SET text = 'three' WHERE item_id = {id};"),
+        );
+
+        let vault = Vault::open(&path, PASSWORD).unwrap();
+        assert_eq!(vault.get(id).unwrap().payload, note("three"));
+        let history = vault.history(id).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].payload, note("one"));
+    }
+
+    #[test]
+    fn a_delete_by_an_older_build_takes_the_history_with_it() {
+        // The cascade lives in the table, not in this build's code, so an
+        // older build removing an item cannot leave its old secrets behind in
+        // a table it has never heard of.
+        let (_directory, path, id) = migrated();
+        as_an_older_build(&path, &format!("DELETE FROM items WHERE id = {id};"));
+
+        let sealed = fs::read(&path).unwrap();
+        let database = sefy_core::format::decode(PASSWORD, &sealed).unwrap();
+        let connection = sefy_core::db::load(&database).unwrap();
+        let left: i64 = connection
+            .query_row("SELECT COUNT(*) FROM versions", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
+    }
+}
+
+/// Two copies of a vault from before history, each migrated on its own
+/// machine, have to recognise each other's contents — or the first edit after
+/// upgrading both machines reads as a conflict on the other one.
+mod migrated_apart {
+    use super::PASSWORD;
+    use sefy_core::{Payload, Vault};
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    fn copies_migrated_separately_merge_an_edit_without_a_conflict() {
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("vault-v0.7.1.blob");
+        let directory = tempfile::tempdir().unwrap();
+        let here = directory.path().join("here.bak");
+        let there = directory.path().join("there.bak");
+        fs::copy(&source, &here).unwrap();
+        fs::copy(&source, &there).unwrap();
+
+        // Each machine opens its own copy and writes it back: migrated apart.
+        let mut theirs = Vault::open(&there, PASSWORD).unwrap();
+        let their_id = theirs.resolve("a note from 0.7.1").unwrap().id;
+        theirs
+            .update(
+                their_id,
+                None,
+                Some(Payload::Note {
+                    text: "edited after the upgrade".to_owned(),
+                }),
+                None,
+            )
+            .unwrap();
+        theirs.save().unwrap();
+
+        let mut mine = Vault::open(&here, PASSWORD).unwrap();
+        let report = sefy_core::merge(&mut mine, &theirs).unwrap();
+
+        assert!(report.conflicts.is_empty(), "{report:?}");
+        assert_eq!(report.updated, 1);
+        let id = mine.resolve("a note from 0.7.1").unwrap().id;
+        assert_eq!(
+            mine.history(id).unwrap().len(),
+            2,
+            "the contents from before are one version, not two"
         );
     }
 }

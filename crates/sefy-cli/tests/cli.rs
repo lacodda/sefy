@@ -2880,3 +2880,256 @@ fn get_refuses_a_field_named_on_a_note() {
         .stdout("")
         .stderr(contains("is a note"));
 }
+
+/// History: what an edit keeps, what `history` shows of it, what `restore`
+/// brings back — and that a secret never appears on the way.
+mod history {
+    use super::{Fixture, MASTER, add_note};
+    use predicates::prelude::PredicateBooleanExt;
+    use predicates::str::contains;
+
+    /// A login whose password was changed once, from `first-secret` to
+    /// `second-secret`.
+    fn login_changed_once() -> Fixture {
+        let fixture = Fixture::with_vault();
+        fixture
+            .sefy()
+            .env("ITEM_PASSWORD", "first-secret")
+            .args([
+                "add",
+                "login",
+                "mail",
+                "--login",
+                "ada",
+                "--item-password-env",
+                "ITEM_PASSWORD",
+            ])
+            .assert()
+            .success();
+        fixture
+            .sefy()
+            .args(["edit", "mail", "--set", "password=second-secret"])
+            .assert()
+            .success();
+        fixture
+    }
+
+    #[test]
+    fn an_edit_keeps_the_text_it_replaced_and_history_lists_both() {
+        let fixture = Fixture::with_vault();
+        add_note(&fixture, "shed", "combination 4815", &[]);
+        fixture
+            .sefy()
+            .args(["edit", "shed", "--text", "combination 1623"])
+            .assert()
+            .success();
+
+        fixture
+            .sefy()
+            .args(["history", "shed"])
+            .assert()
+            .success()
+            .stdout(
+                contains("2 versions")
+                    .and(contains("created"))
+                    .and(contains("text  (current)"))
+                    .and(contains("sefy restore")),
+            );
+
+        fixture
+            .sefy()
+            .args(["history", "shed", "1"])
+            .assert()
+            .success()
+            .stdout(
+                contains("- combination 4815")
+                    .and(contains("+ combination 1623"))
+                    .and(contains("sefy restore")),
+            );
+    }
+
+    #[test]
+    fn neither_the_listing_nor_a_comparison_ever_prints_a_secret() {
+        let fixture = login_changed_once();
+
+        for arguments in [["history", "mail", ""], ["history", "mail", "1"]] {
+            let arguments: Vec<&str> = arguments.into_iter().filter(|a| !a.is_empty()).collect();
+            fixture.sefy().args(&arguments).assert().success().stdout(
+                contains("first-secret")
+                    .not()
+                    .and(contains("second-secret").not()),
+            );
+        }
+        fixture
+            .sefy()
+            .args(["history", "mail", "1"])
+            .assert()
+            .success()
+            .stdout(contains("password").and(contains("changed (secret, not shown)")));
+    }
+
+    #[test]
+    fn a_restored_password_is_the_one_get_hands_over() {
+        let fixture = login_changed_once();
+
+        fixture
+            .sefy()
+            .args(["restore", "mail", "1", "--field", "password"])
+            .assert()
+            .success()
+            .stdout(contains("restored the password of \"mail\" from version 1"));
+
+        fixture
+            .sefy()
+            .args(["get", "mail", "--stdout"])
+            .assert()
+            .success()
+            .stdout(contains("first-secret"));
+
+        // And the password it replaced is still there to go back to.
+        fixture
+            .sefy()
+            .args(["history", "mail"])
+            .assert()
+            .success()
+            .stdout(contains("3 versions"));
+    }
+
+    #[test]
+    fn a_note_comes_back_whole() {
+        let fixture = Fixture::with_vault();
+        add_note(&fixture, "shed", "one", &[]);
+        fixture
+            .sefy()
+            .args(["edit", "shed", "--text", "two"])
+            .assert()
+            .success();
+
+        fixture
+            .sefy()
+            .args(["restore", "shed", "1", "--field", "text"])
+            .assert()
+            .failure()
+            .stderr(contains("restored whole"));
+
+        fixture
+            .sefy()
+            .args(["restore", "shed", "1"])
+            .assert()
+            .success();
+        fixture
+            .sefy()
+            .args(["get", "shed", "--stdout"])
+            .assert()
+            .success()
+            .stdout(contains("one"));
+    }
+
+    #[test]
+    fn a_version_or_a_field_that_is_not_there_is_refused_with_what_is() {
+        let fixture = login_changed_once();
+
+        fixture
+            .sefy()
+            .args(["history", "mail", "9"])
+            .assert()
+            .failure()
+            .stderr(contains("has 2 versions").and(contains("no version 9")));
+        fixture
+            .sefy()
+            .args(["restore", "mail", "0"])
+            .assert()
+            .failure()
+            .stderr(contains("numbered from 1"));
+        fixture
+            .sefy()
+            .args(["restore", "mail", "1", "--field", "pin"])
+            .assert()
+            .failure()
+            .stderr(contains("has no \"pin\"").and(contains("it held: login, password")));
+    }
+
+    #[test]
+    fn restoring_the_current_version_changes_nothing() {
+        let fixture = login_changed_once();
+
+        fixture
+            .sefy()
+            .args(["restore", "mail", "2"])
+            .assert()
+            .success()
+            .stdout(contains("nothing to restore"));
+        fixture
+            .sefy()
+            .args(["history", "mail"])
+            .assert()
+            .success()
+            .stdout(contains("2 versions"));
+    }
+
+    #[test]
+    fn show_says_there_is_a_history_to_look_at() {
+        let fixture = Fixture::with_vault();
+        add_note(&fixture, "shed", "one", &[]);
+        fixture
+            .sefy()
+            .args(["show", "shed"])
+            .assert()
+            .success()
+            .stdout(contains("history:").not());
+
+        fixture
+            .sefy()
+            .args(["edit", "shed", "--text", "two"])
+            .assert()
+            .success();
+        fixture
+            .sefy()
+            .args(["show", "shed"])
+            .assert()
+            .success()
+            .stdout(contains("1 earlier version (sefy history"));
+    }
+
+    #[test]
+    fn a_merge_conflict_ends_in_the_history_not_in_a_second_item() {
+        let here = Fixture::with_vault();
+        add_note(&here, "bank", "original", &[]);
+        let there = Fixture::empty();
+        std::fs::copy(&here.path, &there.path).unwrap();
+
+        here.sefy()
+            .args(["edit", "bank", "--text", "changed here"])
+            .assert()
+            .success();
+        there
+            .sefy()
+            .args(["edit", "bank", "--text", "changed there"])
+            .assert()
+            .success();
+
+        here.sefy()
+            .env("OTHER", MASTER)
+            .arg("merge")
+            .arg(&there.path)
+            .args(["--other-password-env", "OTHER"])
+            .assert()
+            .success()
+            .stdout(
+                contains("1 item changed on both sides")
+                    .and(contains("sefy history"))
+                    .and(contains("conflicted copy").not()),
+            );
+
+        here.sefy()
+            .arg("ls")
+            .assert()
+            .success()
+            .stdout(contains("conflicted copy").not());
+        here.sefy()
+            .args(["history", "bank"])
+            .assert()
+            .success()
+            .stdout(contains("3 versions").and(contains("lost a merge conflict")));
+    }
+}

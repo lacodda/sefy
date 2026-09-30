@@ -1,15 +1,15 @@
 //! What each subcommand does once the vault is open.
 
 use crate::cli::{
-    AddKind, EditArgs, FillArgs, FindArgs, GenArgs, GetArgs, ListArgs, OpenArgs, OtpArgs, PullArgs,
-    RecordArgs, RemoteArgs, RunArgs,
+    AddKind, EditArgs, FillArgs, FindArgs, GenArgs, GetArgs, HistoryArgs, ListArgs, OpenArgs,
+    OtpArgs, PullArgs, RecordArgs, RemoteArgs, RestoreArgs, RunArgs,
 };
 use crate::output;
 use crate::session;
 use anyhow::{Context, Result, bail};
 use sefy_core::{
-    Classes, Field, Item, ItemKind, ItemSummary, NewItem, Payload, Query, Recipe, Strength, Totp,
-    Vault,
+    Change, ChangeKind, Classes, Field, Item, ItemKind, ItemSummary, NewItem, Payload, Query,
+    Recipe, Strength, Totp, Vault, Version,
 };
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -505,6 +505,19 @@ pub fn show(vault: &Vault, reference: &str) -> Result<()> {
     if !item.summary.tags.is_empty() {
         field("tags", &item.summary.tags.join(", "));
     }
+    // Said only when there is something to go back to: a line announcing an
+    // empty history on every item would be noise on the common case.
+    let earlier = vault.earlier_versions(item.summary.id)?;
+    if earlier > 0 {
+        field(
+            "history",
+            &format!(
+                "{} (sefy history {})",
+                output::count(earlier, "earlier version"),
+                item.summary.id
+            ),
+        );
+    }
 
     match &item.payload {
         Payload::Note { text } => {
@@ -805,13 +818,306 @@ fn set_field(
     });
 }
 
+/// Lists the versions of an item's contents, or compares one with now.
+pub fn history(vault: &Vault, args: HistoryArgs) -> Result<()> {
+    let summary = vault.resolve(&args.reference).map_err(output::explain)?;
+    refuse_unknown(&summary)?;
+    let versions = vault.history(summary.id)?;
+
+    match args.version {
+        None => list_versions(&summary, &versions),
+        Some(number) => {
+            let index = version_index(&summary, &versions, number)?;
+            compare_with_now(&summary, &versions, index);
+        }
+    }
+    Ok(())
+}
+
+/// Brings back an earlier version of an item's contents, or one field of it.
+pub fn restore(vault: &mut Vault, args: RestoreArgs) -> Result<()> {
+    let summary = vault.resolve(&args.reference).map_err(output::explain)?;
+    refuse_unknown(&summary)?;
+    let versions = vault.history(summary.id)?;
+    let index = version_index(&summary, &versions, args.version)?;
+    let wanted = &versions[index];
+    let title = &summary.title;
+
+    if wanted.current {
+        println!(
+            "version {} is what {title:?} holds now; nothing to restore",
+            args.version
+        );
+        return Ok(());
+    }
+    if let Some(name) = &args.field
+        && !matches!(wanted.payload, Payload::Fields { .. })
+    {
+        bail!(
+            "{title:?} is a {}, which is restored whole; leave out --field {name}",
+            summary.kind
+        );
+    }
+
+    let changed = match vault.restore(summary.id, &wanted.uuid, args.field.as_deref()) {
+        Ok(changed) => changed,
+        Err(sefy_core::Error::FieldNotInVersion { name, available }) => bail!(
+            "version {} of {title:?} has no {name:?}; it held: {}",
+            args.version,
+            available.join(", ")
+        ),
+        Err(other) => return Err(other.into()),
+    };
+    if !changed {
+        println!(
+            "nothing to restore: {title:?} already holds what version {} did{}",
+            args.version,
+            args.field
+                .as_deref()
+                .map(|name| format!(" in {name}"))
+                .unwrap_or_default()
+        );
+        return Ok(());
+    }
+    vault.save()?;
+
+    let what = match &args.field {
+        Some(name) => format!("the {name} of {title:?}"),
+        None => format!("{title:?}"),
+    };
+    println!(
+        "restored {what} from version {} ({})",
+        args.version,
+        written(wanted)
+    );
+    println!(
+        "what it replaced is kept as version {}; sefy history {} lists them",
+        versions.len(),
+        summary.id
+    );
+    Ok(())
+}
+
+/// Stops at an item whose contents this build cannot read.
+fn refuse_unknown(summary: &ItemSummary) -> Result<()> {
+    if !summary.kind.is_known() {
+        bail!(
+            "{:?} is a {}, which this version of sefy does not know\n\
+             it was written by a newer sefy — upgrade to read its history",
+            summary.title,
+            summary.kind
+        );
+    }
+    Ok(())
+}
+
+/// Turns the number a listing showed into a place in the history.
+fn version_index(summary: &ItemSummary, versions: &[Version], number: usize) -> Result<usize> {
+    if number == 0 || number > versions.len() {
+        bail!(
+            "{:?} has {}, numbered from 1; there is no version {number}",
+            summary.title,
+            output::count(versions.len(), "version")
+        );
+    }
+    Ok(number - 1)
+}
+
+/// When and where a version was written, for a line about it.
+fn written(version: &Version) -> String {
+    match &version.device {
+        Some(device) => format!(
+            "written {} on {device}",
+            crate::when::date_time(version.made_at)
+        ),
+        None => format!("written {}", crate::when::date_time(version.made_at)),
+    }
+}
+
+/// Prints one line per version, oldest first: when, where, and what changed.
+fn list_versions(summary: &ItemSummary, versions: &[Version]) {
+    println!(
+        "{:?} ({}), {}",
+        summary.title,
+        summary.kind,
+        output::count(versions.len(), "version")
+    );
+    println!();
+
+    let number_width = versions.len().to_string().len();
+    let device_width = versions
+        .iter()
+        .map(|version| {
+            version
+                .device
+                .as_deref()
+                .map_or(1, |name| name.chars().count())
+        })
+        .max()
+        .unwrap_or(1);
+
+    for (index, version) in versions.iter().enumerate() {
+        let mut what = if index == 0 {
+            // The first kept version is the item's creation only if it is
+            // dated then; one migrated from before history is simply the
+            // earliest there is.
+            if version.made_at == summary.created_at {
+                "created".to_owned()
+            } else {
+                "earliest kept".to_owned()
+            }
+        } else {
+            let names = sefy_core::history::changed(&versions[index - 1].payload, &version.payload);
+            if names.is_empty() {
+                "no change".to_owned()
+            } else {
+                names.join(", ")
+            }
+        };
+        if version.conflict {
+            what.push_str("  (lost a merge conflict)");
+        }
+        if version.current {
+            what.push_str("  (current)");
+        }
+        println!(
+            "  {:>number_width$}  {}  {:<device_width$}  {what}",
+            index + 1,
+            crate::when::date_time(version.made_at),
+            version.device.as_deref().unwrap_or("-"),
+        );
+    }
+
+    if versions.len() > 1 {
+        println!();
+        println!(
+            "compare one with now: sefy history {id} VERSION\n\
+             bring one back:       sefy restore {id} VERSION{by_field}",
+            id = summary.id,
+            by_field = if summary.kind.is_record() {
+                " [--field NAME]"
+            } else {
+                ""
+            }
+        );
+    } else {
+        println!();
+        println!("no earlier versions yet; the next change to its contents keeps this one");
+    }
+}
+
+/// Shows how one version differs from the current contents, part by part.
+///
+/// A secret is only ever said to differ. Text — a note, a public field, a file
+/// name — is shown line by line, with long unchanged stretches folded.
+fn compare_with_now(summary: &ItemSummary, versions: &[Version], index: usize) {
+    let then = &versions[index];
+    let now = versions
+        .last()
+        .expect("history ends with the current version");
+    let number = index + 1;
+
+    if then.current {
+        println!(
+            "version {number} is what {:?} holds now; there is nothing to compare it with",
+            summary.title
+        );
+        return;
+    }
+    println!(
+        "version {number} of {:?}, {}, against what it holds now (version {}):",
+        summary.title,
+        written(then),
+        versions.len()
+    );
+    println!();
+
+    let changes: Vec<Change> = sefy_core::history::compare(&then.payload, &now.payload);
+    let width = changes
+        .iter()
+        .map(|change| change.name.chars().count())
+        .max()
+        .unwrap_or(0);
+
+    for change in &changes {
+        let label = format!("{:<width$}", change.name);
+        match (change.kind, change.secret) {
+            (ChangeKind::Same, _) => println!("{label}  same"),
+            (ChangeKind::Changed, true) => {
+                println!(
+                    "{label}  {}",
+                    secret_difference(change, &then.payload, &now.payload)
+                );
+            }
+            (ChangeKind::Removed, true) => println!("{label}  only in version {number} (secret)"),
+            (ChangeKind::Added, true) => println!("{label}  only now (secret)"),
+            (ChangeKind::Changed, false) => {
+                println!("{label}  changed");
+                let old = sefy_core::history::text_of(&then.payload, &change.name).unwrap_or("");
+                let new = sefy_core::history::text_of(&now.payload, &change.name).unwrap_or("");
+                crate::diff::print(&sefy_core::history::lines(old, new));
+            }
+            (ChangeKind::Removed, false) => {
+                println!("{label}  only in version {number}");
+                let old = sefy_core::history::text_of(&then.payload, &change.name).unwrap_or("");
+                crate::diff::print(&sefy_core::history::lines(old, ""));
+            }
+            (ChangeKind::Added, false) => {
+                println!("{label}  only now");
+                let new = sefy_core::history::text_of(&now.payload, &change.name).unwrap_or("");
+                crate::diff::print(&sefy_core::history::lines("", new));
+            }
+        }
+    }
+
+    if changes.iter().any(|change| change.kind != ChangeKind::Same) {
+        println!();
+        println!(
+            "bring it back: sefy restore {} {number}{}",
+            summary.id,
+            if matches!(then.payload, Payload::Fields { .. }) {
+                " [--field NAME]"
+            } else {
+                ""
+            }
+        );
+    }
+}
+
+/// How a secret part differs, without a word of what it holds.
+///
+/// A file's bytes are the one secret part whose size is worth saying: it tells
+/// two versions of a key file apart without showing either.
+fn secret_difference(change: &Change, then: &Payload, now: &Payload) -> String {
+    match (then, now) {
+        (Payload::File { bytes: old, .. }, Payload::File { bytes: new, .. })
+            if change.name == "contents" =>
+        {
+            format!(
+                "changed ({} then, {} now)",
+                output::count(old.len(), "byte"),
+                output::count(new.len(), "byte")
+            )
+        }
+        _ => "changed (secret, not shown)".to_owned(),
+    }
+}
+
 /// Removes an item, asking first unless told not to.
 pub fn rm(vault: &mut Vault, reference: &str, yes: bool) -> Result<()> {
     let summary = vault.resolve(reference).map_err(output::explain)?;
 
+    // The history goes with the item, and a question that did not say so
+    // would be asking about less than it removes.
+    let earlier = vault.earlier_versions(summary.id)?;
+    let and_history = if earlier > 0 {
+        format!(" and {}", output::count(earlier, "earlier version"))
+    } else {
+        String::new()
+    };
     if !yes
         && !confirm(&format!(
-            "remove {:?} ({})? [y/N] ",
+            "remove {:?} ({}){and_history}? [y/N] ",
             summary.title, summary.id
         ))?
     {
@@ -1580,8 +1886,16 @@ fn report_merge(report: &sefy_core::MergeReport, nothing_to_do: &str) {
         return;
     }
 
+    let brought = if report.versions > 0 {
+        format!(
+            "; {} brought across",
+            output::count(report.versions, "earlier version")
+        )
+    } else {
+        String::new()
+    };
     println!(
-        "merged: {} added, {} updated, {} unchanged",
+        "merged: {} added, {} updated, {} unchanged{brought}",
         report.added, report.updated, report.unchanged
     );
 
@@ -1594,21 +1908,29 @@ fn report_merge(report: &sefy_core::MergeReport, nothing_to_do: &str) {
     }
 
     if !report.conflicts.is_empty() {
-        // Loud on purpose, exactly as in `merge`: a conflict means two versions
-        // of one secret now sit in the vault, and only the person who made them
-        // can say which is right.
+        // Loud on purpose: a conflict means two versions of one secret, and
+        // only the person who made them can say which is right. The one that
+        // was not chosen is not gone, and this is where they learn where it is.
         println!(
-            "\n{} changed on both sides and could not be resolved here.",
+            "\n{} changed on both sides.",
             output::count(report.conflicts.len(), "item")
         );
-        println!("This vault's version was kept; the incoming one is beside it:");
+        println!(
+            "The copy changed more recently is current; the other is kept in the item's history:"
+        );
         for conflict in &report.conflicts {
+            let whose = match conflict.current {
+                sefy_core::Side::Here => "this vault's is current",
+                sefy_core::Side::There => "the other copy's is current",
+            };
             println!(
-                "  {:?} → also kept as {:?}",
-                conflict.title, conflict.kept_as
+                "  {:?} ({whose}): sefy history {}",
+                conflict.title, conflict.id
             );
         }
-        println!("Compare them, keep the right one, and remove the other.");
+        println!(
+            "Compare with sefy history ID VERSION; bring one back with sefy restore ID VERSION."
+        );
     }
 }
 

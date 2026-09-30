@@ -1,10 +1,11 @@
 //! The vault: an encrypted file, its in-memory database, and the operations
 //! that move data between them.
 
-use crate::db;
+use crate::db::{self, Stamp};
 use crate::error::{Error, Result};
 use crate::format;
-use crate::model::{Item, ItemSummary, NewItem, Payload, Query};
+use crate::history::Version;
+use crate::model::{Field, Item, ItemSummary, NewItem, Payload, Query};
 use rusqlite::Connection;
 use std::fs;
 use std::io::Write;
@@ -20,6 +21,7 @@ pub struct Vault {
     path: PathBuf,
     password: Zeroizing<Vec<u8>>,
     connection: Connection,
+    device: Option<String>,
 }
 
 impl Vault {
@@ -34,6 +36,7 @@ impl Vault {
             path,
             password: Zeroizing::new(password.to_vec()),
             connection: db::create()?,
+            device: None,
         };
         vault.save()?;
         Ok(vault)
@@ -50,7 +53,18 @@ impl Vault {
             path,
             password: Zeroizing::new(password.to_vec()),
             connection: db::load(&database)?,
+            device: None,
         })
+    }
+
+    /// Names the machine this vault is being changed on.
+    ///
+    /// Every version written from here on carries the name, so a history can
+    /// say which machine a change came from — the question a merge conflict
+    /// raises first. The library does not guess it: the program around it
+    /// knows what the machine is called, and a test knows it is none.
+    pub fn set_device(&mut self, device: Option<String>) {
+        self.device = device.filter(|name| !name.trim().is_empty());
     }
 
     /// Path of the file backing this vault.
@@ -72,13 +86,15 @@ impl Vault {
 
     /// Adds an item and returns its identifier.
     pub fn add(&mut self, item: NewItem) -> Result<i64> {
-        db::insert_item(&mut self.connection, item, now())
+        db::insert_item(&mut self.connection, item, now(), self.device.as_deref())
     }
 
-    /// Adds an item that already has an identity and a history elsewhere.
+    /// Adds an item that already has an identity elsewhere.
     ///
-    /// For contents arriving from another vault, where re-generating either
-    /// would make the same item look like a new one.
+    /// For contents arriving from an export, where re-generating the identity
+    /// would make the same item look like a new one. The export carries no
+    /// history, so the contents start a line of their own, written at
+    /// `updated_at`.
     pub fn add_existing(
         &mut self,
         item: NewItem,
@@ -86,7 +102,88 @@ impl Vault {
         created_at: i64,
         updated_at: i64,
     ) -> Result<i64> {
-        db::insert_item_with_uuid(&mut self.connection, item, uuid, created_at, updated_at)
+        let stamp = Stamp::new(1, updated_at, self.device.as_deref())?;
+        db::insert_item_with_uuid(
+            &mut self.connection,
+            item,
+            uuid,
+            created_at,
+            updated_at,
+            &stamp,
+        )
+    }
+
+    /// Adds an item from another vault with the version its contents are and
+    /// every earlier one.
+    pub(crate) fn add_travelled(
+        &mut self,
+        item: NewItem,
+        uuid: &str,
+        (created_at, updated_at): (i64, i64),
+        stamp: &Stamp,
+        past: &[Version],
+    ) -> Result<(i64, usize)> {
+        let id = db::insert_item_with_uuid(
+            &mut self.connection,
+            item,
+            uuid,
+            created_at,
+            updated_at,
+            stamp,
+        )?;
+        let mut kept = 0;
+        for version in past {
+            if db::keep_version(&self.connection, id, version)? {
+                kept += 1;
+            }
+        }
+        Ok((id, kept))
+    }
+
+    /// The stamp of the version an item's contents are.
+    pub(crate) fn stamp(&self, id: i64) -> Result<Stamp> {
+        db::stamp_of(&self.connection, id)
+    }
+
+    /// An item's earlier versions, oldest first, without the current one.
+    pub(crate) fn past_versions(&self, id: i64) -> Result<Vec<Version>> {
+        db::past_versions(&self.connection, id)
+    }
+
+    /// Keeps a version that came from elsewhere, unless it is already kept.
+    pub(crate) fn keep_version(&mut self, id: i64, version: &Version) -> Result<bool> {
+        db::keep_version(&self.connection, id, version)
+    }
+
+    /// Puts contents from elsewhere in place under the version they already
+    /// are, keeping what they replace.
+    pub(crate) fn take_contents(
+        &mut self,
+        id: i64,
+        payload: &Payload,
+        stamp: &Stamp,
+        replaced_lost_a_conflict: bool,
+    ) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+        db::replace_contents(&transaction, id, payload, stamp, replaced_lost_a_conflict)?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Replaces an item's title and tags, leaving its contents alone.
+    pub(crate) fn set_labels(
+        &mut self,
+        id: i64,
+        title: &str,
+        tags: &[String],
+        updated_at: i64,
+    ) -> Result<()> {
+        db::set_labels(&mut self.connection, id, title, tags, updated_at)
+    }
+
+    /// Sets when an item last changed.
+    pub(crate) fn set_updated_at(&mut self, id: i64, updated_at: i64) -> Result<()> {
+        db::set_updated_at(&self.connection, id, updated_at)
     }
 
     /// Finds the item carrying this identity, if there is one.
@@ -107,7 +204,8 @@ impl Vault {
     /// Changes an item's title, payload or tags; `None` leaves a field alone.
     ///
     /// A payload of a different kind than the item was created with is
-    /// rejected: an item's kind is fixed for its lifetime.
+    /// rejected: an item's kind is fixed for its lifetime. New contents become
+    /// a new version and the ones they replace stay in [`Vault::history`].
     pub fn update(
         &mut self,
         id: i64,
@@ -115,7 +213,86 @@ impl Vault {
         payload: Option<Payload>,
         tags: Option<Vec<String>>,
     ) -> Result<()> {
-        db::update_item(&mut self.connection, id, title, payload, tags, now())
+        self.update_at(id, title, payload, tags, now())
+    }
+
+    /// [`Vault::update`] at a moment given rather than read off the clock.
+    ///
+    /// For tests of what a merge makes of two edits in the same second: whole
+    /// seconds are what timestamps hold, and a test cannot wait its way into a
+    /// tie.
+    pub(crate) fn update_at(
+        &mut self,
+        id: i64,
+        title: Option<String>,
+        payload: Option<Payload>,
+        tags: Option<Vec<String>>,
+        at: i64,
+    ) -> Result<()> {
+        db::update_item(
+            &mut self.connection,
+            id,
+            title,
+            payload,
+            tags,
+            at,
+            self.device.as_deref(),
+        )
+    }
+
+    /// The database underneath, for a test that has to write what an older
+    /// build would.
+    #[cfg(test)]
+    pub(crate) fn connection_for_tests(&self) -> &Connection {
+        &self.connection
+    }
+
+    /// Every version of an item's contents, oldest first, the current one last.
+    ///
+    /// A title or a tag is not part of a version: renaming an item makes none,
+    /// and restoring one does not bring an old name back.
+    pub fn history(&self, id: i64) -> Result<Vec<Version>> {
+        db::history(&self.connection, id)
+    }
+
+    /// How many earlier versions of an item's contents are kept.
+    pub fn earlier_versions(&self, id: i64) -> Result<usize> {
+        db::count_past_versions(&self.connection, id)
+    }
+
+    /// Brings back the contents of an earlier version, or one field of them.
+    ///
+    /// Restoring is an edit like any other: the contents it replaces become a
+    /// version of their own, so a restore can itself be undone. With `field`,
+    /// only that field comes back — in place if the record still has it, at
+    /// the end if not — and every other field keeps its current value.
+    ///
+    /// Returns whether anything changed; contents that already match the
+    /// version are left alone rather than recorded again.
+    pub fn restore(&mut self, id: i64, version: &str, field: Option<&str>) -> Result<bool> {
+        let versions = self.history(id)?;
+        let wanted = versions
+            .iter()
+            .find(|candidate| candidate.uuid == version)
+            .ok_or_else(|| Error::VersionNotFound {
+                id,
+                version: version.to_owned(),
+            })?;
+        let current = &versions
+            .last()
+            .expect("history ends with the current version")
+            .payload;
+
+        let restored = match field {
+            None => wanted.payload.clone(),
+            Some(name) => with_field_from(current, &wanted.payload, name)?,
+        };
+        if &restored == current {
+            return Ok(false);
+        }
+
+        self.update(id, None, Some(restored), None)?;
+        Ok(true)
     }
 
     /// Removes an item.
@@ -229,6 +406,39 @@ impl Vault {
         };
         db::meta_set(&self.connection, LAST_SYNC, &stamp.encode())
     }
+}
+
+/// The current contents of a record with one field taken from an earlier
+/// version.
+fn with_field_from(current: &Payload, earlier: &Payload, name: &str) -> Result<Payload> {
+    let (Payload::Fields { kind, fields }, Payload::Fields { fields: then, .. }) =
+        (current, earlier)
+    else {
+        // A note or a file is one value, not a set of fields: its version is
+        // restored whole or not at all.
+        return Err(Error::FieldNotInVersion {
+            name: name.to_owned(),
+            available: Vec::new(),
+        });
+    };
+
+    let taken: &Field = then
+        .iter()
+        .find(|field| field.name == name)
+        .ok_or_else(|| Error::FieldNotInVersion {
+            name: name.to_owned(),
+            available: then.iter().map(|field| field.name.clone()).collect(),
+        })?;
+
+    let mut fields = fields.clone();
+    match fields.iter_mut().find(|field| field.name == name) {
+        Some(field) => *field = taken.clone(),
+        None => fields.push(taken.clone()),
+    }
+    Ok(Payload::Fields {
+        kind: kind.clone(),
+        fields,
+    })
 }
 
 /// `meta` key under which the last sync is recorded.

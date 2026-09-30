@@ -7,6 +7,8 @@
 mod browser;
 mod cli;
 mod commands;
+mod device;
+mod diff;
 mod editor;
 mod launch;
 mod output;
@@ -91,6 +93,8 @@ fn run(arguments: Cli) -> Result<()> {
         Command::Ls(args) => commands::ls(&vault, args),
         Command::Find(args) => commands::find(&vault, args),
         Command::Edit(args) => commands::edit(&mut vault, args),
+        Command::History(args) => commands::history(&vault, args),
+        Command::Restore(args) => commands::restore(&mut vault, args),
         Command::Rm { reference, yes } => commands::rm(&mut vault, &reference, yes),
         Command::Extract {
             reference,

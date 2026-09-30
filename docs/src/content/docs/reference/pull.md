@@ -31,21 +31,22 @@ merged: 2 added, 1 updated, 14 unchanged
 
 A pull is not a download over the top of your vault. What comes back is folded
 in item by item, exactly as [`merge`](/sefy/reference/merge/) does it: items
-missing here are copied across, newer contents replace older ones, an item
-changed on both sides is **kept twice**, and nothing local is ever deleted.
+missing here are copied across, contents the other side moved on from here are
+brought up to date, an item changed on both sides keeps the other side's version
+in its [history](/sefy/reference/history/), and nothing local is ever deleted.
 
 That is the whole reason a transport carries a sealed blob it cannot read. Since
 it cannot tell what changed, it does not try — it fetches the other copy, and
 sefy decides, with both sides open and both passwords in hand.
 
 When both sides changed the same item, the output is the same loud report
-`merge` gives, and the same cleanup applies:
+`merge` gives, and says where the version that lost went:
 
 ```console
-1 item changed on both sides and could not be resolved here.
-This vault's version was kept; the incoming one is beside it:
-  "mail" → also kept as "mail (conflicted copy)"
-Compare them, keep the right one, and remove the other.
+1 item changed on both sides.
+The copy changed more recently is current; the other is kept in the item's history:
+  "mail" (this vault's is current): sefy history 2
+Compare with sefy history ID VERSION; bring one back with sefy restore ID VERSION.
 ```
 
 ## The remote copy's password

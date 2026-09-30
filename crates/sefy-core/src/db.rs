@@ -5,6 +5,7 @@
 //! never pointed at a path, so no plaintext page ever reaches the disk.
 
 use crate::error::{Error, Result};
+use crate::history::{self, Version};
 use crate::model::{
     Field, Item, ItemKind, ItemSummary, LEGACY_LOGIN_NAME, NewItem, Payload, Query,
 };
@@ -19,8 +20,36 @@ use std::io::Cursor;
 /// with `fields`, so that a kind of record costs a template rather than a
 /// table — a vault written by 0.6.0 or earlier is migrated on load, not
 /// rejected. Version 4 added `meta`, where a fact about the vault itself lives
-/// rather than about any item in it.
-pub const SCHEMA_VERSION: i64 = 4;
+/// rather than about any item in it. Version 5 added history: `versions`, and
+/// the columns on `items` that name the version its contents are.
+pub const SCHEMA_VERSION: i64 = 5;
+
+/// Identity and origin of one state of an item's contents: a [`Version`]
+/// without the contents.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stamp {
+    /// Identity of the version, the same in every vault that holds it.
+    pub uuid: String,
+    /// Place in the item's line of edits.
+    pub seq: i64,
+    /// When the contents were written, seconds since the Unix epoch.
+    pub made_at: i64,
+    /// Name of the machine they were written on, when it was known.
+    pub device: Option<String>,
+}
+
+impl Stamp {
+    /// A version not seen before: `seq` in its line, written at `made_at` on
+    /// `device`.
+    pub fn new(seq: i64, made_at: i64, device: Option<&str>) -> Result<Self> {
+        Ok(Self {
+            uuid: new_uuid()?,
+            seq,
+            made_at,
+            device: device.map(str::to_owned),
+        })
+    }
+}
 
 /// Opens an empty in-memory database with the current schema.
 pub fn create() -> Result<Connection> {
@@ -65,6 +94,7 @@ fn migrate(connection: &Connection) -> Result<()> {
         migrate_to_v2(connection)?;
         migrate_to_v3(connection)?;
         migrate_to_v4(connection)?;
+        migrate_to_v5(connection)?;
         connection.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
 
@@ -72,9 +102,360 @@ fn migrate(connection: &Connection) -> Result<()> {
     // readable *and writable* by an older build, which knows nothing of what
     // was added here. So an up-to-date `user_version` does not prove every row
     // has been brought along — only that this database passed through here
-    // once. Both passes below only ever do work on a row that needs it.
+    // once. Every pass below only ever does work on a row that needs it.
     assign_missing_uuids(connection)?;
     move_credentials_into_fields(connection)?;
+    assign_missing_versions(connection)?;
+    Ok(())
+}
+
+/// The columns on `items` that stamp the version its contents are.
+///
+/// Nullable, because an older build inserts rows without them; the pass in
+/// [`assign_missing_versions`] fills them on the next open.
+const VERSION_COLUMNS: [(&str, &str); 4] = [
+    ("version", "TEXT"),
+    ("version_seq", "INTEGER"),
+    ("version_at", "INTEGER"),
+    ("version_device", "TEXT"),
+];
+
+/// Adds history: every item's earlier contents, and a name for its current
+/// ones.
+///
+/// The current contents stay where they were, in `notes`, `fields` and
+/// `files`; what `items` gains is the stamp of the version they are. Earlier
+/// versions go to `versions` whole. Keeping the current one there as well was
+/// the other way to do it, and the worse one: a second copy of every secret,
+/// which an older build — knowing nothing of the table — would leave stale at
+/// its first edit.
+///
+/// Removing an item removes its history with it, through the foreign key: that
+/// holds for an older build's deletes too, since the cascade is part of the
+/// table rather than of the code.
+fn migrate_to_v5(connection: &Connection) -> Result<()> {
+    for (column, kind) in VERSION_COLUMNS {
+        let already_there = connection
+            .prepare("SELECT 1 FROM pragma_table_info('items') WHERE name = ?1")?
+            .exists(params![column])?;
+        if !already_there {
+            connection.execute_batch(&format!("ALTER TABLE items ADD COLUMN {column} {kind}"))?;
+        }
+    }
+
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS versions (
+             id       INTEGER PRIMARY KEY,
+             item_id  INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+             uuid     TEXT    NOT NULL UNIQUE,
+             seq      INTEGER NOT NULL,
+             made_at  INTEGER NOT NULL,
+             device   TEXT,
+             conflict INTEGER NOT NULL DEFAULT 0,
+             payload  TEXT    NOT NULL
+         );
+
+         CREATE INDEX IF NOT EXISTS idx_versions_item ON versions(item_id, seq);",
+    )?;
+
+    assign_missing_versions(connection)?;
+    Ok(())
+}
+
+/// Stamps every item whose contents do not yet name their version.
+///
+/// A row gets here by predating history, or by being inserted by an older
+/// build into a vault this one has already migrated — the uuid lesson again.
+/// Either way the contents it holds become its first known version. When they
+/// were written is not known; the row's last change is the latest it can have
+/// been, and the machine is not known at all.
+fn assign_missing_versions(connection: &Connection) -> Result<()> {
+    let missing: Vec<(i64, String, i64)> = connection
+        .prepare("SELECT id, uuid, updated_at FROM items WHERE version IS NULL OR version = ''")?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<std::result::Result<_, _>>()?;
+
+    for (id, item_uuid, updated_at) in missing {
+        let seq = next_seq(connection, id)?;
+        connection.execute(
+            "UPDATE items SET version = ?2, version_seq = ?3, version_at = ?4, version_device = NULL
+                 WHERE id = ?1",
+            params![id, first_version_uuid(&item_uuid), seq, updated_at],
+        )?;
+    }
+    Ok(())
+}
+
+/// The identity of an item's first known version, when it was given none.
+///
+/// Derived from the item's own identity rather than drawn at random. Two copies
+/// of a vault from before history, migrated separately on two machines, then
+/// name the same contents the same way; random names would make them strangers
+/// to each other, and the first edit on either machine a conflict on the other.
+/// Copies that had already drifted end up with one name over two contents,
+/// which a merge tells apart by the contents — see `keep_version`.
+fn first_version_uuid(item_uuid: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let digest = Sha256::digest(format!("sefy: first version of {item_uuid}").as_bytes());
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest[..16]);
+    // Version 8, variant 1: an identity made by a rule of its own rather than
+    // from randomness, and marked as such.
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    hyphenated(&bytes)
+}
+
+/// The place in an item's line that its next version takes.
+///
+/// One past everything it has had, current or kept: after a merge, a version
+/// kept from the other side may well be numbered past the current one.
+fn next_seq(connection: &Connection, id: i64) -> Result<i64> {
+    let highest: Option<i64> = connection.query_row(
+        "SELECT MAX(seq) FROM (
+             SELECT version_seq AS seq FROM items WHERE id = ?1
+             UNION ALL
+             SELECT seq FROM versions WHERE item_id = ?1
+         )",
+        params![id],
+        |row| row.get(0),
+    )?;
+    Ok(highest.unwrap_or(0) + 1)
+}
+
+/// The stamp of the version an item's contents are.
+pub fn stamp_of(connection: &Connection, id: i64) -> Result<Stamp> {
+    connection
+        .query_row(
+            "SELECT version, version_seq, version_at, version_device FROM items WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(Stamp {
+                    uuid: row.get(0)?,
+                    seq: row.get(1)?,
+                    made_at: row.get(2)?,
+                    device: row.get(3)?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or(Error::ItemNotFound(id))
+}
+
+/// An item's earlier versions, oldest first; the current one is not among them.
+///
+/// Ordered along the line of edits, then by time, then by the order they
+/// arrived in this vault — the last only settles a tie, and never has to be
+/// read as meaning anything.
+pub fn past_versions(connection: &Connection, id: i64) -> Result<Vec<Version>> {
+    let mut statement = connection.prepare(
+        "SELECT uuid, seq, made_at, device, conflict, payload FROM versions
+             WHERE item_id = ?1
+             ORDER BY seq, made_at, id",
+    )?;
+    let rows = statement
+        .query_map(params![id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, bool>(4)?,
+                zeroize::Zeroizing::new(row.get::<_, String>(5)?),
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    rows.into_iter()
+        .map(|(uuid, seq, made_at, device, conflict, payload)| {
+            Ok(Version {
+                uuid,
+                seq,
+                made_at,
+                device,
+                conflict,
+                current: false,
+                payload: history::decode(&payload)?,
+            })
+        })
+        .collect()
+}
+
+/// Every version of an item's contents, oldest first and the current one last.
+pub fn history(connection: &Connection, id: i64) -> Result<Vec<Version>> {
+    let current = get_item(connection, id)?;
+    let stamp = stamp_of(connection, id)?;
+    let mut versions = past_versions(connection, id)?;
+    versions.push(Version {
+        uuid: stamp.uuid,
+        seq: stamp.seq,
+        made_at: stamp.made_at,
+        device: stamp.device,
+        conflict: false,
+        current: true,
+        payload: current.payload,
+    });
+    Ok(versions)
+}
+
+/// How many earlier versions of an item's contents are kept.
+pub fn count_past_versions(connection: &Connection, id: i64) -> Result<usize> {
+    let count: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM versions WHERE item_id = ?1",
+        params![id],
+        |row| row.get(0),
+    )?;
+    Ok(count as usize)
+}
+
+/// Keeps an earlier version of an item's contents, unless it already is kept.
+///
+/// Returns whether anything was written. A version already here under the same
+/// identity and with the same contents is the same version arriving twice —
+/// which every merge after the first one does — and is kept once. The same
+/// identity over different contents is not the same version: an older build
+/// rewrote the contents without knowing to name them anew. Then both are kept,
+/// the newcomer under an identity of its own, because a secret is not thrown
+/// away over a clash of names.
+pub fn keep_version(connection: &Connection, id: i64, version: &Version) -> Result<bool> {
+    let kept: Option<zeroize::Zeroizing<String>> = connection
+        .query_row(
+            "SELECT payload FROM versions WHERE uuid = ?1",
+            params![version.uuid],
+            |row| row.get::<_, String>(0).map(zeroize::Zeroizing::new),
+        )
+        .optional()?;
+
+    let taken = match kept {
+        Some(json) => {
+            if history::decode(&json).is_ok_and(|payload| payload == version.payload) {
+                return Ok(false);
+            }
+            true
+        }
+        // The current contents are a version too, named on `items` rather than
+        // in the table; the same identity there is the same question.
+        None if stamp_of(connection, id)?.uuid == version.uuid => {
+            if get_item(connection, id)?.payload == version.payload {
+                return Ok(false);
+            }
+            true
+        }
+        None => false,
+    };
+
+    let uuid = if taken {
+        new_uuid()?
+    } else {
+        version.uuid.clone()
+    };
+    let payload = history::encode(&version.payload)?;
+    connection.execute(
+        "INSERT INTO versions (item_id, uuid, seq, made_at, device, conflict, payload)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            id,
+            uuid,
+            version.seq,
+            version.made_at,
+            version.device,
+            version.conflict,
+            payload.as_str()
+        ],
+    )?;
+    Ok(true)
+}
+
+/// Puts new contents in place and keeps the ones they replace as a version.
+///
+/// In that order, and not the obvious other one: contents are only told apart
+/// from the current ones once they have stopped being current, and keeping
+/// them first would find them still in place and skip them as already there.
+/// `conflict` marks the replaced contents as the side that lost a merge.
+pub fn replace_contents(
+    connection: &Connection,
+    id: i64,
+    payload: &Payload,
+    stamp: &Stamp,
+    conflict: bool,
+) -> Result<()> {
+    let replaced = get_item(connection, id)?.payload;
+    let replaced_stamp = stamp_of(connection, id)?;
+
+    // One identity, one contents. Contents an older build rewrote arrive under
+    // the identity of what they replaced, and that identity may already name a
+    // kept version here; the newcomer then takes an identity of its own rather
+    // than making one name mean two things.
+    let kept_under_that_name: Option<zeroize::Zeroizing<String>> = connection
+        .query_row(
+            "SELECT payload FROM versions WHERE uuid = ?1",
+            params![stamp.uuid],
+            |row| row.get::<_, String>(0).map(zeroize::Zeroizing::new),
+        )
+        .optional()?;
+    let uuid = match kept_under_that_name {
+        Some(json) if !history::decode(&json).is_ok_and(|kept| &kept == payload) => new_uuid()?,
+        _ => stamp.uuid.clone(),
+    };
+
+    delete_payload(connection, id)?;
+    insert_payload(connection, id, payload)?;
+    connection.execute(
+        "UPDATE items SET kind = ?2, version = ?3, version_seq = ?4, version_at = ?5,
+                          version_device = ?6
+             WHERE id = ?1",
+        params![
+            id,
+            payload.kind().as_str(),
+            uuid,
+            stamp.seq,
+            stamp.made_at,
+            stamp.device
+        ],
+    )?;
+
+    keep_version(
+        connection,
+        id,
+        &Version {
+            uuid: replaced_stamp.uuid,
+            seq: replaced_stamp.seq,
+            made_at: replaced_stamp.made_at,
+            device: replaced_stamp.device,
+            conflict,
+            current: false,
+            payload: replaced,
+        },
+    )?;
+    Ok(())
+}
+
+/// Replaces an item's title and tags, and when it last changed, leaving its
+/// contents and their version alone.
+pub fn set_labels(
+    connection: &mut Connection,
+    id: i64,
+    title: &str,
+    tags: &[String],
+    updated_at: i64,
+) -> Result<()> {
+    let transaction = connection.transaction()?;
+    transaction.execute(
+        "UPDATE items SET title = ?2, updated_at = ?3 WHERE id = ?1",
+        params![id, title, updated_at],
+    )?;
+    set_tags(&transaction, id, tags)?;
+    transaction.commit()?;
+    Ok(())
+}
+
+/// Sets when an item last changed, without changing anything else.
+pub fn set_updated_at(connection: &Connection, id: i64, updated_at: i64) -> Result<()> {
+    connection.execute(
+        "UPDATE items SET updated_at = ?2 WHERE id = ?1",
+        params![id, updated_at],
+    )?;
     Ok(())
 }
 
@@ -290,16 +671,20 @@ pub fn new_uuid() -> Result<String> {
     // Version 4, variant 1 — the bits that say "this was made from randomness".
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Ok(hyphenated(&bytes))
+}
 
+/// Sixteen bytes in the usual hyphenated UUID form.
+fn hyphenated(bytes: &[u8; 16]) -> String {
     let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-    Ok(format!(
+    format!(
         "{}-{}-{}-{}-{}",
         &hex[0..8],
         &hex[8..12],
         &hex[12..16],
         &hex[16..20],
         &hex[20..32]
-    ))
+    )
 }
 
 fn migrate_to_v1(connection: &Connection) -> Result<()> {
@@ -351,11 +736,20 @@ fn migrate_to_v1(connection: &Connection) -> Result<()> {
 }
 
 /// Inserts an item and returns its identifier.
-pub fn insert_item(connection: &mut Connection, item: NewItem, now: i64) -> Result<i64> {
-    insert_item_with_uuid(connection, item, &new_uuid()?, now, now)
+///
+/// Its contents are the first version in its line, written now on `device`.
+pub fn insert_item(
+    connection: &mut Connection,
+    item: NewItem,
+    now: i64,
+    device: Option<&str>,
+) -> Result<i64> {
+    let stamp = Stamp::new(1, now, device)?;
+    insert_item_with_uuid(connection, item, &new_uuid()?, now, now, &stamp)
 }
 
-/// Inserts an item under an identity and timestamps decided by the caller.
+/// Inserts an item under an identity, timestamps and a version decided by the
+/// caller.
 ///
 /// Merging and importing need this: an item arriving from another vault keeps
 /// the identity and the history it already had, or the two copies would stop
@@ -366,13 +760,26 @@ pub fn insert_item_with_uuid(
     uuid: &str,
     created_at: i64,
     updated_at: i64,
+    stamp: &Stamp,
 ) -> Result<i64> {
     let transaction = connection.transaction()?;
     let kind = item.payload.kind();
 
     transaction.execute(
-        "INSERT INTO items (uuid, title, kind, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![uuid, item.title, kind.as_str(), created_at, updated_at],
+        "INSERT INTO items (uuid, title, kind, created_at, updated_at,
+                            version, version_seq, version_at, version_device)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            uuid,
+            item.title,
+            kind.as_str(),
+            created_at,
+            updated_at,
+            stamp.uuid,
+            stamp.seq,
+            stamp.made_at,
+            stamp.device
+        ],
     )?;
     let id = transaction.last_insert_rowid();
 
@@ -519,6 +926,10 @@ fn normalize_tags(tags: &[String]) -> Vec<String> {
 }
 
 /// Replaces the title, payload and tags of an existing item.
+///
+/// New contents become a new version, written now on `device`, and the ones
+/// they replace are kept. Contents identical to what is there are no new
+/// version: history records what a value was, not how often it was saved.
 pub fn update_item(
     connection: &mut Connection,
     id: i64,
@@ -526,6 +937,7 @@ pub fn update_item(
     payload: Option<Payload>,
     tags: Option<Vec<String>>,
     now: i64,
+    device: Option<&str>,
 ) -> Result<()> {
     let transaction = connection.transaction()?;
 
@@ -556,12 +968,19 @@ pub fn update_item(
                 expected: kind.as_str().to_owned(),
             });
         }
-        delete_payload(&transaction, id)?;
-        insert_payload(&transaction, id, &payload)?;
-        transaction.execute(
-            "UPDATE items SET kind = ?2 WHERE id = ?1",
-            params![id, kind.as_str()],
-        )?;
+        // Refused before the comparison below, which would find two unknown
+        // payloads of one kind equal and quietly do nothing: a caller asking
+        // to write contents this build cannot hold has to hear that it cannot.
+        if let Payload::Unknown { kind } = &payload {
+            return Err(Error::UnknownItemKind {
+                id,
+                kind: kind.clone(),
+            });
+        }
+        if payload != get_item(&transaction, id)?.payload {
+            let stamp = Stamp::new(next_seq(&transaction, id)?, now, device)?;
+            replace_contents(&transaction, id, &payload, &stamp, false)?;
+        }
     }
 
     if let Some(tags) = tags {
@@ -831,6 +1250,7 @@ mod tests {
                 },
             ),
             10,
+            None,
         )
         .unwrap();
 
@@ -857,6 +1277,7 @@ mod tests {
                 ),
             ),
             10,
+            None,
         )
         .unwrap();
 
@@ -885,6 +1306,7 @@ mod tests {
                 ),
             ),
             10,
+            None,
         )
         .unwrap();
 

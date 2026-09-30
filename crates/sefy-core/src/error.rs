@@ -75,6 +75,34 @@ pub enum Error {
         kind: String,
     },
 
+    /// The item has no earlier version by that identity.
+    #[error("item {id} has no version {version}")]
+    VersionNotFound {
+        /// Item that was addressed.
+        id: i64,
+        /// Identity of the version asked for.
+        version: String,
+    },
+
+    /// A version asked to give back one field did not have it.
+    ///
+    /// Carries the names it did have, which are labels rather than values and
+    /// safe to show.
+    #[error("that version has no field named {name:?}")]
+    FieldNotInVersion {
+        /// The field asked for.
+        name: String,
+        /// The fields the version did hold.
+        available: Vec<String>,
+    },
+
+    /// A kept version could not be read back.
+    ///
+    /// Written by this build it cannot happen; a damaged or hand-edited
+    /// database can, and the version is reported rather than read as empty.
+    #[error("an earlier version of an item cannot be read")]
+    UnreadableVersion,
+
     /// The export file declares a version this build cannot read.
     #[error("unsupported export format version {0}; upgrade sefy")]
     UnsupportedExport(u32),

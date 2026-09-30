@@ -48,9 +48,17 @@ removed 5
 
 ## Removal is final
 
-There is no trash and no undo. The vault is rewritten without the item, under a
-fresh salt and nonce, so the previous contents are not recoverable from the new
-file.
+There is no trash and no undo. The item's [history](/sefy/reference/history/)
+goes with it — every earlier version of its contents — and the question says so
+when there is one:
+
+```console
+$ sefy rm mail
+remove "mail" (2) and 3 earlier versions? [y/N]
+```
+
+The vault is rewritten without the item, under a fresh salt and nonce, so the
+previous contents are not recoverable from the new file.
 
 A **backup copy** made earlier still holds the item — which is either your
 safety net or the thing to remember when you remove something on purpose.
@@ -58,4 +66,5 @@ safety net or the thing to remember when you remove something on purpose.
 ## Related
 
 - [`ls`](/sefy/reference/ls/) — check what you are about to remove
+- [`history`](/sefy/reference/history/) — what else goes with it
 - [Moving a vault between machines](/sefy/guides/moving-a-vault/) — backups

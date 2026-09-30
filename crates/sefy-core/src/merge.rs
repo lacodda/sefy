@@ -9,22 +9,33 @@
 //! Matching is by [`ItemSummary::uuid`](crate::ItemSummary::uuid), the identity
 //! an item keeps when it travels. Titles are not used: two accounts can share a
 //! name, and renaming an item must not turn it into a different one.
+//!
+//! Contents are decided by their [versions](crate::history), not by clocks.
+//! Each side knows which versions it has been through, so "the other copy is
+//! simply behind" and "both copies moved on" can be told apart — and only the
+//! second is a conflict.
 
 use crate::error::Result;
+use crate::history::Version;
 use crate::model::{NewItem, Payload};
 use crate::vault::Vault;
 
 /// What a merge did, and what it could not decide on its own.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MergeReport {
-    /// Items the destination did not have, copied across.
+    /// Items the destination did not have, copied across with their history.
     pub added: usize,
-    /// Items whose incoming copy was newer, updated in place.
+    /// Items whose contents, title or tags were taken from the other side
+    /// because it had moved on and this one had not.
     pub updated: usize,
-    /// Items already identical or already newer here, left alone.
+    /// Items already identical, or already ahead here, left alone.
     pub unchanged: usize,
-    /// Items where both sides changed and one version had to be kept aside.
+    /// Items whose contents changed on both sides; the older of the two was
+    /// kept in the item's history.
     pub conflicts: Vec<Conflict>,
+    /// Earlier versions this vault did not have, brought across into the
+    /// history of the items they belong to.
+    pub versions: usize,
     /// Items of a kind this build does not know, left where they were.
     ///
     /// A newer sefy wrote them, and this one holds their identity but not their
@@ -34,13 +45,25 @@ pub struct MergeReport {
     pub unsupported: usize,
 }
 
-/// One item that changed on both sides since the copies parted.
+/// One item whose contents changed on both sides since the copies parted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Conflict {
-    /// Title the item carries here.
+    /// The item, in this vault.
+    pub id: i64,
+    /// Title it carries here after the merge.
     pub title: String,
-    /// Title the losing copy was kept under.
-    pub kept_as: String,
+    /// Whose contents are current now; the other side's are in the item's
+    /// history, marked as a conflict.
+    pub current: Side,
+}
+
+/// One of the two vaults in a merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    /// The vault being merged into.
+    Here,
+    /// The vault being merged from.
+    There,
 }
 
 impl MergeReport {
@@ -48,25 +71,47 @@ impl MergeReport {
     ///
     /// Skipped items count as something to report even though nothing moved:
     /// "nothing to do" would be read as "the two copies agree", and they do
-    /// not — this build simply could not tell.
+    /// not — this build simply could not tell. History that came across counts
+    /// too: the vault is different for having it.
     pub fn is_empty(&self) -> bool {
-        self.added == 0 && self.updated == 0 && self.conflicts.is_empty() && self.unsupported == 0
+        self.added == 0
+            && self.updated == 0
+            && self.conflicts.is_empty()
+            && self.versions == 0
+            && self.unsupported == 0
     }
+}
+
+/// How the contents of one item compare between the two sides.
+enum Contents {
+    /// The same on both.
+    Agree,
+    /// The other side's are a version this side has already been past.
+    Behind,
+    /// This side's are a version the other side has already been past.
+    Ahead,
+    /// Each side has a version the other has never seen.
+    Diverged,
 }
 
 /// Folds the contents of `source` into `destination`.
 ///
 /// Item by item, matched on identity:
 ///
-/// - not here yet → copied across, keeping its identity and timestamps;
-/// - here and identical → left alone;
-/// - here and the incoming copy is newer → this one is updated;
-/// - here, changed on both sides → this one wins, and the incoming version is
-///   kept as a separate item rather than dropped.
+/// - not here yet → copied across with its identity, timestamps and history;
+/// - here → the earlier versions it has there and not here are added to its
+///   history, and then its contents are settled:
+///   - the same, or the other side's are a version this side has been past →
+///     left alone;
+///   - this side's are a version the other side has been past → the other
+///     side's become current, and these stay in history;
+///   - both moved on → the side changed more recently becomes current (on a
+///     tie, this one), and the other side's version is kept in history marked
+///     as a conflict.
 ///
-/// That last case is the one that matters. "Newest wins" is a reasonable rule
-/// for a title or a tag and a terrible one for a password: the older copy may
-/// be the one that still opens the account. Nothing here throws a secret away.
+/// Nothing here throws a secret away: every contents an item leaves behind
+/// become a version of it. Titles and tags are labels, where "newest wins" is
+/// the reasonable rule, and it is the rule they get.
 ///
 /// Items present here but absent there are never removed. A merge cannot tell
 /// "deleted over there" from "added over here" — the two look identical from
@@ -87,63 +132,118 @@ pub fn merge(destination: &mut Vault, source: &Vault) -> Result<MergeReport> {
             continue;
         }
 
-        let Some(existing_id) = destination.find_by_uuid(uuid)? else {
-            destination.add_existing(
+        let their_stamp = source.stamp(incoming_summary.id)?;
+        let their_past = source.past_versions(incoming_summary.id)?;
+
+        let Some(id) = destination.find_by_uuid(uuid)? else {
+            let (_, kept) = destination.add_travelled(
                 NewItem {
                     title: incoming.summary.title,
                     payload: incoming.payload,
                     tags: incoming.summary.tags,
                 },
                 uuid,
-                incoming.summary.created_at,
-                incoming.summary.updated_at,
+                (incoming.summary.created_at, incoming.summary.updated_at),
+                &their_stamp,
+                &their_past,
             )?;
             report.added += 1;
+            report.versions += kept;
             continue;
         };
 
-        let existing = destination.get(existing_id)?;
-        if same_contents(&existing.payload, &incoming.payload)
-            && existing.summary.title == incoming.summary.title
-            && existing.summary.tags == incoming.summary.tags
-        {
-            report.unchanged += 1;
-            continue;
+        let existing = destination.get(id)?;
+        let my_stamp = destination.stamp(id)?;
+        let my_past = destination.past_versions(id)?;
+
+        // Settled from what each side had been through *before* anything
+        // moved: the history brought across next would otherwise make this
+        // side look as though it had seen what it only just received.
+        let contents = if existing.payload == incoming.payload {
+            Contents::Agree
+        } else if been_through(&my_past, &their_stamp.uuid, &incoming.payload) {
+            Contents::Behind
+        } else if been_through(&their_past, &my_stamp.uuid, &existing.payload) {
+            Contents::Ahead
+        } else {
+            Contents::Diverged
+        };
+
+        for version in &their_past {
+            if destination.keep_version(id, version)? {
+                report.versions += 1;
+            }
         }
 
-        // Both carry the identity, and their contents differ. Whether that is a
-        // conflict depends on whether this side moved on since the incoming
-        // copy was last written.
-        //
         // Strictly older, not "older or the same". Timestamps here are whole
         // seconds, so two machines editing the same item within one second —
         // ordinary once a sync runs after both — carry the same one. Treating
-        // that as "the incoming copy is newer" would discard the local edit on
-        // a tie, which is the one thing this function promises not to do.
-        if existing.summary.updated_at < incoming.summary.updated_at {
-            destination.update(
-                existing_id,
-                Some(incoming.summary.title),
-                Some(incoming.payload),
-                Some(incoming.summary.tags),
+        // that as "the incoming copy is newer" would push the local edit out of
+        // the current contents on a tie, which is the one thing the local side
+        // never has to accept.
+        let theirs_newer = existing.summary.updated_at < incoming.summary.updated_at;
+
+        let mut moved = false;
+        match contents {
+            Contents::Agree | Contents::Behind => {}
+            Contents::Ahead => {
+                destination.take_contents(id, &incoming.payload, &their_stamp, false)?;
+                moved = true;
+            }
+            Contents::Diverged => {
+                if theirs_newer {
+                    destination.take_contents(id, &incoming.payload, &their_stamp, true)?;
+                } else {
+                    destination.keep_version(
+                        id,
+                        &Version {
+                            uuid: their_stamp.uuid.clone(),
+                            seq: their_stamp.seq,
+                            made_at: their_stamp.made_at,
+                            device: their_stamp.device.clone(),
+                            conflict: true,
+                            current: false,
+                            payload: incoming.payload.clone(),
+                        },
+                    )?;
+                }
+                moved = theirs_newer;
+            }
+        }
+
+        let labels_differ = existing.summary.title != incoming.summary.title
+            || existing.summary.tags != incoming.summary.tags;
+        let take_labels = labels_differ && theirs_newer;
+        let updated_at = existing.summary.updated_at.max(incoming.summary.updated_at);
+        if take_labels {
+            destination.set_labels(
+                id,
+                &incoming.summary.title,
+                &incoming.summary.tags,
+                updated_at,
             )?;
+        } else if moved {
+            destination.set_updated_at(id, updated_at)?;
+        }
+
+        if matches!(contents, Contents::Diverged) {
+            report.conflicts.push(Conflict {
+                id,
+                title: if take_labels {
+                    incoming.summary.title
+                } else {
+                    existing.summary.title
+                },
+                current: if theirs_newer {
+                    Side::There
+                } else {
+                    Side::Here
+                },
+            });
+        } else if moved || take_labels {
             report.updated += 1;
         } else {
-            let kept_as = conflict_title(&incoming.summary.title);
-            destination.add_existing(
-                NewItem {
-                    title: kept_as.clone(),
-                    payload: incoming.payload,
-                    tags: incoming.summary.tags,
-                },
-                &crate::db::new_uuid()?,
-                incoming.summary.created_at,
-                incoming.summary.updated_at,
-            )?;
-            report.conflicts.push(Conflict {
-                title: existing.summary.title,
-                kept_as,
-            });
+            report.unchanged += 1;
         }
     }
 
@@ -151,39 +251,244 @@ pub fn merge(destination: &mut Vault, source: &Vault) -> Result<MergeReport> {
     Ok(report)
 }
 
-/// Title the losing side of a conflict is kept under.
-fn conflict_title(title: &str) -> String {
-    format!("{title} (conflicted copy)")
+/// Whether a side has been through the version named `uuid` holding `payload`.
+///
+/// Both have to match. The identity alone is not enough: an older build that
+/// rewrote an item's contents left the identity as it was, and taking its edit
+/// for a version already seen would drop it without a word.
+fn been_through(past: &[Version], uuid: &str, payload: &Payload) -> bool {
+    past.iter()
+        .any(|version| version.uuid == uuid && &version.payload == payload)
 }
 
-/// Whether two payloads hold the same thing.
-///
-/// Kinds cannot change over an item's life, so payloads of different kinds
-/// under one identity mean the vaults disagree about what the item is; that
-/// counts as different, and the timestamps decide as usual.
-fn same_contents(left: &Payload, right: &Payload) -> bool {
-    match (left, right) {
-        (Payload::Note { text: a }, Payload::Note { text: b }) => a == b,
-        (
-            Payload::Fields {
-                kind: a,
-                fields: left,
-            },
-            Payload::Fields {
-                kind: b,
-                fields: right,
-            },
-        ) => a == b && left == right,
-        (
-            Payload::File {
-                filename: a,
-                bytes: left,
-            },
-            Payload::File {
-                filename: b,
-                bytes: right,
-            },
-        ) => a == b && left == right,
-        _ => false,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Field, ItemKind};
+    use std::path::PathBuf;
+
+    const PASSWORD: &[u8] = b"master password";
+    const SAME_MOMENT: i64 = 1_700_000_000;
+
+    fn note(text: &str) -> Payload {
+        Payload::Note {
+            text: text.to_owned(),
+        }
+    }
+
+    /// Two copies of one vault holding one note, as two machines have after a
+    /// copy, each told its own machine's name.
+    fn two_copies() -> (tempfile::TempDir, Vault, Vault, i64, i64) {
+        let directory = tempfile::tempdir().unwrap();
+        let here = directory.path().join("here.bak");
+        let there: PathBuf = directory.path().join("there.bak");
+
+        let mut origin = Vault::create(&here, PASSWORD).unwrap();
+        origin.set_device(Some("desk".to_owned()));
+        let id = origin.add(NewItem::new("bank", note("original"))).unwrap();
+        origin.save().unwrap();
+        std::fs::copy(&here, &there).unwrap();
+
+        let mut mine = Vault::open(&here, PASSWORD).unwrap();
+        mine.set_device(Some("desk".to_owned()));
+        let mut theirs = Vault::open(&there, PASSWORD).unwrap();
+        theirs.set_device(Some("laptop".to_owned()));
+        let their_id = theirs
+            .find_by_uuid(&mine.summary(id).unwrap().uuid)
+            .unwrap()
+            .unwrap();
+        (directory, mine, theirs, id, their_id)
+    }
+
+    fn text(vault: &Vault, id: i64) -> String {
+        match vault.get(id).unwrap().payload {
+            Payload::Note { text } => text,
+            other => panic!("expected a note, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn two_edits_in_the_same_second_are_a_conflict_not_a_silent_overwrite() {
+        // Timestamps are whole seconds, so two machines editing one item within
+        // the same second carry the same one — ordinary rather than exotic once
+        // a sync runs shortly after both edits. A tie must not be read as "the
+        // incoming copy is newer": the local edit stays current, and the other
+        // is kept rather than lost.
+        let (_directory, mut mine, mut theirs, id, their_id) = two_copies();
+        theirs
+            .update_at(
+                their_id,
+                None,
+                Some(note("changed there")),
+                None,
+                SAME_MOMENT,
+            )
+            .unwrap();
+        mine.update_at(id, None, Some(note("changed here")), None, SAME_MOMENT)
+            .unwrap();
+
+        let report = merge(&mut mine, &theirs).unwrap();
+
+        assert_eq!(report.updated, 0, "a tie is not an update");
+        assert_eq!(report.conflicts.len(), 1);
+        assert_eq!(report.conflicts[0].current, Side::Here);
+        assert_eq!(text(&mine, id), "changed here", "the local edit survives");
+
+        let history = mine.history(id).unwrap();
+        let kept = history
+            .iter()
+            .find(|version| version.conflict)
+            .expect("the incoming edit is in the history");
+        assert_eq!(kept.payload, note("changed there"), "and so does the other");
+        assert_eq!(
+            kept.device.as_deref(),
+            Some("laptop"),
+            "marked with the machine it came from"
+        );
+    }
+
+    #[test]
+    fn a_conflict_won_by_the_other_side_keeps_this_side_in_history() {
+        // The case the old merge got wrong: both sides changed, the incoming
+        // one was newer, and the local edit was overwritten with nothing kept.
+        let (_directory, mut mine, mut theirs, id, their_id) = two_copies();
+        mine.update_at(id, None, Some(note("mine, older")), None, 10)
+            .unwrap();
+        theirs
+            .update_at(their_id, None, Some(note("theirs, newer")), None, 20)
+            .unwrap();
+
+        let report = merge(&mut mine, &theirs).unwrap();
+
+        assert_eq!(report.conflicts.len(), 1);
+        assert_eq!(report.conflicts[0].current, Side::There);
+        assert_eq!(text(&mine, id), "theirs, newer");
+        let history = mine.history(id).unwrap();
+        let kept = history.iter().find(|version| version.conflict).unwrap();
+        assert_eq!(kept.payload, note("mine, older"));
+        assert_eq!(kept.device.as_deref(), Some("desk"));
+    }
+
+    #[test]
+    fn an_older_version_from_the_other_side_is_kept_in_history_not_beside() {
+        let (_directory, mut mine, mut theirs, id, their_id) = two_copies();
+        theirs
+            .update_at(their_id, None, Some(note("theirs, older")), None, 10)
+            .unwrap();
+        mine.update(id, None, Some(note("mine, newer")), None)
+            .unwrap();
+
+        let report = merge(&mut mine, &theirs).unwrap();
+
+        assert_eq!(report.conflicts.len(), 1);
+        assert_eq!(text(&mine, id), "mine, newer");
+        assert_eq!(
+            mine.list().unwrap().len(),
+            1,
+            "no second item: the losing version lives in the history"
+        );
+    }
+
+    #[test]
+    fn a_label_change_on_one_side_and_an_edit_on_the_other_are_no_conflict() {
+        // Only contents make versions. A rename over there and a new password
+        // here are two different things changing, and both are kept.
+        let (_directory, mut mine, mut theirs, id, their_id) = two_copies();
+        mine.update_at(id, None, Some(note("new text")), None, 10)
+            .unwrap();
+        theirs
+            .update_at(their_id, Some("renamed".to_owned()), None, None, 20)
+            .unwrap();
+
+        let report = merge(&mut mine, &theirs).unwrap();
+
+        assert!(report.conflicts.is_empty(), "{report:?}");
+        assert_eq!(report.updated, 1);
+        assert_eq!(text(&mine, id), "new text");
+        assert_eq!(mine.summary(id).unwrap().title, "renamed");
+    }
+
+    #[test]
+    fn an_edit_by_an_older_build_is_not_taken_for_a_version_already_seen() {
+        // An older build rewrites contents without naming a new version, so
+        // the incoming side still carries the identity this side has already
+        // been past. Matching on the identity alone would call the other side
+        // behind and drop its edit.
+        let (_directory, mut mine, theirs, id, their_id) = two_copies();
+        mine.update_at(id, None, Some(note("mine")), None, 10)
+            .unwrap();
+        theirs
+            .connection_for_tests()
+            .execute(
+                "UPDATE notes SET text = 'rewritten by an older build' WHERE item_id = ?1",
+                [their_id],
+            )
+            .unwrap();
+        theirs
+            .connection_for_tests()
+            .execute("UPDATE items SET updated_at = 20 WHERE id = ?1", [their_id])
+            .unwrap();
+
+        let report = merge(&mut mine, &theirs).unwrap();
+
+        assert_eq!(report.conflicts.len(), 1, "{report:?}");
+        assert_eq!(text(&mine, id), "rewritten by an older build");
+        let history = mine.history(id).unwrap();
+        assert!(
+            history
+                .iter()
+                .any(|version| version.payload == note("mine")),
+            "and this side's edit is kept"
+        );
+
+        // The rewrite came under the identity of the original, which is kept
+        // here already; one identity must not name two different contents.
+        let mut identities: Vec<&str> = history
+            .iter()
+            .map(|version| version.uuid.as_str())
+            .collect();
+        identities.sort_unstable();
+        identities.dedup();
+        assert_eq!(identities.len(), history.len(), "{history:?}");
+    }
+
+    #[test]
+    fn a_record_that_diverged_keeps_both_passwords() {
+        let directory = tempfile::tempdir().unwrap();
+        let here = directory.path().join("here.bak");
+        let there = directory.path().join("there.bak");
+        let login = |password: &str| {
+            Payload::fields(
+                ItemKind::Login,
+                [
+                    Field::public("login", "ada"),
+                    Field::secret("password", password),
+                ],
+            )
+        };
+
+        let mut mine = Vault::create(&here, PASSWORD).unwrap();
+        let id = mine.add(NewItem::new("mail", login("first"))).unwrap();
+        mine.save().unwrap();
+        std::fs::copy(&here, &there).unwrap();
+        let mut theirs = Vault::open(&there, PASSWORD).unwrap();
+
+        mine.update_at(id, None, Some(login("from here")), None, 10)
+            .unwrap();
+        theirs
+            .update_at(id, None, Some(login("from there")), None, 20)
+            .unwrap();
+
+        merge(&mut mine, &theirs).unwrap();
+
+        let kept: Vec<Payload> = mine
+            .history(id)
+            .unwrap()
+            .into_iter()
+            .map(|version| version.payload)
+            .collect();
+        for password in ["first", "from here", "from there"] {
+            assert!(kept.contains(&login(password)), "{password} was lost");
+        }
     }
 }

@@ -884,109 +884,120 @@ fn a_newer_version_from_the_other_side_wins() {
 
     let mut other = Vault::open(&there.path, PASSWORD).unwrap();
     let their_id = other.find_by_uuid(&uuid).unwrap().unwrap();
-    // Re-inserted under the same identity with a timestamp explicitly later
-    // than the copy here, whose own is "now".
-    other.remove(their_id).unwrap();
     other
-        .add_existing(
-            NewItem::new("bank", note("changed there")),
-            &uuid,
-            0,
-            i64::MAX,
-        )
+        .update(their_id, None, Some(note("changed there")), None)
         .unwrap();
     other.save().unwrap();
 
     let mut vault = Vault::open(&here.path, PASSWORD).unwrap();
     let report = sefy_core::merge(&mut vault, &other).unwrap();
 
+    // This side never moved from the version the other side started from, so
+    // there is nothing to conflict with: the other side is simply ahead.
     assert_eq!(report.updated, 1);
     assert!(report.conflicts.is_empty());
     let id = vault.find_by_uuid(&uuid).unwrap().unwrap();
     assert_eq!(vault.get(id).unwrap().payload, note("changed there"));
+    assert_eq!(
+        vault.earlier_versions(id).unwrap(),
+        1,
+        "the original is kept"
+    );
 }
 
 #[test]
-fn two_edits_in_the_same_second_are_a_conflict_not_a_silent_overwrite() {
-    // Timestamps here are whole seconds, so two machines editing one item
-    // within the same second carry the same one — which is ordinary rather
-    // than exotic once a sync runs shortly after both edits. A tie must not be
-    // read as "the incoming copy is newer": that would discard the local edit
-    // without a word, which is precisely what merge promises never to do.
+fn an_older_copy_from_the_other_side_changes_nothing_here() {
+    // The mirror image: this side moved on, the other did not. Its contents
+    // are a version this side has already been past.
     let (here, there, uuid) = two_copies();
-    const SAME_MOMENT: i64 = 1_700_000_000;
-
-    let mut other = Vault::open(&there.path, PASSWORD).unwrap();
-    let their_id = other.find_by_uuid(&uuid).unwrap().unwrap();
-    other.remove(their_id).unwrap();
-    other
-        .add_existing(
-            NewItem::new("bank", note("changed there")),
-            &uuid,
-            0,
-            SAME_MOMENT,
-        )
-        .unwrap();
-    other.save().unwrap();
+    let other = Vault::open(&there.path, PASSWORD).unwrap();
 
     let mut vault = Vault::open(&here.path, PASSWORD).unwrap();
-    let mine = vault.find_by_uuid(&uuid).unwrap().unwrap();
-    vault.remove(mine).unwrap();
+    let id = vault.find_by_uuid(&uuid).unwrap().unwrap();
     vault
-        .add_existing(
-            NewItem::new("bank", note("changed here")),
-            &uuid,
-            0,
-            SAME_MOMENT,
-        )
+        .update(id, None, Some(note("changed here")), None)
         .unwrap();
 
     let report = sefy_core::merge(&mut vault, &other).unwrap();
 
-    assert_eq!(report.updated, 0, "a tie is not an update");
-    assert_eq!(report.conflicts.len(), 1);
-
-    let mine = vault.find_by_uuid(&uuid).unwrap().unwrap();
-    assert_eq!(
-        vault.get(mine).unwrap().payload,
-        note("changed here"),
-        "the local edit survives"
-    );
-    let kept = vault.resolve(&report.conflicts[0].kept_as).unwrap();
-    assert_eq!(
-        vault.get(kept.id).unwrap().payload,
-        note("changed there"),
-        "and so does the incoming one"
-    );
+    assert_eq!(report.unchanged, 1);
+    assert!(report.conflicts.is_empty());
+    assert_eq!(vault.get(id).unwrap().payload, note("changed here"));
 }
+
 #[test]
-fn an_older_version_from_the_other_side_is_kept_beside_the_newer_one() {
-    // Both sides changed. Nothing is thrown away: "newest wins" is fine for a
-    // title and ruinous for a password, so the loser stays in the vault.
+fn history_that_arrives_twice_is_kept_once() {
+    // A sync runs again and again between the same two copies, and each time
+    // the other side's history comes along whole. Keeping it by the versions'
+    // own identity is what stops it from doubling every time.
     let (here, there, uuid) = two_copies();
 
     let mut other = Vault::open(&there.path, PASSWORD).unwrap();
     let their_id = other.find_by_uuid(&uuid).unwrap().unwrap();
-    other.remove(their_id).unwrap();
-    other
-        .add_existing(NewItem::new("bank", note("theirs, older")), &uuid, 0, 10)
-        .unwrap();
+    for text in ["second", "third", "fourth"] {
+        other
+            .update(their_id, None, Some(note(text)), None)
+            .unwrap();
+    }
     other.save().unwrap();
 
     let mut vault = Vault::open(&here.path, PASSWORD).unwrap();
-    let mine = vault.find_by_uuid(&uuid).unwrap().unwrap();
-    vault
-        .update(mine, None, Some(note("mine, newer")), None)
+    let id = vault.find_by_uuid(&uuid).unwrap().unwrap();
+
+    let first = sefy_core::merge(&mut vault, &other).unwrap();
+    let after_first = vault.history(id).unwrap();
+    let second = sefy_core::merge(&mut vault, &other).unwrap();
+    let after_second = vault.history(id).unwrap();
+
+    assert_eq!(first.versions, 2, "second and third came across");
+    assert_eq!(after_first.len(), 4, "original, second, third, fourth");
+    assert!(second.is_empty(), "{second:?}");
+    assert_eq!(after_second, after_first);
+
+    // And merged back the other way, nothing is new over there either.
+    let mut other = other;
+    let back = sefy_core::merge(&mut other, &vault).unwrap();
+    assert!(back.is_empty(), "{back:?}");
+    assert_eq!(other.history(their_id).unwrap().len(), 4);
+}
+
+#[test]
+fn a_conflict_travels_back_as_history_rather_than_as_a_new_conflict() {
+    // After a conflict is settled on one machine, syncing the result back to
+    // the other must not raise it again there: the other machine's version is
+    // in the history it receives, so it is simply behind.
+    let (here, there, uuid) = two_copies();
+
+    let mut other = Vault::open(&there.path, PASSWORD).unwrap();
+    let their_id = other.find_by_uuid(&uuid).unwrap().unwrap();
+    other
+        .update(their_id, None, Some(note("changed there")), None)
         .unwrap();
 
-    let report = sefy_core::merge(&mut vault, &other).unwrap();
+    let mut vault = Vault::open(&here.path, PASSWORD).unwrap();
+    let id = vault.find_by_uuid(&uuid).unwrap().unwrap();
+    vault
+        .update(id, None, Some(note("changed here")), None)
+        .unwrap();
 
-    assert_eq!(report.conflicts.len(), 1);
-    assert_eq!(report.conflicts[0].title, "bank");
-    assert_eq!(vault.get(mine).unwrap().payload, note("mine, newer"));
+    let there_to_here = sefy_core::merge(&mut vault, &other).unwrap();
+    assert_eq!(there_to_here.conflicts.len(), 1);
 
-    let kept = vault.resolve(&report.conflicts[0].kept_as).unwrap();
-    assert_eq!(vault.get(kept.id).unwrap().payload, note("theirs, older"));
+    let here_to_there = sefy_core::merge(&mut other, &vault).unwrap();
+    assert!(
+        here_to_there.conflicts.is_empty(),
+        "settled once, not twice: {here_to_there:?}"
+    );
+    assert_eq!(
+        other.get(their_id).unwrap().payload,
+        vault.get(id).unwrap().payload,
+        "both machines now agree"
+    );
+    assert_eq!(
+        other.history(their_id).unwrap().len(),
+        vault.history(id).unwrap().len(),
+        "and hold the same history"
+    );
 }
 
 #[test]

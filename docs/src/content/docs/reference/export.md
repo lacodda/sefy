@@ -85,6 +85,15 @@ and falls back to the flat keys when they are not, so an export written before
 of duplicating it. Leave it out when writing an export by hand — an entry
 without one is simply added.
 
+## What it leaves out
+
+An export holds each item's **current** contents. Its
+[history](/sefy/reference/history/) — the earlier versions an edit or a merge
+kept — stays in the vault: an export is a snapshot to move or keep elsewhere,
+and a file of every password an account has ever had, in the clear, is a larger
+exposure than that calls for. To carry the history too, carry the vault file,
+which is complete on its own.
+
 ## Related
 
 - [`import`](/sefy/reference/import/) — reading one back in

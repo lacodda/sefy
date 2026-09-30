@@ -86,6 +86,14 @@ $ sefy edit "bank card"
 error: nothing to change; pass --title, --tag, or a field to edit
 ```
 
+## What an edit keeps
+
+A change to a note's text or a record's fields keeps what it replaced as a
+version of the item — [`history`](/sefy/reference/history/) lists them and
+[`restore`](/sefy/reference/restore/) brings one back. A new title or new tags
+are labels, not contents, and keep nothing: renaming an item is not something to
+go back from.
+
 ## Tags are replaced, not added
 
 `--tag` sets the item's tags to exactly what you list — it does not append. To
@@ -109,3 +117,4 @@ reach. If that matters for a particular note, use `--text`.
 
 - [`add`](/sefy/reference/add/) — the fields each kind carries
 - [`rm`](/sefy/reference/rm/) — removing an item instead
+- [`history`](/sefy/reference/history/) — what an edit replaced

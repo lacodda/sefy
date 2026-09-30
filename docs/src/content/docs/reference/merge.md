@@ -19,7 +19,7 @@ sefy merge <FILE> [OPTIONS]
 ```console
 $ sefy merge ~/from-laptop.bak
 Password for /home/you/from-laptop.bak:
-merged: 1 added, 1 updated, 1 unchanged
+merged: 1 added, 1 updated, 1 unchanged; 2 earlier versions brought across
 ```
 
 The other vault's password is asked for separately, because a copy from another
@@ -37,38 +37,64 @@ one.
 
 | On the other side | Here | Result |
 | --- | --- | --- |
-| present | missing | copied across, with its identity and dates |
-| present | identical | left alone |
-| newer | older | this one is updated |
-| older | newer, also changed | **both are kept** — see below |
+| present | missing | copied across, with its identity, dates and history |
+| present | the same contents | left alone |
+| a version this side has been past | moved on | left alone |
+| moved on | a version the other side has been past | the other side's contents become current |
+| moved on | moved on too | **a conflict** — see below |
 | missing | present | left alone |
+
+Contents are settled by their [versions](/sefy/reference/history/), not by the
+clock. Each side knows which versions its contents have been through, so "the
+other copy is simply behind" and "both copies changed" can be told apart — and
+only the second is a conflict. Whatever contents an item leaves behind become a
+version in its history; nothing is overwritten.
+
+Earlier versions travel too. A merge brings across every version the other side
+has and this one does not, each kept once however many times it arrives — so
+two machines that sync end up with the same history.
+
+Titles and tags are labels, not contents: for them the side changed more
+recently wins, and that never counts as a conflict.
 
 ## When both sides changed
 
-The interesting case. If an item changed here *and* there since the copies
-parted, sefy does not pick a winner:
+The interesting case. If an item's contents changed here *and* there since the
+copies parted, the copy changed more recently becomes current — on a tie, this
+one — and the other is kept in the item's history, marked as having lost a
+conflict:
 
 ```console
 $ sefy merge ~/from-laptop.bak
-merged: 0 added, 0 updated, 0 unchanged
+merged: 0 added, 0 updated, 3 unchanged
 
-1 item changed on both sides and could not be resolved here.
-This vault's version was kept; the incoming one is beside it:
-  "mail" → also kept as "mail (conflicted copy)"
-Compare them, keep the right one, and remove the other.
+1 item changed on both sides.
+The copy changed more recently is current; the other is kept in the item's history:
+  "mail" (the other copy's is current): sefy history 2
+Compare with sefy history ID VERSION; bring one back with sefy restore ID VERSION.
 ```
 
-Both versions are now in the vault, and you decide:
+Nothing is thrown away, and nothing is added to the list: there is still one
+`mail`, and the version that lost is one line in its history, with the machine
+it was written on.
 
-```sh
-sefy get mail                      # this vault's version
-sefy get "mail (conflicted copy)"  # the one that arrived
-sefy rm "mail (conflicted copy)"   # once you have chosen
+```console
+$ sefy history mail
+"mail" (login), 3 versions
+
+  1  2026-08-02 09:14 UTC  desk    created
+  2  2026-09-20 08:01 UTC  desk    password  (lost a merge conflict)
+  3  2026-09-20 08:03 UTC  laptop  password  (current)
 ```
 
 "Newest wins" is a fine rule for a title and a ruinous one for a password: the
-older copy may be the one that still opens the account. Nothing here throws a
-secret away on a timestamp.
+older copy may be the one that still opens the account. That is why the loser
+is kept, and why [`restore`](/sefy/reference/restore/) brings it back — whole,
+or just the password.
+
+Once settled on one machine, a conflict does not come back on the other: the
+version it lost to arrives there with the history, and that machine is simply
+behind.
 
 ## Nothing is ever deleted
 
@@ -103,5 +129,6 @@ machines saving the same file means the second save wins whole.
 
 - [Moving a vault between machines](/sefy/guides/moving-a-vault/) — how copies drift in the first place
 - [`import`](/sefy/reference/import/) — bringing in contents from a plain JSON export
-- [`rm`](/sefy/reference/rm/) — clearing up after a conflict
+- [`history`](/sefy/reference/history/) — where a conflict ends up
+- [`restore`](/sefy/reference/restore/) — choosing the other side after all
 - [Versions and compatibility](/sefy/concepts/versions/) — what a merge leaves where it is

@@ -47,10 +47,12 @@ guess about whether it was needed.
 ## Conflicts
 
 A sync merges, so it reports conflicts exactly as
-[`pull`](/sefy/reference/pull/) and [`merge`](/sefy/reference/merge/) do: both
-versions are kept, and you decide. Note that the conflicted copy is published
-along with everything else, so the other machines will see it too — resolve it
-on one machine and sync again.
+[`pull`](/sefy/reference/pull/) and [`merge`](/sefy/reference/merge/) do: the
+copy changed more recently is current, and the other is kept in the item's
+[history](/sefy/reference/history/). What goes up carries that history, so the
+other machines receive the settled item and the version that lost — the
+conflict is settled once, not once per machine. To choose the other version
+after all, [`restore`](/sefy/reference/restore/) it and sync again.
 
 ## Related
 

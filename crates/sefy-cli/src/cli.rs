@@ -63,6 +63,22 @@ pub enum Command {
     /// Change an item's title, contents or tags.
     Edit(EditArgs),
 
+    /// List the earlier versions of an item's contents, or compare one with
+    /// what is there now.
+    ///
+    /// Every change to a note's text or a record's fields keeps what it
+    /// replaced, and so does a merge that had to choose. Secret values are
+    /// never shown: a version says that its password differs, not what it
+    /// was.
+    History(HistoryArgs),
+
+    /// Bring back an earlier version of an item's contents, or one field of
+    /// it.
+    ///
+    /// What was there becomes a version of its own, so a restore can be
+    /// undone the same way.
+    Restore(RestoreArgs),
+
     /// Remove an item.
     Rm {
         /// Item id, exact title, or text to search for.
@@ -166,9 +182,9 @@ pub enum Command {
     ///
     /// For two copies that drifted apart: items missing here are copied across,
     /// newer contents from there replace older ones here, and an item changed
-    /// on both sides is kept twice rather than resolved by guesswork. Nothing
-    /// is ever deleted — "gone from there" and "added here" look identical from
-    /// this side.
+    /// on both sides keeps the newer contents with the other side's in its
+    /// history. Nothing is ever deleted — "gone from there" and "added here"
+    /// look identical from this side.
     Merge {
         /// The other vault file.
         #[arg(value_name = "FILE")]
@@ -203,7 +219,8 @@ pub enum Command {
     ///
     /// The two are merged rather than one replacing the other: items missing
     /// here are copied across, newer contents replace older ones, and an item
-    /// changed on both sides is kept twice. Nothing local is deleted.
+    /// changed on both sides keeps the other side's contents in its history.
+    /// Nothing local is deleted.
     Pull(PullArgs),
 
     /// Pull, then push: take what is at the remote, then publish the result.
@@ -770,6 +787,34 @@ pub struct EditArgs {
     /// Remove every tag from the item.
     #[arg(long, conflicts_with = "tag")]
     pub clear_tags: bool,
+}
+
+/// Arguments of `sefy history`.
+#[derive(Debug, Args)]
+pub struct HistoryArgs {
+    /// Item id, exact title, or text to search for.
+    pub reference: String,
+
+    /// A version, by the number the listing gives it, to compare with the
+    /// current contents.
+    #[arg(value_name = "VERSION")]
+    pub version: Option<usize>,
+}
+
+/// Arguments of `sefy restore`.
+#[derive(Debug, Args)]
+pub struct RestoreArgs {
+    /// Item id, exact title, or text to search for.
+    pub reference: String,
+
+    /// The version to bring back, by the number `sefy history` gives it.
+    #[arg(value_name = "VERSION")]
+    pub version: usize,
+
+    /// Bring back only this field of a record; the others keep their current
+    /// values.
+    #[arg(long, value_name = "NAME")]
+    pub field: Option<String>,
 }
 
 /// Kind of item, as spelled on the command line.

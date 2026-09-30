@@ -76,9 +76,15 @@ fn prompt(text: &str) -> Result<String> {
 }
 
 /// Opens an existing vault, turning a wrong password into a clear message.
+///
+/// The vault is told which machine it is on, so every version written through
+/// it says so.
 pub fn open(path: &Path, password: &str) -> Result<Vault> {
     match Vault::open(path, password.as_bytes()) {
-        Ok(vault) => Ok(vault),
+        Ok(mut vault) => {
+            vault.set_device(crate::device::name());
+            Ok(vault)
+        }
         Err(sefy_core::Error::WrongPasswordOrNotAVault) => bail!(
             "wrong password, or {} is not a vault\n\
              (an encrypted file cannot tell the two apart)",

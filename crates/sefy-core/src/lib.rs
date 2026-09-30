@@ -43,6 +43,7 @@ pub mod error;
 pub mod exchange;
 pub mod format;
 pub mod generate;
+pub mod history;
 pub mod merge;
 pub mod model;
 pub mod otp;
@@ -55,7 +56,8 @@ pub use error::{Error, Result};
 pub use exchange::{EXPORT_VERSION, Export, ExportField, ExportItem, ImportReport};
 pub use format::FORMAT_VERSION;
 pub use generate::{Classes, Generated, Language, Recipe, generate};
-pub use merge::{Conflict, MergeReport, merge};
+pub use history::{Change, ChangeKind, Line, Version};
+pub use merge::{Conflict, MergeReport, Side, merge};
 pub use model::{
     Field, FieldSpec, Item, ItemKind, ItemSummary, LEGACY_LOGIN_NAME, NewItem, Payload, Query,
     Template,

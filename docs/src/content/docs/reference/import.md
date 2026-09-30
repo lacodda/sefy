@@ -34,7 +34,8 @@ Skipped means *untouched*, not updated. An export is a snapshot, and it may
 easily be older than what is in the vault now — overwriting a password with one
 from last month is exactly the kind of quiet damage worth refusing. To bring
 newer contents across, use [`merge`](/sefy/reference/merge/), which compares
-both sides and says so when it cannot decide.
+the versions on both sides and keeps whatever it does not choose in the item's
+[history](/sefy/reference/history/).
 
 Entries **without** an identity are always added. Exports written by sefy 0.1.x
 carry none, and neither does JSON written by hand — there is nothing to

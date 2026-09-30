@@ -76,8 +76,26 @@ That means `show` on a note **does** put its contents in your terminal
 scrollback. If a note holds something you would rather copy than display, reach
 for [`get`](/sefy/reference/get/) instead, which puts it on the clipboard.
 
+## When there is a history
+
+An item whose contents have changed says how many earlier versions it keeps,
+and where to look:
+
+```console
+$ sefy show mail
+id:          2
+title:       mail
+kind:        login
+history:     3 earlier versions (sefy history 2)
+login:       someone@example.com
+password:    <hidden — use sefy get --field password>
+```
+
+An item never changed has no such line.
+
 ## Related
 
 - [`get`](/sefy/reference/get/) — the only way a covered secret comes out
 - [`ls`](/sefy/reference/ls/) — the same items, one line each
+- [`history`](/sefy/reference/history/) — the earlier versions of what it holds
 - [Versions and compatibility](/sefy/concepts/versions/) — items this build cannot read

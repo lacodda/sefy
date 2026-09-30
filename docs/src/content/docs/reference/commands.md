@@ -61,6 +61,8 @@ get the same command.
 - [`fill`](/sefy/reference/fill/) — login, password and code to the clipboard in turn
 - [`run`](/sefy/reference/run/) — run a command with secrets in its environment
 - [`edit`](/sefy/reference/edit/) — change a title, contents or tags
+- [`history`](/sefy/reference/history/) — earlier versions of an item's contents, and how each differs from now
+- [`restore`](/sefy/reference/restore/) — bring an earlier version back, whole or one field
 - [`rm`](/sefy/reference/rm/) — remove an item
 - [`extract`](/sefy/reference/extract/) — write a stored file back to disk
 - [`tags`](/sefy/reference/tags/) — list the tags in use
