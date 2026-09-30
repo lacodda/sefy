@@ -34,11 +34,26 @@ The 3 → 4 move takes nothing away, so a vault it has touched stays usable by
 know, and leaves the rest as it found it. Checked with the published binary in
 both directions, the way every schema move here is.
 
+0.12.0 took it to 5, adding [history](/sefy/reference/history/): a table of
+earlier versions, and a note on each item of which version its contents are.
+The same rule holds — a vault it has touched stays usable by 0.11.x — with
+three things worth knowing about that older build:
+
+- **its edits keep nothing.** 0.11.x rewrites contents in place, as it always
+  did; the value it replaced is gone. The history already kept stays as it was,
+  and the next edit made by 0.12.0 or later is kept again.
+- **its removals take the history with them**, the same as a removal here. The
+  cascade is part of the table, not of the code, so no old value of a removed
+  item is left behind in a table the older build does not know.
+- **its merges make copies.** A conflict merged by 0.11.x still ends as a second
+  item called `… (conflicted copy)`, which is how that build settles one. Merge
+  from the newer side to have it end in the history instead.
+
 You can see which version a vault carries:
 
 ```console
 $ sefy status
-schema   4
+schema   5
 ```
 
 ## Items from a newer sefy

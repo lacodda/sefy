@@ -38,6 +38,12 @@ everything below is an expansion of it.
   environment, and the command passes it on to every process it starts in
   turn. It keeps secrets out of files, shell history and process listings —
   not out of reach of the machine they are used on.
+- **An old value, after you change it.** The vault keeps every earlier version
+  of an item's contents — that is what [history](/sefy/reference/history/) is
+  for. Changing a password that leaked retires it at the site, not in the
+  vault: anyone who later opens the vault can read the old one too. Removing
+  the item with [`rm`](/sefy/reference/rm/) removes its history, and nothing
+  short of that does.
 
 ## Why not deniability
 

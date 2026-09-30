@@ -93,12 +93,15 @@ second merge of the same file reports everything as unchanged rather than
 doubling it. The file being merged from is only read.
 
 Where both sides changed the same item, sefy keeps **both** and says so, rather
-than letting a timestamp decide which password you get to keep:
+than letting a timestamp decide which password you get to keep. The copy changed
+more recently is current; the other is a version in the item's
+[history](/sefy/reference/history/), one [`restore`](/sefy/reference/restore/)
+away:
 
 ```console
-1 item changed on both sides and could not be resolved here.
-This vault's version was kept; the incoming one is beside it:
-  "mail" → also kept as "mail (conflicted copy)"
+1 item changed on both sides.
+The copy changed more recently is current; the other is kept in the item's history:
+  "mail" (this vault's is current): sefy history 2
 ```
 
 Nothing is deleted by a merge: an item missing from the other copy stays here,

@@ -89,6 +89,11 @@ is migrated in memory on the way in, and is still readable by 0.1.x afterwards:
 the older build simply ignores a column it does not know about. Nothing about
 the file on disk changed shape.
 
+sefy 0.12.0 added [history](/sefy/reference/history/) the same way: earlier
+versions of an item's contents are rows in a `versions` table inside the same
+database, sealed with everything else. A vault with a long history is a larger
+file, and that is all it is — the envelope is unchanged, and so is the promise.
+
 A schema version therefore lives inside the ciphertext next to the format
 version, where neither is a signature.
 

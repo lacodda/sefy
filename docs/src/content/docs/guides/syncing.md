@@ -104,18 +104,22 @@ names when you want distinct copies at the remote.
 ## What happens when both machines changed
 
 The same thing that happens with [`merge`](/sefy/reference/merge/), because it
-*is* merge: items missing on one side are copied across, newer contents replace
-older ones, and an item changed on both sides is kept twice.
+*is* merge: items missing on one side are copied across, contents one machine
+moved on from are brought up to date, and an item changed on both sides keeps
+the copy changed more recently — with the other one in its
+[history](/sefy/reference/history/), marked with the machine it came from.
 
 ```console
-1 item changed on both sides and could not be resolved here.
-This vault's version was kept; the incoming one is beside it:
-  "bank" → also kept as "bank (conflicted copy)"
-Compare them, keep the right one, and remove the other.
+1 item changed on both sides.
+The copy changed more recently is current; the other is kept in the item's history:
+  "bank" (the other copy's is current): sefy history 4
+Compare with sefy history ID VERSION; bring one back with sefy restore ID VERSION.
 ```
 
-Note that a sync publishes the conflicted copy along with everything else, so
-the other machines will see it too. Resolve it on one machine and sync again.
+The history travels with the vault, so the other machines receive the settled
+item and the version that lost with it: a conflict is settled once, not once
+per machine. To choose the other version after all,
+[`restore`](/sefy/reference/restore/) it and sync again.
 
 Nothing is ever deleted by a sync. "Removed over there" and "added over here"
 are indistinguishable from this side, so a removal does not propagate — remove

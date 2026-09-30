@@ -126,8 +126,12 @@ Every command, with its flags: **[the reference](https://lacodda.github.io/sefy/
 - **Transports, not lock-in.** `sefy sync` carries the vault through a
   `sefy-plugin-*` executable - github and sftp ship today - and folds what
   comes back in without a credential ever passing through the transport.
-- **Merge instead of overwrite.** Where two copies disagree about an item,
-  both are kept rather than letting a timestamp pick a winner.
+- **Every value keeps its past.** An edit keeps what it replaced; `sefy
+  history` shows how each version differs without printing a secret, and
+  `sefy restore` brings one back - whole, or one field.
+- **Merge instead of overwrite.** Where two copies both changed an item, the
+  newer is current and the other waits in its history rather than being
+  dropped on a timestamp.
 - **A vault that is never a trap.** `export` writes plaintext JSON only after
   you say so explicitly.
 

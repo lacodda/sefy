@@ -71,15 +71,18 @@ cleared and the copy already on the server is untouched.
 
 ## What you give up
 
-**There is no earlier version.** A push replaces what was there, and the
-previous contents are gone from the server. The git transport gets version
-history for free; here there is none.
+**There is no earlier copy of the file.** A push replaces what was there, and
+the previous file is gone from the server. The git transport keeps every file
+it was given; here there is only the latest.
 
-That matters in one specific way. `sync` merges rather than overwrites, so a
-push after a pull cannot lose what another machine wrote. What it cannot save
-you from is a mistake made locally and then published — `sefy rm` on the wrong
-item, followed by a sync. With git you could recover the file from the
-repository's history; here the copy on the server has already been replaced.
+Less hangs on that than it sounds. `sync` merges rather than overwrites, so a
+push after a pull cannot lose what another machine wrote, and an item's earlier
+contents live inside the vault itself — a wrong edit, published, is still one
+[`restore`](/sefy/reference/restore/) away. What the vault cannot give back is
+a removal: `sefy rm` on the wrong item takes its history with it, and followed
+by a sync it is gone from the server too. With git you could recover the file
+from the repository's history; here the copy on the server has already been
+replaced.
 
 If that worries you, keep an occasional dated copy of the vault file, which is a
 complete backup on its own:
