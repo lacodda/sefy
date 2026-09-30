@@ -109,7 +109,9 @@ it is itself undone by a restore.
 - Schema 5; the file format stays at version 1.
 - An older build (0.11.x) keeps working on a vault this build has touched: its
   edits keep nothing, its removals take the history with them through the
-  cascade, and its merges still make `(conflicted copy)` items.
+  cascade, and its merges settle conflicts as it always did — a
+  `(conflicted copy)` item, or the newer side's contents over this one's with
+  nothing kept.
 - History has no limit and is kept as long as the item is. `rm` is the one way
   to be rid of an old value, and like any removal it does not propagate
   through a merge.

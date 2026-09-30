@@ -45,9 +45,11 @@ three things worth knowing about that older build:
 - **its removals take the history with them**, the same as a removal here. The
   cascade is part of the table, not of the code, so no old value of a removed
   item is left behind in a table the older build does not know.
-- **its merges make copies.** A conflict merged by 0.11.x still ends as a second
-  item called `… (conflicted copy)`, which is how that build settles one. Merge
-  from the newer side to have it end in the history instead.
+- **its merges settle conflicts the old way.** When both copies changed an
+  item, 0.11.x keeps the other side's version as a second item called
+  `… (conflicted copy)` if this side changed more recently — and if the other
+  side did, takes its contents over this side's and keeps nothing. Merge from
+  the newer side to have every version end in the history.
 
 You can see which version a vault carries:
 
