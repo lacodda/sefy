@@ -5,8 +5,9 @@ All notable changes to this project are documented in this file.
 A vault stays readable by every later sefy. The **file format** is frozen at
 version 1; the **database schema** inside the ciphertext is versioned separately
 and does move — 0.2.0 gave items an identity, 0.7.0 turned records into named
-fields, 0.8.0 gave the vault a place to record facts about itself — and an
-older vault is migrated in on load.
+fields, 0.8.0 gave the vault a place to record facts about itself, 0.12.0 gave
+every item a history of its contents — and an older vault is migrated in on
+load.
 
 What an *older build* makes of a migrated vault depends on the change. The
 0.2.0 migration left everything readable by 0.1.x. The 0.7.0 one does not: a
@@ -17,6 +18,77 @@ contract from 0.6.0, not a break.
 Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
+
+## [0.12.0] - 2026-09-29
+
+Every value keeps its past: an edit keeps what it replaced, and a merge that
+has to choose keeps what it did not choose.
+
+**`sefy history`** lists the earlier versions of an item's contents, oldest
+first: when each was written, on which machine, and which fields it changed.
+`sefy history mail 2` compares version 2 with what the item holds now. Text is
+compared line by line, with long unchanged stretches of a note folded, and a
+secret is only ever said to have changed. Neither the listing nor a comparison
+prints a secret value, old or current.
+
+**`sefy restore`** brings a version back: `sefy restore mail 2`, whole, or
+`--field password` alone, with every other field left as it is now. That
+covers a password changed in the vault that the site never accepted, and a
+one-time password key replaced before the site confirmed the new one. A restore
+is an edit like any other, so it can itself be undone.
+
+A version is a state of the **contents**: a note's text, a record's fields, a
+file's bytes. A new title or new tags make no version, and restoring does not
+bring an old name back. `show` says when an item has earlier versions, and `rm`
+says how many will go with it.
+
+**Merge decides by versions, not by clocks.** Each side knows which versions its
+contents have been through, so "the other copy is behind" and "both copies
+changed" can be told apart, and only the second is a conflict. A conflict no
+longer adds a second item called `… (conflicted copy)`. The copy changed more
+recently is current, on a tie this one, and the other is kept in the item's
+history, marked with the machine it was written on. History travels with a
+sync and is kept once however often it arrives, so a conflict settled on one
+machine reaches the others as history rather than as a new conflict.
+
+### Fixed
+
+- **A merge no longer overwrites a local edit when the other side is newer.**
+  When both copies had changed an item and the incoming one was more recent,
+  the local contents were replaced and nothing was kept. The local version now
+  stays in the item's history.
+
+### Breaking Changes
+
+**Vault files: none.** The file format is still version 1. The database schema
+moves from 4 to 5: a `versions` table, and four columns on `items` naming the
+version their contents are. A vault from an earlier release is migrated on open,
+and each item's contents become its first version. Two copies of one old vault
+migrated on different machines give those versions the same identity, so the
+first edit after upgrading both does not read as a conflict. We checked with the
+published 0.11.1 binary, in both directions: 0.11.1 created a vault, this build
+edited it, 0.11.1 read it, edited, added and removed items, and this build read
+everything back with the history intact. What 0.11.1 does to a migrated vault is
+the same as ever: its edits keep nothing, its removals take the history with
+them, and its merges settle conflicts the old way.
+
+**`sefy merge`, `pull` and `sync`:** a conflict ends in the history, not in a
+`(conflicted copy)` item. Scripts that looked for that title will not find it.
+
+**`sefy-core` library:** `Conflict` carries `id` and `current: Side` instead of
+`kept_as`, and `MergeReport` gains `versions`. `Vault` gains `set_device`,
+`history`, `earlier_versions` and `restore`, and the new `history` module holds
+`Version`, `compare`, `changed`, `lines` and `text_of`. `db::insert_item`,
+`insert_item_with_uuid` and `update_item` take the new version's origin.
+`Error` gains `VersionNotFound`, `FieldNotInVersion` and `UnreadableVersion`.
+Code that matches `Error` exhaustively has to follow.
+
+### Documentation
+- Build the site without warnings
+- Introduce history in the readme, landing page, guides and concepts
+
+### Features
+- Keep earlier versions of every item's contents
 
 ## [0.11.1] - 2026-09-26
 
