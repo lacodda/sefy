@@ -6,9 +6,26 @@ import starlight from '@astrojs/starlight';
 export default defineConfig({
 	site: 'https://lacodda.github.io',
 	base: '/sefy',
+	vite: {
+		build: {
+			rolldownOptions: {
+				// Astro puts a "use astro:head-inject" directive into every MDX page
+				// that imports a component, and the bundler warns that it may drop
+				// it. The directive is Astro's own, read by Astro before bundling;
+				// only that one warning is silenced, every other still prints.
+				onwarn(warning, warn) {
+					if (warning.code === 'MODULE_LEVEL_DIRECTIVE' && warning.message.includes('astro:head-inject')) return;
+					warn(warning);
+				},
+			},
+		},
+	},
 	integrations: [
 		starlight({
 			title: 'sefy',
+			// The 404 page is a content page (src/content/docs/404.md): Starlight's own
+			// route looks for that entry and warns on every build when it is missing.
+			disable404Route: true,
 			description: 'An inconspicuous encrypted store for notes, credentials and files: a vault whose file looks like nothing.',
 			logo: {
 				src: './src/assets/logo.svg',
