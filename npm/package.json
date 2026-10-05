@@ -1,8 +1,8 @@
 {
   "name": "sefy-cli",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "sefy": {
-    "binary": "v0.12.0"
+    "binary": "v0.13.0"
   },
   "description": "An inconspicuous encrypted store for notes, credentials and files",
   "license": "MIT",
