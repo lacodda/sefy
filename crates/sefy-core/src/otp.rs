@@ -105,6 +105,46 @@ impl Totp {
         }
     }
 
+    /// A key handed over as raw bytes with its parameters beside it, the way
+    /// KeePass stores one, rather than as a link or as base32.
+    pub fn from_parts(key: &[u8], algorithm: Algorithm, digits: u32, period: u64) -> Result<Self> {
+        if key.is_empty() {
+            return Err(invalid("the key is empty"));
+        }
+        if !(6..=8).contains(&digits) {
+            return Err(invalid("a code has 6 to 8 digits"));
+        }
+        if period == 0 {
+            return Err(invalid("the period is a whole number of seconds"));
+        }
+        Ok(Self {
+            key: Zeroizing::new(key.to_vec()),
+            algorithm,
+            digits,
+            period,
+            issuer: None,
+            account: None,
+        })
+    }
+
+    /// What sefy keeps for this key: bare base32 when it makes codes the way
+    /// every site assumes a bare key does, a link when it does not.
+    ///
+    /// A bare key cannot say "eight digits" or "SHA-256", and storing one for
+    /// a key that needs either would make every code it produced wrong.
+    pub fn stored(&self, issuer: &str, account: Option<&str>) -> String {
+        if self.algorithm == DEFAULT_ALGORITHM
+            && self.digits == DEFAULT_DIGITS
+            && self.period == DEFAULT_PERIOD
+            && self.issuer.is_none()
+            && self.account.is_none()
+        {
+            encode_base32(&self.key)
+        } else {
+            self.link(issuer, account)
+        }
+    }
+
     /// The code valid at `unix` seconds since the epoch.
     pub fn code_at(&self, unix: u64) -> String {
         let counter = (unix / self.period).to_be_bytes();
@@ -180,6 +220,11 @@ pub fn normalize(text: &str) -> Result<String> {
             .map(|c| c.to_ascii_uppercase())
             .collect())
     }
+}
+
+/// Whether a stored key is an `otpauth://` link rather than bare base32.
+pub fn is_link(text: &str) -> bool {
+    has_scheme(text.trim())
 }
 
 fn has_scheme(text: &str) -> bool {
@@ -274,7 +319,7 @@ fn is_filler(c: char) -> bool {
 const BASE32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
 /// Decodes RFC 4648 base32, forgiving case, spaces, dashes and padding.
-fn decode_base32(text: &str) -> Result<Zeroizing<Vec<u8>>> {
+pub(crate) fn decode_base32(text: &str) -> Result<Zeroizing<Vec<u8>>> {
     let mut bytes = Zeroizing::new(Vec::with_capacity(text.len() * 5 / 8));
     let mut buffer: u64 = 0;
     let mut bits = 0;

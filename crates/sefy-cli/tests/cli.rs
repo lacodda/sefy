@@ -603,7 +603,112 @@ fn import_reads_stdin_and_reports_malformed_input() {
         .write_stdin("not json")
         .assert()
         .failure()
-        .stderr(contains("not a sefy export"));
+        .stderr(contains("not a file sefy can import"));
+}
+
+#[test]
+fn a_keepass_export_imports_back_with_its_format_named() {
+    let source = Fixture::with_vault();
+    add_note(&source, "bank", "code 4815", &["money"]);
+    add_full_login(&source, "mail");
+    let file = source.directory().join("export.xml");
+    source
+        .sefy()
+        .args([
+            "export",
+            "--format",
+            "keepass",
+            "--i-know-this-writes-plaintext",
+            "-o",
+        ])
+        .arg(&file)
+        .assert()
+        .success()
+        .stderr(contains("in the clear: 2 items"));
+    assert!(
+        std::fs::read_to_string(&file)
+            .unwrap()
+            .contains("<KeePassFile>")
+    );
+
+    let target = Fixture::with_vault();
+    target
+        .sefy()
+        .arg("import")
+        .arg(&file)
+        .assert()
+        .success()
+        .stdout(contains(
+            "imported 2 items from a KeePass XML export: 1 note, 1 login",
+        ))
+        .stdout(contains("still holds all of it in the clear"));
+    target
+        .sefy()
+        .args(["get", "bank", "--stdout"])
+        .assert()
+        .success()
+        .stdout(contains("code 4815"));
+}
+
+#[test]
+fn a_csv_export_says_what_it_left_out_and_refuses_history() {
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "bank", "code 4815", &[]);
+    add_full_login(&fixture, "mail");
+
+    fixture
+        .sefy()
+        .args(["export", "--format", "csv", "--with-history"])
+        .arg("--i-know-this-writes-plaintext")
+        .assert()
+        .failure()
+        .stderr(contains("a CSV has no place for earlier versions"));
+
+    fixture
+        .sefy()
+        .args([
+            "export",
+            "--format",
+            "csv",
+            "--i-know-this-writes-plaintext",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("name,url,username,password,note,totp"))
+        .stdout(contains("code 4815").not())
+        .stderr(contains("left out: 1 note"));
+}
+
+#[test]
+fn an_import_names_every_entry_it_could_not_bring_as_it_was() {
+    let fixture = Fixture::with_vault();
+    let csv = "name,url,username,password,httpRealm
+               mail,https://mail.example.invalid,someone,pw,
+               only a name,,,,
+";
+    fixture
+        .sefy()
+        .arg("import")
+        .write_stdin(csv)
+        .assert()
+        .success()
+        .stdout(contains("imported 1 item from a CSV of passwords: 1 login"))
+        .stdout(contains(
+            "not imported:
+  \"only a name\" - row 3: nothing in it but a name",
+        ))
+        .stdout(contains(
+            "columns left out as the exporting program's own bookkeeping: httpRealm",
+        ))
+        .stdout(contains("still holds").not());
+
+    fixture
+        .sefy()
+        .arg("import")
+        .write_stdin(vec![0xff, 0xfe, b'n', 0])
+        .assert()
+        .failure()
+        .stderr(contains("not UTF-8"));
 }
 
 #[test]

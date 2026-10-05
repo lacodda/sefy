@@ -10,7 +10,7 @@
 //! turned adding any new kind into a breaking change for everyone syncing
 //! between versions, which is what these tests exist to prevent.
 
-use sefy_core::{ItemKind, NewItem, Payload, Query, Vault, exchange, merge};
+use sefy_core::{ItemKind, NewItem, Outcome, Payload, Query, Target, Vault, exchange, merge};
 use std::path::{Path, PathBuf};
 
 const PASSWORD: &[u8] = b"correct horse battery staple";
@@ -143,7 +143,12 @@ fn an_export_carries_an_unknown_item_and_says_its_contents_are_missing() {
     let fixture = fixture();
     let vault = vault_with_an_unknown_item(&fixture);
 
-    let export = exchange::export(&vault).unwrap();
+    let exported = exchange::export(&vault, Target::Sefy { history: false }).unwrap();
+    assert_eq!(
+        exported.report.unreadable, 1,
+        "the report says one came out incomplete"
+    );
+    let export: exchange::Export = serde_json::from_str(&exported.text).unwrap();
     assert_eq!(export.items.len(), 2, "the export holds both items");
 
     let unknown = export
@@ -163,16 +168,18 @@ fn an_export_carries_an_unknown_item_and_says_its_contents_are_missing() {
 fn importing_an_entry_this_build_cannot_store_is_counted_not_fatal() {
     let source = fixture();
     let vault = vault_with_an_unknown_item(&source);
-    let export = exchange::export(&vault).unwrap();
+    let exported = exchange::export(&vault, Target::Sefy { history: false }).unwrap();
 
     let destination = fixture();
     let mut fresh = Vault::create(&destination.path, PASSWORD).unwrap();
-    let report = exchange::import(&mut fresh, &export).unwrap();
+    let report = exchange::import(&mut fresh, &exported.text).unwrap();
 
-    // The one it cannot represent does not stop the other from arriving.
-    assert_eq!(report.added, 1);
-    assert_eq!(report.unsupported, 1);
-    assert_eq!(report.total(), 2);
+    // The one it cannot represent does not stop the other from arriving, and
+    // is named rather than passed over.
+    assert_eq!(report.added_total(), 1);
+    assert_eq!(report.not_imported(), 1);
+    assert_eq!(report.notices[0].title, "my passport");
+    assert_eq!(report.notices[0].outcome, Outcome::NotImported);
     assert_eq!(fresh.list().unwrap().len(), 1);
 }
 
@@ -289,7 +296,7 @@ fn an_entry_of_an_unknown_kind_is_skipped_even_without_the_missing_contents_flag
         ]
     }"#;
 
-    let export = exchange::from_json(json).unwrap();
+    let export: exchange::Export = serde_json::from_str(json).unwrap();
     assert!(
         !export.items[1].contents_not_exported,
         "the point of this case is that the flag is absent"
@@ -297,9 +304,10 @@ fn an_entry_of_an_unknown_kind_is_skipped_even_without_the_missing_contents_flag
 
     let fixture = fixture();
     let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
-    let report = exchange::import(&mut vault, &export).unwrap();
+    let report = exchange::import(&mut vault, json).unwrap();
 
-    assert_eq!(report.added, 1);
-    assert_eq!(report.unsupported, 1);
+    assert_eq!(report.added_total(), 1);
+    assert_eq!(report.not_imported(), 1);
+    assert!(report.notices[0].reason.contains("passport"));
     assert_eq!(vault.list().unwrap().len(), 1);
 }

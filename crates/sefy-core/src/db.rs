@@ -195,9 +195,15 @@ fn assign_missing_versions(connection: &Connection) -> Result<()> {
 /// Copies that had already drifted end up with one name over two contents,
 /// which a merge tells apart by the contents — see `keep_version`.
 fn first_version_uuid(item_uuid: &str) -> String {
+    derived_uuid(&format!("sefy: first version of {item_uuid}"))
+}
+
+/// An identity made by a rule rather than drawn at random: the same `seed`
+/// gives the same identity in every vault and on every machine.
+pub(crate) fn derived_uuid(seed: &str) -> String {
     use sha2::{Digest, Sha256};
 
-    let digest = Sha256::digest(format!("sefy: first version of {item_uuid}").as_bytes());
+    let digest = Sha256::digest(seed.as_bytes());
     let mut bytes = [0u8; 16];
     bytes.copy_from_slice(&digest[..16]);
     // Version 8, variant 1: an identity made by a rule of its own rather than
@@ -675,7 +681,7 @@ pub fn new_uuid() -> Result<String> {
 }
 
 /// Sixteen bytes in the usual hyphenated UUID form.
-fn hyphenated(bytes: &[u8; 16]) -> String {
+pub(crate) fn hyphenated(bytes: &[u8; 16]) -> String {
     let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
     format!(
         "{}-{}-{}-{}-{}",

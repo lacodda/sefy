@@ -50,10 +50,14 @@ pub mod otp;
 pub mod plugin;
 pub mod strength;
 pub mod sync;
+pub mod time;
 pub mod vault;
 
 pub use error::{Error, Result};
-pub use exchange::{EXPORT_VERSION, Export, ExportField, ExportItem, ImportReport};
+pub use exchange::{
+    EXPORT_VERSION, Export, ExportField, ExportItem, ExportReport, ExportStamp, ExportVersion,
+    Exported, Format, ImportReport, Notice, Outcome, Target,
+};
 pub use format::FORMAT_VERSION;
 pub use generate::{Classes, Generated, Language, Recipe, generate};
 pub use history::{Change, ChangeKind, Line, Version};

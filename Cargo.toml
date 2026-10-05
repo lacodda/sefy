@@ -37,6 +37,15 @@ zeroize = { version = "1", features = ["derive"] }
 # Offline strength estimate. Default features off: `builder` only adds a
 # derive_builder API for tuning the matcher, which sefy does not do.
 zxcvbn = { version = "3", default-features = false }
+# Exchange formats: other password managers' exports in, and out again. Each
+# covers its format whole - escaping, quoting, multi-line cells - which is
+# exactly the part a hand-written reader gets wrong.
+csv = "1"
+quick-xml = "0.42"
+# KeePass stores attachments gzip-compressed inside its XML. Default features:
+# the pure-Rust miniz_oxide backend, already in the lock file through the PNG
+# decoder the icon test uses.
+flate2 = "1"
 
 anyhow = "1"
 arboard = "3"

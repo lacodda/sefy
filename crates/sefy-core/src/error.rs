@@ -107,9 +107,43 @@ pub enum Error {
     #[error("unsupported export format version {0}; upgrade sefy")]
     UnsupportedExport(u32),
 
-    /// The export file is not the JSON an export is supposed to be.
-    #[error("this is not a sefy export: {0}")]
-    UnreadableExport(String),
+    /// The file handed to an import is none of the formats sefy reads.
+    #[error(
+        "not a file sefy can import: expected a sefy export, a Bitwarden JSON export, \
+         a KeePass XML export, or a CSV of passwords with a header row"
+    )]
+    UnrecognizedImport,
+
+    /// The file looks like one of the formats sefy reads, but is not a usable
+    /// one.
+    #[error("this looks like {format}, but it cannot be read: {reason}")]
+    UnreadableImport {
+        /// What the file looked like, as in "a KeePass XML export".
+        format: &'static str,
+        /// What is wrong with it, without quoting anything secret.
+        reason: String,
+    },
+
+    /// The file is an export another tool sealed under its own password, so
+    /// its contents are not there to read.
+    #[error("this {format} is encrypted: {advice}")]
+    SealedImport {
+        /// What the file is, as in "Bitwarden export".
+        format: &'static str,
+        /// How to get one that is not.
+        advice: &'static str,
+    },
+
+    /// An item holds something the chosen export format has no way to carry.
+    #[error("{title:?} cannot be exported as {format}: {reason}")]
+    Unexportable {
+        /// The item's title.
+        title: String,
+        /// The format being written, as in "KeePass XML".
+        format: &'static str,
+        /// What it holds that the format cannot.
+        reason: String,
+    },
 
     /// An entry in an export is missing a field or holds something unusable.
     #[error("item {index} in the export is malformed: {reason}")]

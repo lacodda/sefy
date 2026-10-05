@@ -10,6 +10,8 @@
 //! output depend on where the machine thinks it is — unhelpful for a file that
 //! travels between machines.
 
+use sefy_core::time::civil_from_days;
+
 /// A moment, as a date and as a distance from now.
 ///
 /// Both, because either alone is the wrong one half the time: "3 minutes ago"
@@ -64,24 +66,6 @@ fn plural(n: i64, noun: &str) -> String {
     } else {
         format!("{n} {noun}s ago")
     }
-}
-
-/// Days since the epoch to a civil date, by Howard Hinnant's algorithm.
-///
-/// Shifts the year to start in March so that the leap day is the last of it and
-/// the month lengths become a straight line, which is what makes this closed
-/// form possible at all.
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let year = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if month <= 2 { year + 1 } else { year }, month, day)
 }
 
 #[cfg(test)]

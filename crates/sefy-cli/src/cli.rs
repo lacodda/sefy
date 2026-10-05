@@ -146,11 +146,29 @@ pub enum Command {
     /// the other side lately.
     Status,
 
-    /// Write the vault's contents out as plain, unencrypted JSON.
+    /// Write the vault's contents out, unencrypted, for another sefy or
+    /// another password manager.
+    ///
+    /// sefy's own JSON carries everything. KeePass XML carries every kind
+    /// too, and KeePass and KeePassXC import it; a CSV carries logins, and
+    /// every browser imports it.
     Export {
         /// Where to write it; omit to print to stdout.
         #[arg(long, short = 'o', value_name = "PATH")]
         output: Option<PathBuf>,
+
+        /// What to write.
+        #[arg(long, value_enum, default_value_t = ExportFormat::Sefy)]
+        format: ExportFormat,
+
+        /// Include each item's earlier versions.
+        ///
+        /// Off by default: a file of every password an account has ever had,
+        /// in the clear, is a larger exposure than moving the current ones
+        /// calls for. sefy's JSON and KeePass XML have a place for them; a CSV
+        /// does not.
+        #[arg(long)]
+        with_history: bool,
 
         /// Required: acknowledge that this writes every secret in the clear.
         ///
@@ -166,14 +184,17 @@ pub enum Command {
         force: bool,
     },
 
-    /// Add the contents of an export to this vault.
+    /// Add what another sefy, a password manager or a browser exported to
+    /// this vault.
     ///
-    /// An entry the vault already holds under the same identity is skipped, so
-    /// importing the same export twice does not duplicate it. Contents are
-    /// never overwritten: an export may well be older than what is here, and
-    /// bringing newer contents across is what `merge` is for.
+    /// The format is told from the file: a sefy export, a Bitwarden JSON
+    /// export, a KeePass XML export, or a CSV of passwords. An entry the vault
+    /// already holds under the same identity is skipped, so importing the same
+    /// file twice does not duplicate it. Contents are never overwritten: the
+    /// file may well be older than what is here, and bringing newer contents
+    /// across is what `merge` is for.
     Import {
-        /// Export file to read; omit to read from stdin.
+        /// File to read; omit to read from stdin.
         #[arg(value_name = "PATH")]
         input: Option<PathBuf>,
     },
@@ -605,6 +626,17 @@ pub struct GenArgs {
     /// Seconds before the clipboard is cleared again; 0 leaves it there.
     #[arg(long, value_name = "SECONDS", default_value_t = 45)]
     pub clear_after: u64,
+}
+
+/// What `sefy export` writes, as spelled on the command line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ExportFormat {
+    /// sefy's own JSON: every kind, every field, nothing lost.
+    Sefy,
+    /// KeePass XML, which KeePass 2 and KeePassXC import.
+    Keepass,
+    /// Logins as CSV rows, which browsers and password managers import.
+    Csv,
 }
 
 /// A passphrase word list, as spelled on the command line.

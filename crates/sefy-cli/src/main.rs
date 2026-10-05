@@ -111,9 +111,18 @@ fn run(arguments: Cli) -> Result<()> {
         Command::Status => commands::status(&vault),
         Command::Export {
             output,
+            format,
+            with_history,
             i_know_this_writes_plaintext,
             force,
-        } => commands::export(&vault, output, i_know_this_writes_plaintext, force),
+        } => commands::export(
+            &vault,
+            output,
+            format,
+            with_history,
+            i_know_this_writes_plaintext,
+            force,
+        ),
         Command::Import { input } => commands::import(&mut vault, input),
         Command::Merge {
             other,

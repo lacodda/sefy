@@ -1,18 +1,19 @@
 //! What each subcommand does once the vault is open.
 
 use crate::cli::{
-    AddKind, EditArgs, FillArgs, FindArgs, GenArgs, GetArgs, HistoryArgs, ListArgs, OpenArgs,
-    OtpArgs, PullArgs, RecordArgs, RemoteArgs, RestoreArgs, RunArgs,
+    AddKind, EditArgs, ExportFormat, FillArgs, FindArgs, GenArgs, GetArgs, HistoryArgs, ListArgs,
+    OpenArgs, OtpArgs, PullArgs, RecordArgs, RemoteArgs, RestoreArgs, RunArgs,
 };
 use crate::output;
 use crate::session;
 use anyhow::{Context, Result, bail};
 use sefy_core::{
-    Change, ChangeKind, Classes, Field, Item, ItemKind, ItemSummary, NewItem, Payload, Query,
-    Recipe, Strength, Totp, Vault, Version,
+    Change, ChangeKind, Classes, Field, Item, ItemKind, ItemSummary, NewItem, Outcome, Payload,
+    Query, Recipe, Strength, Target, Totp, Vault, Version,
 };
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use zeroize::Zeroizing;
 
 /// Creates a vault, refusing to touch a file that already exists.
 pub fn init(path: &Path, password_env: Option<&str>) -> Result<()> {
@@ -1181,52 +1182,137 @@ pub fn tags(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
-/// Writes the vault's contents out as plain JSON.
+/// Writes the vault's contents out in the clear, in the chosen format.
 pub fn export(
     vault: &Vault,
     output_path: Option<PathBuf>,
+    format: ExportFormat,
+    with_history: bool,
     acknowledged: bool,
     force: bool,
 ) -> Result<()> {
     if !acknowledged {
         bail!(
             "export writes every secret in this vault in the clear\n\
-             the resulting file protects nothing — encrypt it, or delete it when done\n\
+             the resulting file protects nothing - encrypt it, or delete it when done\n\
              pass --i-know-this-writes-plaintext to go ahead"
         );
     }
+    let target = match (format, with_history) {
+        (ExportFormat::Sefy, history) => Target::Sefy { history },
+        (ExportFormat::Keepass, history) => Target::KeePass { history },
+        (ExportFormat::Csv, false) => Target::Csv,
+        (ExportFormat::Csv, true) => bail!(
+            "a CSV has no place for earlier versions\n\
+             use --format keepass or --format sefy to carry them"
+        ),
+    };
+    if let Some(path) = &output_path
+        && path.exists()
+        && !force
+    {
+        bail!(
+            "{} already exists; pass --force to overwrite",
+            path.display()
+        );
+    }
 
-    let json = sefy_core::exchange::to_json(&sefy_core::exchange::export(vault)?)?;
+    let exported = sefy_core::exchange::export(vault, target)?;
+    let report = &exported.report;
 
-    match output_path {
+    match &output_path {
         Some(path) => {
-            if path.exists() && !force {
-                bail!(
-                    "{} already exists; pass --force to overwrite",
-                    path.display()
-                );
-            }
-            std::fs::write(&path, json.as_bytes())
+            std::fs::write(path, exported.text.as_bytes())
                 .with_context(|| format!("cannot write {}", path.display()))?;
-            eprintln!("wrote {} in the clear", path.display());
+            let mut written = output::count(report.written, "item");
+            if report.versions > 0 {
+                written.push_str(&format!(
+                    " and {}",
+                    output::count(report.versions, "earlier version")
+                ));
+            }
+            eprintln!("wrote {} in the clear: {written}", path.display());
         }
-        None => println!("{json}"),
+        None => println!("{}", exported.text.as_str()),
+    }
+
+    // On stderr either way, so a pipe receives the file and nothing else.
+    if !report.left_out.is_empty() {
+        let kinds: Vec<String> = report
+            .left_out
+            .iter()
+            .map(|(kind, count)| output::count(*count, kind.as_str()))
+            .collect();
+        eprintln!(
+            "left out: {} - {} holds logins only; --format keepass carries every kind",
+            kinds.join(", "),
+            target.name()
+        );
+    }
+    if report.trimmed > 0 {
+        eprintln!(
+            "{} {} fields a CSV has no column for; those fields are left out",
+            output::count(report.trimmed, "login"),
+            if report.trimmed == 1 { "has" } else { "have" }
+        );
+    }
+    if report.unreadable > 0 {
+        let what = match target {
+            Target::Sefy { .. } => "written without its contents",
+            _ => "left out",
+        };
+        eprintln!(
+            "{} of a kind this version of sefy does not know: {what}",
+            output::count(report.unreadable, "item")
+        );
     }
     Ok(())
 }
 
-/// Adds the contents of an export to the vault.
+/// Adds what another sefy, a password manager or a browser exported.
 pub fn import(vault: &mut Vault, input: Option<PathBuf>) -> Result<()> {
-    let json = match input {
-        Some(path) => std::fs::read_to_string(&path)
-            .with_context(|| format!("cannot read {}", path.display()))?,
-        None => read_stdin().context("cannot read the export from stdin")?,
-    };
+    let bytes = Zeroizing::new(match &input {
+        Some(path) => {
+            std::fs::read(path).with_context(|| format!("cannot read {}", path.display()))?
+        }
+        None => {
+            let mut bytes = Vec::new();
+            std::io::stdin()
+                .read_to_end(&mut bytes)
+                .context("cannot read the file to import from stdin")?;
+            bytes
+        }
+    });
+    let text = std::str::from_utf8(&bytes).map_err(|_| {
+        anyhow::anyhow!(
+            "the file is not UTF-8 text\n\
+             save it again as UTF-8 - spreadsheet programs offer it as \"CSV UTF-8\""
+        )
+    })?;
 
-    let export = sefy_core::exchange::from_json(&json)?;
-    let report = sefy_core::exchange::import(vault, &export)?;
+    let report = sefy_core::exchange::import(vault, text)?;
 
-    println!("imported {}", output::count(report.added, "item"));
+    let added = report.added_total();
+    let mut line = format!(
+        "imported {} from {}",
+        output::count(added, "item"),
+        report.format.describe()
+    );
+    if added > 0 {
+        let kinds: Vec<String> = report
+            .added
+            .iter()
+            .map(|(kind, count)| output::count(*count, kind.as_str()))
+            .collect();
+        line.push_str(&format!(": {}", kinds.join(", ")));
+    }
+    println!("{line}");
+    if report.versions > 0 {
+        println!(
+            "with {} kept in their history",
+            output::count(report.versions, "earlier version")
+        );
+    }
     if report.skipped > 0 {
         // Silence here would read as "imported nothing" on a re-import, when
         // what actually happened is that the vault already had it all.
@@ -1235,11 +1321,36 @@ pub fn import(vault: &mut Vault, input: Option<PathBuf>) -> Result<()> {
             output::count(report.skipped, "item")
         );
     }
-    if report.unsupported > 0 {
+
+    for (outcome, heading) in [
+        (Outcome::NotImported, "not imported:"),
+        (Outcome::InPart, "imported in part:"),
+        (Outcome::Reshaped, "imported in another shape:"),
+    ] {
+        let notices: Vec<_> = report
+            .notices
+            .iter()
+            .filter(|notice| notice.outcome == outcome)
+            .collect();
+        if notices.is_empty() {
+            continue;
+        }
+        println!("{heading}");
+        for notice in notices {
+            println!("  {:?} - {}", notice.title, notice.reason);
+        }
+    }
+    if !report.columns_left_out.is_empty() {
         println!(
-            "{} of a kind this version does not know, not imported\n\
-             upgrade sefy and import again",
-            output::count(report.unsupported, "item")
+            "columns left out as the exporting program's own bookkeeping: {}",
+            report.columns_left_out.join(", ")
+        );
+    }
+
+    if let Some(path) = input {
+        println!(
+            "{} still holds all of it in the clear; delete it once the import looks right",
+            path.display()
         );
     }
     Ok(())
