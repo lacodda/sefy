@@ -19,6 +19,83 @@ Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
 
+## [0.13.0] - 2026-10-05
+
+A vault is not a trap in either direction: what KeePass, Bitwarden or a
+browser holds comes in with one command, and what sefy holds leaves in a form
+they read.
+
+**`sefy import`** tells the format from the file - a sefy export, KeePass XML
+(KeePass 2 or KeePassXC), a Bitwarden JSON export, or a CSV of passwords from
+Chrome, Edge, Firefox, Safari or a password manager - and maps each entry onto
+a sefy kind: logins, notes, cards, SSH keys, bank accounts. Folders, groups and
+collections become tags. Earlier contents the other program kept arrive as the
+item's history: a KeePass entry's history snapshots, and Bitwarden's password
+history, including the old values of hidden fields. An entry with an identity
+in its source - a KeePass UUID, a Bitwarden id, Firefox's guid - keeps it, so
+importing the same file twice adds nothing the second time.
+
+Nothing is dropped in silence. The import names every entry that did not come
+across exactly as it was: left behind (a trash, a recycle bin, a type sefy does
+not know), brought in part (a passkey, a Bitwarden linked field, an attachment
+KeePassXC's XML leaves out), or brought in another shape (an identity or a
+passport as a note listing its fields, a KeePass attachment as a file item, a
+one-time password key sefy cannot read as a field named `otp`). CSV columns
+that are a browser's own bookkeeping are listed as left out; any other column
+is kept as a field. The last line reminds you that the file you imported from
+is still on disk in the clear.
+
+**`sefy export --format keepass|csv`** writes KeePass XML, which KeePass 2,
+KeePassXC and Bitwarden import, or the CSV every browser imports. KeePass XML
+carries every kind - the sefy kind travels in the entry's custom data, so a
+card that goes to KeePass and comes back is a card - and one-time password keys
+the way each program keeps them natively. A CSV carries logins, and the export
+says on stderr what it had no place for. **`--with-history`** adds every item's
+earlier versions to sefy's JSON or KeePass XML; without it an export holds the
+current contents only.
+
+Checked against KeePassXC 2.7.12: a vault exported as KeePass XML imports
+there with every field, the one-time codes it shows match sefy's, and its own
+XML export comes back into sefy identical - kinds, identities, times and
+history - apart from attachments, whose bytes KeePassXC's XML does not carry.
+
+### Breaking Changes
+
+**Vault files: none.** The file format is still version 1 and the database
+schema is unchanged at 5.
+
+**Export files: none.** sefy's JSON is still `sefy_export: 1`. Each entry now
+also carries `created_at`, `updated_at` and `version` - the identity of its
+current contents - and with `--with-history`, `history`. An export imported
+into another vault can therefore be merged with the one it came from later
+without a false conflict. Every new key is optional on the way in, and 0.12.0
+imports a file written by this build, taking the current contents and leaving
+the rest; this build imports one written by 0.12.0. Both checked with the
+published 0.12.0 binary.
+
+**`sefy import`:** a file that is none of the four formats is refused as "not
+a file sefy can import" rather than "not a sefy export", and the summary line
+names the format and the kinds added.
+
+**`sefy-core` library:** `exchange::export(vault, target)` takes a `Target`
+(`Sefy { history }`, `KeePass { history }`, `Csv`) and returns `Exported` -
+the text and an `ExportReport`. `exchange::import(vault, text)` takes the
+file's text and detects its format; `exchange::detect` is public.
+`ImportReport` now holds `format`, `added` by kind, `skipped`, `versions`,
+`notices` and `columns_left_out`; `unsupported` became notices with
+`Outcome::NotImported`. `from_json` and `to_json` are gone. `ExportItem` gains
+`created_at`, `updated_at`, `version` and `history` (`ExportStamp`,
+`ExportVersion`). `Error::UnreadableExport` became `UnreadableImport`, and
+`Error` gains `UnrecognizedImport`, `SealedImport` and `Unexportable`. The new
+`time` module holds the calendar arithmetic, and `Totp` gains `from_parts` and
+`stored`.
+
+### Documentation
+- Introduce imports from other password managers and the export formats
+
+### Features
+- Read and write KeePass, Bitwarden and CSV exports
+
 ## [0.12.0] - 2026-09-29
 
 Every value keeps its past: an edit keeps what it replaced, and a merge that
