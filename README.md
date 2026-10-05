@@ -132,8 +132,9 @@ Every command, with its flags: **[the reference](https://lacodda.github.io/sefy/
 - **Merge instead of overwrite.** Where two copies both changed an item, the
   newer is current and the other waits in its history rather than being
   dropped on a timestamp.
-- **A vault that is never a trap.** `export` writes plaintext JSON only after
-  you say so explicitly.
+- **A vault that is never a trap.** `import` reads KeePass, Bitwarden and
+  browser exports, history included; `export` writes sefy JSON, KeePass XML or
+  CSV - in the clear only after you say so explicitly.
 
 ## Install
 

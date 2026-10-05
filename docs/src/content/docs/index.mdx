@@ -99,7 +99,7 @@ content share no prefix, because the salt and nonce are fresh every time.
 		An edit keeps what it replaced. `sefy history` shows how each version differs from now without printing a secret, and `sefy restore mail 2 --field password` brings back the password a site never accepted the change of.
 	</Card>
 	<Card title="Never a trap" icon="external">
-		`sefy export` writes everything back out as plain JSON so your data can move to another tool - after making you acknowledge exactly what that file is.
+		`sefy import` brings in what KeePass, Bitwarden or a browser exported, earlier passwords included. `sefy export` writes it all back out as KeePass XML, CSV or sefy JSON - after making you acknowledge exactly what that file is.
 	</Card>
 	<Card title="Honest about limits" icon="warning">
 		Inconspicuous, not deniable. It hides from a passing glance and a cloud scanner, not from a forensic examiner or from anyone who can compel a password.

@@ -68,7 +68,8 @@ item this one has never heard of — a 0.6.0 build meeting a `card` written by
   why it looks different;
 - **finds it** by title and tags;
 - lets you **retitle and retag** it, because those live beside the contents;
-- **exports it**, flagged as an entry whose contents this build could not read;
+- **exports it**, in a sefy export, flagged as an entry whose contents this
+  build could not read - and leaves it out of KeePass XML and CSV, saying so;
 - **leaves it alone** during a merge, and says that it did.
 
 What it will not do is guess. Reading such an item, editing its contents, or

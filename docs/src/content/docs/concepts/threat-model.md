@@ -58,14 +58,19 @@ the file carrying them does not advertise what it is.
 
 ## The one deliberate exception
 
-Two features write plaintext on purpose, and both say so before doing it:
+Three features handle plaintext on purpose, and each says so:
 
-- **`sefy export`** produces a JSON file with every secret in the clear. It
-  exists so a vault is never a trap — you can always move your data elsewhere —
-  and it refuses to run until you acknowledge what the file is. An item written
-  by a [newer sefy](/sefy/concepts/versions/) is listed in the export with its
-  contents left out and marked as such, so the file never quietly claims to hold
-  more than it does.
+- **`sefy export`** produces a file - sefy JSON, KeePass XML or CSV - with
+  every secret in the clear. It exists so a vault is never a trap — you can
+  always move your data elsewhere — and it refuses to run until you acknowledge
+  what the file is. Earlier versions of each value stay behind unless
+  `--with-history` asks for them. An item written by a
+  [newer sefy](/sefy/concepts/versions/) is listed in a sefy export with its
+  contents left out and marked as such, so the file never quietly claims to
+  hold more than it does.
+- **`sefy import`** reads such a file from another program. sefy only reads
+  it, but the file is as exposed as the export that made it, and the import
+  ends by saying so: delete it once the import looks right.
 - **`--editor`** puts a note in a temporary file while your editor is open.
   sefy overwrites and removes that file on exit, but an editor's own swap, undo
   and backup files are its business, not sefy's.

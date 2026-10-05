@@ -69,8 +69,8 @@ get the same command.
 
 ### Moving data in and out
 
-- [`export`](/sefy/reference/export/) — write the contents out as plain JSON
-- [`import`](/sefy/reference/import/) — add the contents of an export
+- [`export`](/sefy/reference/export/) — write the contents out as sefy JSON, KeePass XML or CSV
+- [`import`](/sefy/reference/import/) — add what sefy, KeePass, Bitwarden or a browser exported
 - [`merge`](/sefy/reference/merge/) — fold another vault file into this one
 
 ### Between machines

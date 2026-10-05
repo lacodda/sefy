@@ -125,6 +125,11 @@ A long note is easier in your editor:
 sefy add note "journal" --editor
 ```
 
+Coming from another password manager or a browser, bring everything at once:
+`sefy import` reads what KeePass, Bitwarden, Chrome, Firefox and Safari
+export, and [Moving between password managers](/sefy/guides/password-managers/)
+walks through each.
+
 ## Get things out
 
 ```console
@@ -187,6 +192,8 @@ sefy run -e GITHUB_TOKEN=github -- ./release.sh
 
 ## Where next
 
+- [Moving between password managers](/sefy/guides/password-managers/) —
+  arriving from KeePass, Bitwarden or a browser, and leaving again.
 - [Moving a vault between machines](/sefy/guides/moving-a-vault/) — copying it,
   syncing services, and what to do when two copies drifted apart.
 - [Keeping ssh keys in a vault](/sefy/guides/ssh-keys/) — keys and passphrases
