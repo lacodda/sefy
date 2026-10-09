@@ -19,6 +19,59 @@ Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
 
+## [0.14.0] - 2026-10-09
+
+Syncing without surprises: see what a sync would do before it does it, have
+it happen after every change without being remembered, and keep a way back if
+a merge ever goes wrong.
+
+**`--dry-run`** on `sync`, `pull` and `merge` fetches what it needs, runs the
+merge on a copy of the vault held in memory, and names every item it would
+touch - for a sync, on both sides: what would come here and what the remote
+copy would gain from the push. It is the merge itself, so it cannot disagree
+with what the real command then does. Nothing is written, nothing is sent, and
+no transfer is recorded.
+
+**A copy before every merge.** Before a merge, a pull, a sync or an import
+changes the vault, the file as it was is kept beside it as `FILE.1`, older
+copies moving to `FILE.2` and `FILE.3`. The copy is the sealed file byte for
+byte, named after the vault with nothing that says sefy. A change that touches
+nothing keeps no copy; a copy that cannot be made stops the change before it
+writes. `change-password` re-seals the copies under the new password, and
+`status` says how many there are.
+
+**`--auto-sync on`**, or `SEFY_AUTO_SYNC=on`, ends every command that changed
+the vault with the sync `sefy sync` would run here - same transport, same
+remote name. The change is on disk first: a sync that fails warns on stderr and
+the command still succeeds. After `change-password` the remote copy is opened
+with the old password and replaced under the new one.
+
+**`sefy doctor`** checks what sefy needs on this machine: the vault opens and
+so do its copies, the plugins answer, the transport fetches the remote copy -
+into a scratch file - and that copy opens and is compared both ways, auto-sync
+would work, the clipboard is there. Nothing is changed or sent, and the exit
+status is `1` when a check fails.
+
+### Breaking Changes
+
+**Vault files: none.** The file format is still version 1 and the database
+schema is unchanged at 5; checked both ways with the published 0.13.0 binary.
+The copies beside a vault are vault files like any other.
+
+**Behaviour:** a merge, a pull or an import that changes nothing no longer
+rewrites the vault file; one that changes something leaves `FILE.1` beside it.
+
+**`sefy-core` library:** `MergeReport.added` and `.updated` are lists of
+`MergedItem` (id and title) instead of counts, and `MergeReport` gains
+`kept_copy` and `changed()`. `ImportReport` gains `kept_copy`.
+`Vault::change_password` returns a `PasswordChange` saying which copies it
+re-sealed and which it left. New: the `copies` module, `merge::preview`,
+`sync::fetch` and `Fetched`, `sync::preview_pull`, `sync::preview_sync` and
+`SyncPreview`, `sync::both_ways`, `Vault::writes`.
+
+### Features
+- Preview merges, keep copies before them, sync after writes
+
 ## [0.13.0] - 2026-10-05
 
 A vault is not a trap in either direction: what KeePass, Bitwarden or a
