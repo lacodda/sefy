@@ -4,6 +4,15 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+/// The variable naming the transport to use when there are several.
+pub const TRANSPORT_ENV: &str = "SEFY_TRANSPORT";
+
+/// The variable naming the remote copy.
+pub const REMOTE_NAME_ENV: &str = "SEFY_REMOTE_NAME";
+
+/// What the remote copy is called when nothing says otherwise.
+pub const DEFAULT_REMOTE_NAME: &str = "vault";
+
 /// An inconspicuous encrypted store for notes, credentials and files.
 #[derive(Debug, Parser)]
 #[command(name = "sefy", version, about, long_about = None)]
@@ -27,6 +36,23 @@ pub struct Cli {
     /// it would land in the shell history and in every process listing.
     #[arg(long, global = true, value_name = "VAR")]
     pub password_env: Option<String>,
+
+    /// After a command that changes the vault, sync it: pull, then push.
+    ///
+    /// For a machine that is one of several: add a password on the laptop
+    /// and it is already on the remote. The transport and the remote name are
+    /// the ones `sefy sync` would use here. The change is on disk before the
+    /// sync starts, so a sync that fails says why and leaves it there for the
+    /// next one.
+    #[arg(
+        long,
+        global = true,
+        env = "SEFY_AUTO_SYNC",
+        value_name = "WHEN",
+        value_enum,
+        ignore_case = true
+    )]
+    pub auto_sync: Option<Switch>,
 
     /// What to do. Omitted, sefy opens an interactive picker over the vault.
     #[command(subcommand)]
@@ -218,6 +244,10 @@ pub enum Command {
         /// would make that impossible to express.
         #[arg(long, value_name = "VAR")]
         other_password_env: Option<String>,
+
+        /// Say what the merge would change, item by item, and change nothing.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Replace the master password.
@@ -251,6 +281,14 @@ pub enum Command {
     /// that never saw its contents.
     Sync(PullArgs),
 
+    /// Check that what sefy needs on this machine works.
+    ///
+    /// The vault opens and so do the copies beside it, the plugins answer,
+    /// the transport reaches the remote copy and that opens too, the
+    /// clipboard is there. Nothing is changed and nothing is sent; the exit
+    /// status is non-zero when a check fails.
+    Doctor(RemoteArgs),
+
     /// Inspect the transports installed on this machine.
     Plugin {
         #[command(subcommand)]
@@ -270,9 +308,9 @@ pub struct RemoteArgs {
     /// Transport to use, by its short name; omit when only one is installed.
     ///
     /// There is no configuration file to record a default in — sefy keeps
-    /// nothing on disk but the vault and its plugins — so the choice is either
-    /// obvious or stated.
-    #[arg(long, short = 'p', value_name = "NAME", env = "SEFY_TRANSPORT")]
+    /// nothing on disk but the vault, its copies and its plugins — so the
+    /// choice is either obvious or stated.
+    #[arg(long, short = 'p', value_name = "NAME", env = TRANSPORT_ENV)]
     pub transport: Option<String>,
 
     /// What the remote copy is called.
@@ -283,8 +321,8 @@ pub struct RemoteArgs {
     #[arg(
         long,
         value_name = "NAME",
-        env = "SEFY_REMOTE_NAME",
-        default_value = "vault"
+        env = REMOTE_NAME_ENV,
+        default_value = DEFAULT_REMOTE_NAME
     )]
     pub name: String,
 }
@@ -307,6 +345,25 @@ pub struct PullArgs {
     /// Ask for the remote copy's password instead of reusing this vault's.
     #[arg(long)]
     pub ask_remote_password: bool,
+
+    /// Say what would change, item by item, and change nothing.
+    ///
+    /// The remote copy is fetched and the merge is worked out in memory:
+    /// nothing is written here, nothing is sent, and no transfer is recorded.
+    /// A sync also says what the remote copy would gain.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// On or off, as spelled on the command line or in a variable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Switch {
+    /// On.
+    #[value(alias = "true", alias = "yes", alias = "1")]
+    On,
+    /// Off.
+    #[value(alias = "false", alias = "no", alias = "0")]
+    Off,
 }
 
 /// What to do with plugins.

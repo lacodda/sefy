@@ -36,11 +36,16 @@ impl Fixture {
 
     /// `sefy` pointed at this vault, with the master password in the
     /// environment.
+    ///
+    /// Syncing after writes is taken out of the inherited environment: a
+    /// machine running these tests with it on would otherwise have every
+    /// `add` here reach for its real transport.
     fn sefy(&self) -> Command {
         let mut command = Command::cargo_bin("sefy").unwrap();
         command
             .env("SEFY_VAULT", &self.path)
             .env("SEFY_TEST_PASSWORD", MASTER)
+            .env_remove("SEFY_AUTO_SYNC")
             .arg("--password-env")
             .arg("SEFY_TEST_PASSWORD");
         command
@@ -1307,6 +1312,381 @@ fn a_pull_under_a_different_remote_password_is_asked_for_separately() {
         .assert()
         .success()
         .stdout(contains("1 added"));
+}
+
+/// Two copies of one vault that drifted apart, the other one already pushed:
+/// this machine has "my note", the remote has "their note" too.
+fn drifted_with_remote() -> (Fixture, Fixture, PathBuf, tempfile::TempDir) {
+    let here = Fixture::with_vault();
+    add_note(&here, "shared", "both have it", &[]);
+    let there = Fixture::empty();
+    std::fs::copy(&here.path, &there.path).unwrap();
+    add_note(&here, "my note", "from here", &[]);
+    add_note(&there, "their note", "from over there", &[]);
+
+    let remote = here.directory().join("remote.bin");
+    let transports = transport_directory(&remote);
+    sefy_with_transport(&there, transports.path())
+        .arg("push")
+        .assert()
+        .success();
+    (here, there, remote, transports)
+}
+
+/// The titles in a vault file, read with the library rather than the CLI.
+fn titles_in(path: &Path, password: &str) -> Vec<String> {
+    let vault = sefy_core::Vault::open(path, password.as_bytes()).unwrap();
+    let mut titles: Vec<String> = vault
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|item| item.title)
+        .collect();
+    titles.sort();
+    titles
+}
+
+#[test]
+fn a_dry_run_sync_names_what_each_side_would_gain_and_changes_nothing() {
+    let (here, _there, remote, transports) = drifted_with_remote();
+    let before = std::fs::read(&here.path).unwrap();
+    let remote_before = std::fs::read(&remote).unwrap();
+
+    let output = sefy_with_transport(&here, transports.path())
+        .args(["sync", "--dry-run"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output = String::from_utf8(output).unwrap();
+
+    // Each side's gain under its own heading, in that order.
+    let here_at = output.find("here, from").expect(&output);
+    let there_at = output.find("there, once").expect(&output);
+    let theirs_at = output.find("add       \"their note\"").expect(&output);
+    let mine_at = output.find("add       \"my note\"").expect(&output);
+    assert!(
+        here_at < theirs_at && theirs_at < there_at && there_at < mine_at,
+        "{output}"
+    );
+    assert!(output.contains("dry run"), "{output}");
+
+    assert_eq!(
+        std::fs::read(&here.path).unwrap(),
+        before,
+        "nothing written here"
+    );
+    assert_eq!(
+        std::fs::read(&remote).unwrap(),
+        remote_before,
+        "nothing sent"
+    );
+    assert!(!sefy_core::copies::path(&here.path, 1).exists());
+    sefy_with_transport(&here, transports.path())
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains("synced   never"));
+}
+
+#[test]
+fn a_dry_run_pull_and_merge_change_nothing_either() {
+    let (here, there, _remote, transports) = drifted_with_remote();
+    let before = std::fs::read(&here.path).unwrap();
+
+    sefy_with_transport(&here, transports.path())
+        .args(["pull", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(contains("add       \"their note\"").and(contains("dry run")));
+
+    here.sefy()
+        .env("OTHER_PASSWORD", MASTER)
+        .args([
+            "merge",
+            "--dry-run",
+            "--other-password-env",
+            "OTHER_PASSWORD",
+        ])
+        .arg(&there.path)
+        .assert()
+        .success()
+        .stdout(contains("add       \"their note\"").and(contains("dry run")));
+
+    assert_eq!(std::fs::read(&here.path).unwrap(), before);
+}
+
+#[test]
+fn a_pull_that_brings_something_keeps_the_vault_as_it_was_beside_it() {
+    let (here, _there, _remote, transports) = drifted_with_remote();
+
+    sefy_with_transport(&here, transports.path())
+        .arg("pull")
+        .assert()
+        .success()
+        .stdout(contains("kept as").and(contains("notes.bak.1")));
+
+    let kept = sefy_core::copies::path(&here.path, 1);
+    assert_eq!(titles_in(&kept, MASTER), vec!["my note", "shared"]);
+    here.sefy()
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains("copies   1 copy beside the vault"));
+
+    // A second pull finds the two in step: no new copy, nothing rotated.
+    sefy_with_transport(&here, transports.path())
+        .arg("pull")
+        .assert()
+        .success()
+        .stdout(contains("kept as").not());
+    assert!(!sefy_core::copies::path(&here.path, 2).exists());
+}
+
+#[test]
+fn a_change_reaches_the_remote_by_itself_when_auto_sync_is_on() {
+    let (here, _there, remote, transports) = drifted_with_remote();
+
+    sefy_with_transport(&here, transports.path())
+        .env("SEFY_AUTO_SYNC", "on")
+        .args(["add", "note", "fresh", "--text", "added here"])
+        .assert()
+        .success()
+        .stderr(contains("synced \"vault\" through file"));
+
+    // The remote has both sides now, the new note included.
+    assert_eq!(
+        titles_in(&remote, MASTER),
+        vec!["fresh", "my note", "shared", "their note"]
+    );
+
+    // The flag says it as well as the variable, and `off` overrides it.
+    sefy_with_transport(&here, transports.path())
+        .env("SEFY_AUTO_SYNC", "on")
+        .args([
+            "--auto-sync",
+            "off",
+            "add",
+            "note",
+            "local",
+            "--text",
+            "stays here",
+        ])
+        .assert()
+        .success()
+        .stderr(contains("synced").not());
+    assert!(!titles_in(&remote, MASTER).contains(&"local".to_owned()));
+}
+
+#[test]
+fn syncing_after_a_write_keeps_stdout_for_the_secret() {
+    let (here, _there, remote, transports) = drifted_with_remote();
+
+    let output = sefy_with_transport(&here, transports.path())
+        .env("SEFY_AUTO_SYNC", "on")
+        .args(["gen", "--save", "fresh login", "--stdout", "-n", "24"])
+        .assert()
+        .success()
+        .stderr(contains("synced"))
+        .get_output()
+        .stdout
+        .clone();
+
+    // A pipe gets the password and nothing else.
+    let output = String::from_utf8(output).unwrap();
+    assert_eq!(output.lines().count(), 1, "{output:?}");
+    assert_eq!(output.trim().chars().count(), 24);
+    assert!(titles_in(&remote, MASTER).contains(&"fresh login".to_owned()));
+}
+
+#[test]
+fn a_sync_after_a_write_that_fails_warns_and_keeps_the_change() {
+    let fixture = Fixture::with_vault();
+    let nothing_installed = tempfile::tempdir().unwrap();
+
+    // Exit status 0: the note is added, and a failure here would invite a
+    // script to add it a second time.
+    sefy_with_transport(&fixture, nothing_installed.path())
+        .env("SEFY_AUTO_SYNC", "on")
+        .args(["add", "note", "kept", "--text", "still here"])
+        .assert()
+        .success()
+        .stderr(contains("warning").and(contains("did not reach the remote")));
+
+    assert_eq!(titles_in(&fixture.path, MASTER), vec!["kept"]);
+}
+
+#[test]
+fn a_transfer_is_not_followed_by_a_second_one() {
+    // A pull writes the vault, and with auto-sync on that write must not turn
+    // the pull into a sync: the person asked for this machine to take, not to
+    // publish.
+    let (here, _there, remote, transports) = drifted_with_remote();
+    let remote_before = std::fs::read(&remote).unwrap();
+
+    sefy_with_transport(&here, transports.path())
+        .env("SEFY_AUTO_SYNC", "on")
+        .arg("pull")
+        .assert()
+        .success()
+        .stderr(contains("synced").not());
+
+    assert_eq!(std::fs::read(&remote).unwrap(), remote_before);
+}
+
+#[test]
+fn a_command_that_writes_nothing_syncs_nothing() {
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "one", "first", &[]);
+    let nothing_installed = tempfile::tempdir().unwrap();
+
+    // No transport is installed, so any attempt would warn.
+    sefy_with_transport(&fixture, nothing_installed.path())
+        .env("SEFY_AUTO_SYNC", "on")
+        .arg("ls")
+        .assert()
+        .success()
+        .stderr(contains("warning").not());
+}
+
+#[test]
+fn a_password_change_reaches_the_remote_under_the_new_password() {
+    let (here, _there, remote, transports) = drifted_with_remote();
+    // A copy beside the vault, to see it re-sealed too.
+    sefy_with_transport(&here, transports.path())
+        .arg("pull")
+        .assert()
+        .success();
+
+    sefy_with_transport(&here, transports.path())
+        .env("SEFY_AUTO_SYNC", "on")
+        .env("NEW_PASSWORD", "a different password")
+        .args(["change-password", "--new-password-env", "NEW_PASSWORD"])
+        .assert()
+        .success()
+        .stdout(contains("1 copy beside the vault sealed under it too"))
+        .stderr(contains("synced"));
+
+    // The remote was opened with the old password and replaced under the new.
+    assert_eq!(
+        titles_in(&remote, "a different password"),
+        vec!["my note", "shared", "their note"]
+    );
+    let kept = sefy_core::copies::path(&here.path, 1);
+    assert_eq!(
+        titles_in(&kept, "a different password"),
+        vec!["my note", "shared"]
+    );
+}
+
+#[test]
+fn the_doctor_reports_every_check_and_finds_the_remote_in_step_after_a_sync() {
+    let (here, _there, _remote, transports) = drifted_with_remote();
+
+    sefy_with_transport(&here, transports.path())
+        .arg("doctor")
+        .assert()
+        .stdout(
+            contains("ok    vault")
+                .and(contains("2 items"))
+                .and(contains("plugins    file 0.1.0"))
+                .and(contains("a sync would change 1 item here and 1 item there"))
+                .and(contains("skip  auto-sync"))
+                .and(contains("clipboard")),
+        );
+
+    sefy_with_transport(&here, transports.path())
+        .arg("sync")
+        .assert()
+        .success();
+
+    sefy_with_transport(&here, transports.path())
+        .env("SEFY_AUTO_SYNC", "on")
+        .arg("doctor")
+        .assert()
+        .stdout(
+            contains("is in step with this vault")
+                .and(contains("ok    copies     1 copy"))
+                .and(contains("ok    auto-sync  on")),
+        );
+
+    // Ahead here and behind nowhere: only the push would change anything,
+    // and that is still not "in step".
+    add_note(&here, "newer here", "not sent yet", &[]);
+    sefy_with_transport(&here, transports.path())
+        .arg("doctor")
+        .assert()
+        .stdout(
+            contains("a sync would change 0 items here and 1 item there")
+                .and(contains("in step").not()),
+        );
+}
+
+#[test]
+fn the_doctor_fails_on_a_wrong_password_and_still_checks_the_rest() {
+    let fixture = Fixture::with_vault();
+    let transports = transport_directory(&fixture.directory().join("remote.bin"));
+
+    sefy_with_transport(&fixture, transports.path())
+        .env("SEFY_TEST_PASSWORD", "not the password")
+        .arg("doctor")
+        .assert()
+        .failure()
+        .stdout(
+            contains("fail  vault")
+                .and(contains("wrong password"))
+                .and(contains("plugins    file")),
+        )
+        .stderr(contains("failed"));
+}
+
+#[test]
+fn the_doctor_needs_no_vault_to_check_the_machine() {
+    let transports = transport_directory(Path::new("nowhere.bin"));
+
+    let mut command = Command::cargo_bin("sefy").unwrap();
+    command
+        .env_remove("SEFY_VAULT")
+        .env_remove("SEFY_AUTO_SYNC")
+        .env_remove("SEFY_TRANSPORT")
+        .env("PATH", system_path())
+        .env("APPDATA", transports.path())
+        .env("XDG_DATA_HOME", transports.path())
+        .env("HOME", transports.path())
+        .arg("doctor")
+        .assert()
+        // No remote copy exists yet, so the transport check fails, saying why.
+        .failure()
+        .stdout(
+            contains("skip  vault")
+                .and(contains("SEFY_VAULT"))
+                .and(contains("fail  transport")),
+        );
+}
+
+#[test]
+fn the_doctor_warns_when_the_remote_copy_is_under_another_password() {
+    let here = Fixture::with_vault();
+    let there = Fixture::empty();
+    there
+        .sefy()
+        .env("SEFY_TEST_PASSWORD", "another password")
+        .arg("init")
+        .assert()
+        .success();
+    let remote = here.directory().join("remote.bin");
+    std::fs::copy(&there.path, &remote).unwrap();
+    let transports = transport_directory(&remote);
+
+    sefy_with_transport(&here, transports.path())
+        .arg("doctor")
+        .assert()
+        .stdout(
+            contains("warn  transport")
+                .and(contains("does not open under this vault's password"))
+                .and(contains("--ask-remote-password")),
+        );
 }
 
 #[test]

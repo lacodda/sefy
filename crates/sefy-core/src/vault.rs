@@ -1,12 +1,14 @@
 //! The vault: an encrypted file, its in-memory database, and the operations
 //! that move data between them.
 
+use crate::copies;
 use crate::db::{self, Stamp};
 use crate::error::{Error, Result};
 use crate::format;
 use crate::history::Version;
 use crate::model::{Field, Item, ItemSummary, NewItem, Payload, Query};
 use rusqlite::Connection;
+use std::cell::Cell;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -22,6 +24,34 @@ pub struct Vault {
     password: Zeroizing<Vec<u8>>,
     connection: Connection,
     device: Option<String>,
+    /// Whether this vault has a file of its own to be written to.
+    ///
+    /// A remote copy read from a transport's bytes, or the scratch copy a
+    /// preview folds into, has none: it lives in memory, is looked at and is
+    /// dropped. Neither ever leaves this crate in that state.
+    backing: Backing,
+    /// How many times this value has written its file.
+    writes: Cell<u64>,
+}
+
+/// Where a vault's contents go when it is saved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Backing {
+    /// To the file at the vault's path.
+    File,
+    /// Nowhere: a copy that exists only to be read.
+    Memory,
+}
+
+/// What a password change did beyond the vault itself.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PasswordChange {
+    /// The [copies](crate::copies) beside the vault, now sealed under the new
+    /// password as well.
+    pub resealed: usize,
+    /// Copies that did not open under the old password and were left as they
+    /// were: whatever they are, they are not this vault's to re-seal.
+    pub left: Vec<PathBuf>,
 }
 
 impl Vault {
@@ -37,6 +67,8 @@ impl Vault {
             password: Zeroizing::new(password.to_vec()),
             connection: db::create()?,
             device: None,
+            backing: Backing::File,
+            writes: Cell::new(0),
         };
         vault.save()?;
         Ok(vault)
@@ -54,6 +86,43 @@ impl Vault {
             password: Zeroizing::new(password.to_vec()),
             connection: db::load(&database)?,
             device: None,
+            backing: Backing::File,
+            writes: Cell::new(0),
+        })
+    }
+
+    /// Opens a vault from the sealed bytes of its file, without a file of its
+    /// own.
+    ///
+    /// For the copy a transport fetched: it is read, folded from and dropped,
+    /// and never written anywhere. The bytes are the same ciphertext the
+    /// remote holds.
+    pub(crate) fn from_sealed(sealed: &[u8], password: &[u8]) -> Result<Self> {
+        let database = format::decode(password, sealed)?;
+        Ok(Self {
+            path: PathBuf::new(),
+            password: Zeroizing::new(Vec::new()),
+            connection: db::load(&database)?,
+            device: None,
+            backing: Backing::Memory,
+            writes: Cell::new(0),
+        })
+    }
+
+    /// A copy of this vault's database to change and throw away.
+    ///
+    /// What a preview folds into: the merge runs for real, on contents nobody
+    /// will write. The copy keeps the machine's name, so the versions a
+    /// preview makes are stamped as the real merge's would be.
+    pub(crate) fn scratch_copy(&self) -> Result<Self> {
+        let database = Zeroizing::new(db::dump(&self.connection)?);
+        Ok(Self {
+            path: self.path.clone(),
+            password: Zeroizing::new(Vec::new()),
+            connection: db::load(&database)?,
+            device: self.device.clone(),
+            backing: Backing::Memory,
+            writes: Cell::new(0),
         })
     }
 
@@ -79,9 +148,28 @@ impl Vault {
     /// leaves either the old vault or the new one — never a half-written file,
     /// and never plaintext.
     pub fn save(&self) -> Result<()> {
+        // Only copies made inside this crate are memory-backed, and none of
+        // them is ever saved; reaching this is a bug here, not a condition a
+        // caller can meet.
+        assert_eq!(
+            self.backing,
+            Backing::File,
+            "a vault with no file of its own was asked to save"
+        );
         let database = Zeroizing::new(db::dump(&self.connection)?);
         let sealed = format::encode(&self.password, &database)?;
-        write_atomically(&self.path, &sealed)
+        write_atomically(&self.path, &sealed)?;
+        self.writes.set(self.writes.get() + 1);
+        Ok(())
+    }
+
+    /// How many times this value has written its file since it was opened.
+    ///
+    /// The question a program asks after a command: did that change the vault
+    /// on disk? Counted at the write itself, so a command that changed nothing
+    /// and saved nothing reads as exactly that.
+    pub fn writes(&self) -> u64 {
+        self.writes.get()
     }
 
     /// Adds an item and returns its identifier.
@@ -360,9 +448,16 @@ impl Vault {
     ///
     /// The salt and nonce are fresh, so the new file shares nothing with the
     /// old one beyond its contents.
-    pub fn change_password(&mut self, password: &[u8]) -> Result<()> {
-        self.password = Zeroizing::new(password.to_vec());
-        self.save()
+    ///
+    /// The [copies](crate::copies) kept beside the vault are re-sealed under
+    /// the new password too. Left as they were, they would be three more files
+    /// the retired password still opens — and retiring it is usually the
+    /// whole point of changing it. The vault goes first: it is the one that
+    /// matters if anything stops halfway.
+    pub fn change_password(&mut self, password: &[u8]) -> Result<PasswordChange> {
+        let old = std::mem::replace(&mut self.password, Zeroizing::new(password.to_vec()));
+        self.save()?;
+        copies::reseal(&self.path, &old, password)
     }
 
     /// What this vault holds, without revealing any of it.
@@ -519,7 +614,7 @@ pub(crate) fn now() -> i64 {
 
 /// Writes `bytes` to `path` so that the file is either fully replaced or
 /// untouched.
-fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
     let directory = path.parent().filter(|p| !p.as_os_str().is_empty());
     if let Some(directory) = directory {
         fs::create_dir_all(directory).map_err(|source| {

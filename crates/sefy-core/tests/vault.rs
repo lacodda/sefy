@@ -417,6 +417,59 @@ fn changing_the_password_rewrites_the_file() {
 }
 
 #[test]
+fn changing_the_password_reseals_the_copies_beside_the_vault() {
+    // A copy left under the retired password is one more file that password
+    // still opens — and retiring it is usually why it was changed.
+    let fixture = fixture();
+    let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+    vault.add(NewItem::new("thing", note("before"))).unwrap();
+    vault.save().unwrap();
+    let kept = sefy_core::copies::keep(&fixture.path).unwrap().unwrap();
+    let taken = fs::metadata(&kept).unwrap().modified().unwrap();
+    // Not this vault's at all: it must come through untouched.
+    let stranger = sefy_core::copies::path(&fixture.path, 2);
+    fs::write(
+        &stranger,
+        b"somebody else's file, sealed under who knows what",
+    )
+    .unwrap();
+
+    let change = vault.change_password(b"a different password").unwrap();
+
+    assert_eq!(change.resealed, 1);
+    assert_eq!(change.left, vec![stranger.clone()]);
+    assert!(matches!(
+        Vault::open(&kept, PASSWORD),
+        Err(Error::WrongPasswordOrNotAVault)
+    ));
+    let copy = Vault::open(&kept, b"a different password").unwrap();
+    assert_eq!(copy.list().unwrap()[0].title, "thing");
+    assert_eq!(
+        fs::metadata(&kept).unwrap().modified().unwrap(),
+        taken,
+        "re-sealing is not taking a copy; the copy keeps its time"
+    );
+    assert_eq!(
+        fs::read(&stranger).unwrap(),
+        b"somebody else's file, sealed under who knows what"
+    );
+}
+
+#[test]
+fn a_save_is_counted_and_a_read_is_not() {
+    let fixture = fixture();
+    let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+    let created = vault.writes();
+    vault.list().unwrap();
+    assert_eq!(vault.writes(), created, "reading writes nothing");
+
+    vault.add(NewItem::new("thing", note("text"))).unwrap();
+    vault.save().unwrap();
+
+    assert_eq!(vault.writes(), created + 1);
+}
+
+#[test]
 fn a_vault_opens_on_a_machine_that_never_saw_it() {
     // Nothing in the file may depend on where it was written: a vault created
     // in one directory must open verbatim from another.
@@ -684,7 +737,7 @@ fn merging_brings_across_what_is_missing() {
     let mut vault = Vault::open(&here.path, PASSWORD).unwrap();
     let report = sefy_core::merge(&mut vault, &other).unwrap();
 
-    assert_eq!(report.added, 1);
+    assert_eq!(report.added.len(), 1);
     assert_eq!(report.unchanged, 1);
     assert!(report.conflicts.is_empty());
     assert_eq!(
@@ -725,7 +778,7 @@ fn a_newer_version_from_the_other_side_wins() {
 
     // This side never moved from the version the other side started from, so
     // there is nothing to conflict with: the other side is simply ahead.
-    assert_eq!(report.updated, 1);
+    assert_eq!(report.updated.len(), 1);
     assert!(report.conflicts.is_empty());
     let id = vault.find_by_uuid(&uuid).unwrap().unwrap();
     assert_eq!(vault.get(id).unwrap().payload, note("changed there"));
@@ -879,7 +932,7 @@ fn two_vaults_that_never_met_merge_without_collisions() {
 
     let report = sefy_core::merge(&mut vault, &other).unwrap();
 
-    assert_eq!(report.added, 1);
+    assert_eq!(report.added.len(), 1);
     assert_eq!(report.unchanged, 0);
     assert!(report.conflicts.is_empty());
     assert_eq!(vault.list().unwrap().len(), 2);

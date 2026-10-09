@@ -8,7 +8,9 @@ password, and does one thing to the items inside it.
 [`plugin`](/sefy/reference/plugin/) and
 [`completions`](/sefy/reference/completions/) are the exceptions: they report on
 the installation itself and need neither a vault nor a password. So is
-[`gen`](/sefy/reference/gen/), until it is asked to keep what it made.
+[`gen`](/sefy/reference/gen/), until it is asked to keep what it made, and
+[`doctor`](/sefy/reference/doctor/) checks a vault when it is given one and the
+rest of the machine either way.
 
 ## `sefy` on its own
 
@@ -78,6 +80,7 @@ get the same command.
 - [`push`](/sefy/reference/push/) — send this vault to the remote
 - [`pull`](/sefy/reference/pull/) — fetch the remote copy and fold it in
 - [`sync`](/sefy/reference/sync/) — pull, then push
+- [`doctor`](/sefy/reference/doctor/) — check that the vault, the transport and the clipboard work here
 
 ### The vault itself
 
@@ -114,6 +117,23 @@ whose input comes from a pipe can still ask — `cat notes.txt | sefy add note
 draft` works. With no terminal at all — a script, CI, a service — sefy refuses
 to prompt rather than hanging.
 
+## Syncing after a change
+
+`--auto-sync on`, or `SEFY_AUTO_SYNC=on` in the environment, makes every command
+that changes the vault end with a [`sync`](/sefy/reference/sync/) — the one
+`sefy sync` would run here with no options. `--auto-sync off` turns it off for
+one command. It is off unless asked for.
+
+| Variable | Meaning |
+| --- | --- |
+| `SEFY_AUTO_SYNC` | `on` or `off`, when `--auto-sync` is not given. |
+| `SEFY_TRANSPORT` | The transport to use when several are installed. |
+| `SEFY_REMOTE_NAME` | What the remote copy is called; `vault` when unset. |
+
+A sync that fails after a change prints a warning and does not fail the command:
+the change is already on disk. See
+[Syncing after every change](/sefy/guides/syncing/#syncing-after-every-change).
+
 ## References
 
 Wherever a command takes a `<REFERENCE>`, it accepts:
@@ -137,6 +157,9 @@ narrow the text, or use an id
 ## Exit status
 
 `0` on success, `1` on any error, `2` when the command line itself is wrong.
+A sync after a change that failed is a warning, not an error: the change
+succeeded. [`doctor`](/sefy/reference/doctor/) ends with `1` when any check
+failed.
 Errors go to stderr; a wrong password and a file that is not a vault produce
 the same message, because an authenticated blob genuinely cannot tell the two
 apart.

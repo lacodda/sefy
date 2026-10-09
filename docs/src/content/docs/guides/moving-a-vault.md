@@ -86,6 +86,7 @@ When both copies changed, fold one into the other:
 $ sefy --vault ./desktop.bak merge ./laptop.bak
 Password for ./laptop.bak:
 merged: 1 added, 1 updated, 1 unchanged
+the vault as it was is kept as ./desktop.bak.1
 ```
 
 Items are matched on the identity each carries, so this is safe to repeat: a
@@ -153,6 +154,13 @@ salvage tool that could read half of it.
 ```sh
 cp ~/backups/notes.bak ~/backups/notes.bak.2026-01-31
 ```
+
+sefy keeps copies of its own, too: before a merge, a pull, a sync or an import
+changes the vault, the file as it was goes beside it as `notes.bak.1`, and the
+three most recent are kept — see
+[A copy before every merge](/sefy/guides/syncing/#a-copy-before-every-merge).
+They are a way back from a merge that went wrong, not a backup: they sit on the
+same disk as the vault and go when it goes.
 
 ## What to do about the old copy
 

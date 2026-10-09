@@ -19,12 +19,20 @@
 //! transport writes a file — that is the whole protocol. That file is the
 //! *sealed* blob, exactly what sits at the remote and exactly what an onlooker
 //! would find beside the vault: the plaintext invariant is untouched. It is
-//! still removed as soon as the merge is done, on the failure path as well as
+//! still removed as soon as it has been read, on the failure path as well as
 //! the successful one, because a stray copy of a vault is a copy that outlives
 //! the password change that was supposed to retire it.
 
+//!
+//! # Looking before leaping
+//!
+//! [`preview_pull`] and [`preview_sync`] fetch the remote copy as a pull does
+//! and run the merge on a copy of this vault held in memory. Nothing is written
+//! here, nothing is sent, and no transfer is recorded: the vault is exactly as
+//! it was, and the report is the one the real operation would give.
+
 use crate::error::{Error, Result};
-use crate::merge::{MergeReport, merge};
+use crate::merge::{self, MergeReport, merge};
 use crate::plugin::{Operation, Plugin, Report, Request, invoke};
 use crate::vault::Vault;
 use std::path::Path;
@@ -36,6 +44,36 @@ pub struct PullReport {
     pub transport: Report,
     /// What folding the remote copy into this vault changed.
     pub merged: MergeReport,
+}
+
+/// The remote copy as a transport delivered it: still sealed.
+pub struct Fetched {
+    /// The plugin's own line about the transfer, if it had one.
+    pub transport: Report,
+    /// The bytes of the file at the remote — ciphertext, exactly what an
+    /// onlooker would find there.
+    pub sealed: Vec<u8>,
+}
+
+impl Fetched {
+    /// Opens the fetched copy, for reading only.
+    ///
+    /// It has no file of its own: it is folded from, compared, and dropped.
+    pub fn open(&self, password: &[u8]) -> Result<Vault> {
+        Vault::from_sealed(&self.sealed, password)
+    }
+}
+
+/// What a sync would do in each direction.
+#[derive(Debug, Clone)]
+pub struct SyncPreview {
+    /// The plugin's own line about fetching the remote copy, if it had one.
+    pub transport: Report,
+    /// What the pull would fold into this vault.
+    pub coming: MergeReport,
+    /// What the remote copy would gain from the push that follows: what this
+    /// vault, once merged, has and the remote copy does not.
+    pub going: MergeReport,
 }
 
 /// Sends this vault's file to the remote, replacing what is there.
@@ -99,6 +137,30 @@ pub fn pull(
     name: &str,
     remote_password: &[u8],
 ) -> Result<PullReport> {
+    let fetched = fetch(plugin, name)?;
+    let remote = fetched.open(remote_password)?;
+    let merged = merge(vault, &remote)?;
+
+    // After the merge rather than inside it: `merge` folds one vault into
+    // another and knows nothing about transports, which is what lets it be
+    // called on a file from anywhere. The stamp is written whether or not the
+    // merge changed anything — a pull that found the two in step still
+    // reached the remote, and that is what the stamp says.
+    stamp(vault, plugin, "pull")?;
+
+    Ok(PullReport {
+        transport: fetched.transport,
+        merged,
+    })
+}
+
+/// Fetches the remote copy without folding it in anywhere.
+///
+/// The bytes pass through a scratch file only because a transport writes a
+/// file — that is the whole protocol — and the file is gone again before this
+/// returns, on the failure path as well as the successful one. What comes back
+/// is held in memory, still sealed.
+pub fn fetch(plugin: &Plugin, name: &str) -> Result<Fetched> {
     let scratch = Scratch::new()?;
 
     let transport = invoke(
@@ -111,8 +173,8 @@ pub fn pull(
     )?;
 
     // A transport that reports success without leaving a file is a bug in the
-    // transport, but it would surface here as "wrong password or not a vault",
-    // which sends the user looking in the wrong place entirely.
+    // transport, but it would surface later as "wrong password or not a
+    // vault", which sends the user looking in the wrong place entirely.
     if !scratch.path().exists() {
         return Err(Error::PluginFailed {
             name: plugin.name().to_owned(),
@@ -120,23 +182,58 @@ pub fn pull(
         });
     }
 
-    let remote = Vault::open(scratch.path(), remote_password)?;
-    let merged = merge(vault, &remote)?;
+    let sealed = std::fs::read(scratch.path())
+        .map_err(|source| Error::io("cannot read what the transport fetched", source))?;
+    Ok(Fetched { transport, sealed })
+}
 
-    // `merge` saves the destination itself, so the vault is already on disk
-    // by this point. Dropping the remote copy here rather than at the end of
-    // the function closes its database before the scratch directory is
-    // removed, which is what Windows requires.
-    drop(remote);
+/// What [`pull`] would fold into this vault, with nothing written.
+///
+/// The remote copy is fetched for real — there is no other way to know what
+/// it holds — but this vault is left exactly as it was, and no transfer is
+/// recorded.
+pub fn preview_pull(
+    vault: &Vault,
+    plugin: &Plugin,
+    name: &str,
+    remote_password: &[u8],
+) -> Result<PullReport> {
+    let fetched = fetch(plugin, name)?;
+    let remote = fetched.open(remote_password)?;
+    Ok(PullReport {
+        merged: merge::preview(vault, &remote)?,
+        transport: fetched.transport,
+    })
+}
 
-    // After the merge rather than inside it: `merge` folds one vault into
-    // another and knows nothing about transports, which is what lets it be
-    // called on a file from anywhere. Ordering against the merge's own save is
-    // *not* the reason — a stamp set first would sit in the same in-memory
-    // database that save writes out, so either order reaches the disk.
-    stamp(vault, plugin, "pull")?;
+/// What [`sync`] would do in each direction, with nothing written or sent.
+pub fn preview_sync(
+    vault: &Vault,
+    plugin: &Plugin,
+    name: &str,
+    remote_password: &[u8],
+) -> Result<SyncPreview> {
+    let fetched = fetch(plugin, name)?;
+    let remote = fetched.open(remote_password)?;
+    let (coming, going) = both_ways(vault, remote)?;
+    Ok(SyncPreview {
+        transport: fetched.transport,
+        coming,
+        going,
+    })
+}
 
-    Ok(PullReport { transport, merged })
+/// What a sync between this vault and a remote copy would move each way.
+///
+/// The first half is the pull's merge. The second is what the push would give
+/// the remote: the merged result folded into the remote copy, in memory. A push
+/// replaces the remote file whole, and the merged result already holds all of
+/// the remote's, so what the fold adds or moves on is exactly what the remote
+/// gains.
+pub fn both_ways(vault: &Vault, mut remote: Vault) -> Result<(MergeReport, MergeReport)> {
+    let (merged, coming) = merge::folded(vault, &remote)?;
+    let going = merge::fold(&mut remote, &merged)?;
+    Ok((coming, going))
 }
 
 /// Pull, then push: take what is at the remote, then publish the result.
@@ -429,7 +526,7 @@ fi
 
         let report = pull(&mut vault, &plugin, "vault", PASSWORD).unwrap();
 
-        assert_eq!(report.merged.added, 1);
+        assert_eq!(report.merged.added.len(), 1);
         assert_eq!(titles(&vault), vec!["my note", "their note"]);
 
         // And it is on disk, not only in memory.
@@ -518,7 +615,7 @@ fi
 
         let report = sync(&mut vault, &plugin, "vault", PASSWORD).unwrap();
 
-        assert_eq!(report.pulled.merged.added, 1);
+        assert_eq!(report.pulled.merged.added.len(), 1);
 
         // The copy now at the remote has to hold both sides. Pushing before
         // pulling would leave it holding only this machine's, and this is the
@@ -642,6 +739,124 @@ fi
         assert!(
             vault.last_sync().unwrap().is_none(),
             "a refused pull must not look like a sync that happened"
+        );
+    }
+
+    #[test]
+    fn a_previewed_pull_says_what_would_come_and_changes_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let remote = remote_holding(directory.path(), "their note", PASSWORD);
+        let local = directory.path().join("notes.bak");
+        let mut vault = Vault::create(&local, PASSWORD).unwrap();
+        note(&mut vault, "my note", "from here");
+        let log = directory.path().join("log");
+        file_transport(directory.path(), &remote, &log);
+        let plugin = installed(directory.path(), "file");
+        let before = std::fs::read(&local).unwrap();
+        let remote_before = std::fs::read(&remote).unwrap();
+
+        let report = preview_pull(&vault, &plugin, "vault", PASSWORD).unwrap();
+
+        assert_eq!(report.merged.added.len(), 1);
+        assert_eq!(report.merged.added[0].title, "their note");
+        assert_eq!(
+            std::fs::read(&local).unwrap(),
+            before,
+            "nothing written here"
+        );
+        assert_eq!(
+            std::fs::read(&remote).unwrap(),
+            remote_before,
+            "nothing sent there"
+        );
+        assert_eq!(titles(&vault), vec!["my note"]);
+        assert!(
+            vault.last_sync().unwrap().is_none(),
+            "a preview is not a transfer and must not be recorded as one"
+        );
+        assert!(!fetched_path(&log).exists(), "the fetched copy is gone");
+    }
+
+    #[test]
+    fn a_previewed_sync_says_what_each_side_would_gain() {
+        let directory = tempfile::tempdir().unwrap();
+        let remote = remote_holding(directory.path(), "their note", PASSWORD);
+        // The local vault starts as a copy of the remote one, so the two share
+        // the note; then each side gains something of its own.
+        let local = directory.path().join("notes.bak");
+        std::fs::copy(&remote, &local).unwrap();
+        let mut vault = Vault::open(&local, PASSWORD).unwrap();
+        note(&mut vault, "only here", "from here");
+        let mut theirs = Vault::open(&remote, PASSWORD).unwrap();
+        note(&mut theirs, "only there", "from there");
+        drop(theirs);
+        file_transport(directory.path(), &remote, &directory.path().join("log"));
+        let plugin = installed(directory.path(), "file");
+
+        let preview = preview_sync(&vault, &plugin, "vault", PASSWORD).unwrap();
+
+        let coming: Vec<&str> = preview
+            .coming
+            .added
+            .iter()
+            .map(|item| item.title.as_str())
+            .collect();
+        let going: Vec<&str> = preview
+            .going
+            .added
+            .iter()
+            .map(|item| item.title.as_str())
+            .collect();
+        assert_eq!(coming, vec!["only there"]);
+        assert_eq!(going, vec!["only here"]);
+        assert!(preview.going.conflicts.is_empty(), "{:?}", preview.going);
+
+        // And the real sync then does exactly that.
+        let done = sync(&mut vault, &plugin, "vault", PASSWORD).unwrap();
+        assert_eq!(done.pulled.merged.added.len(), 1);
+        let published = directory.path().join("published.bak");
+        std::fs::copy(&remote, &published).unwrap();
+        let published = Vault::open(&published, PASSWORD).unwrap();
+        assert_eq!(
+            titles(&published),
+            vec!["only here", "only there", "their note"]
+        );
+    }
+
+    #[test]
+    fn a_previewed_sync_of_two_copies_in_step_moves_nothing_either_way() {
+        let directory = tempfile::tempdir().unwrap();
+        let remote = remote_holding(directory.path(), "their note", PASSWORD);
+        let local = directory.path().join("notes.bak");
+        std::fs::copy(&remote, &local).unwrap();
+        let vault = Vault::open(&local, PASSWORD).unwrap();
+        file_transport(directory.path(), &remote, &directory.path().join("log"));
+        let plugin = installed(directory.path(), "file");
+
+        let preview = preview_sync(&vault, &plugin, "vault", PASSWORD).unwrap();
+
+        assert!(!preview.coming.changed(), "{:?}", preview.coming);
+        assert!(!preview.going.changed(), "{:?}", preview.going);
+    }
+
+    #[test]
+    fn a_pull_that_brings_something_keeps_the_vault_as_it_was_beside_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let remote = remote_holding(directory.path(), "their note", PASSWORD);
+        let local = directory.path().join("notes.bak");
+        let mut vault = Vault::create(&local, PASSWORD).unwrap();
+        note(&mut vault, "my note", "from here");
+        file_transport(directory.path(), &remote, &directory.path().join("log"));
+        let plugin = installed(directory.path(), "file");
+
+        let report = pull(&mut vault, &plugin, "vault", PASSWORD).unwrap();
+
+        let kept = report.merged.kept_copy.expect("a copy was kept");
+        let before = Vault::open(&kept, PASSWORD).unwrap();
+        assert_eq!(
+            titles(&before),
+            vec!["my note"],
+            "the state before the pull"
         );
     }
 }

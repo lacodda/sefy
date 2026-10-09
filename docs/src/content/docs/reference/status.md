@@ -16,6 +16,7 @@ items    5 items  (4 login, 1 note)
 tags     3 tags
 schema   4
 synced   2026-09-16 19:15 UTC (2 hours ago) through github (sync)
+copies   2 copies beside the vault, newest 2026-09-16 19:15 UTC (2 hours ago)
 plugins  github, sftp
 ```
 
@@ -27,6 +28,7 @@ plugins  github, sftp
 | `tags` | How many distinct tags are in use. |
 | `schema` | Version of the database inside the blob — see [Versions](/sefy/concepts/versions/). |
 | `synced` | When this vault last reached a remote, through which transport, and by which command. |
+| `copies` | The [copies kept beside the vault](/sefy/guides/syncing/#a-copy-before-every-merge) before a merge or an import changed it, and when the newest was taken. |
 | `plugins` | Transports installed on this machine, with any unusable one marked. |
 
 ## It never prints contents
@@ -39,7 +41,7 @@ are [`tags`](/sefy/reference/tags/).
 ## The sync time travels with the vault
 
 `synced` is read from inside the sealed file, not from anything beside it.
-sefy keeps nothing on disk but the vault and its transports, and a state file
+sefy keeps nothing on disk but the vault, its copies and its transports, and a state file
 next to a vault would annotate the one file that is deliberately unremarkable.
 
 It also means the answer moves with the file. Copy a vault to another machine
@@ -69,3 +71,4 @@ at all — see [Versions](/sefy/concepts/versions/).
 - [`tags`](/sefy/reference/tags/) — the tag names behind the count
 - [`plugin`](/sefy/reference/plugin/) — transports in full, with why one is unusable
 - [`sync`](/sefy/reference/sync/) — what updates the `synced` line
+- [`doctor`](/sefy/reference/doctor/) — check that all of it actually works

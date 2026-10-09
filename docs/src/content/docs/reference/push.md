@@ -66,7 +66,7 @@ say which one with --transport <NAME>.
 Guessing would mean deciding where somebody's vault goes, and a wrong guess
 there does not announce itself. `SEFY_TRANSPORT` sets the choice for a shell
 session; there is no configuration file, because sefy keeps nothing on disk but
-the vault and its plugins.
+the vault, its copies and its plugins.
 
 ## The remote name
 

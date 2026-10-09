@@ -15,11 +15,13 @@ sefy merge <FILE> [OPTIONS]
 | Option | Meaning |
 | --- | --- |
 | `--other-password-env <VAR>` | Read the other vault's password from this variable. |
+| `--dry-run` | Say what the merge would change, item by item, and change nothing. |
 
 ```console
 $ sefy merge ~/from-laptop.bak
 Password for /home/you/from-laptop.bak:
 merged: 1 added, 1 updated, 1 unchanged; 2 earlier versions brought across
+the vault as it was is kept as /home/you/notes.bak.1
 ```
 
 The other vault's password is asked for separately, because a copy from another
@@ -27,7 +29,29 @@ machine may well be under a different one. `--other-password-env` is the script
 form; the global `--password-env` still carries this vault's own password.
 
 The other file is only ever read. Everything happens in this vault, which is
-saved once at the end.
+saved once at the end — and only if the merge changed something.
+
+## Looking first
+
+```console
+$ sefy merge ~/from-laptop.bak --dry-run
+Password for /home/you/from-laptop.bak:
+here, from /home/you/from-laptop.bak:
+  add       "wifi"
+  update    "mail" (3)
+  1 unchanged; 2 earlier versions brought across
+dry run: nothing was written here or sent anywhere
+```
+
+The merge runs for real, on a copy of this vault held in memory and dropped
+afterwards, so what it lists is what the merge then does.
+
+## A copy before it writes
+
+A merge that changes anything keeps the vault as it was beside it first, as
+`FILE.1`, moving older copies to `FILE.2` and `FILE.3`. If that copy cannot be
+made, the merge writes nothing. Going back is replacing the vault with the copy.
+See [A copy before every merge](/sefy/guides/syncing/#a-copy-before-every-merge).
 
 ## What it does, item by item
 

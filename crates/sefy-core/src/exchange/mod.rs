@@ -203,6 +203,9 @@ pub struct ImportReport {
     /// Columns of a CSV that were recognised as a browser's own bookkeeping
     /// and not imported.
     pub columns_left_out: Vec<String>,
+    /// Where the vault's file was kept as it was before the import wrote it,
+    /// when the import added anything.
+    pub kept_copy: Option<std::path::PathBuf>,
 }
 
 impl ImportReport {
@@ -339,6 +342,7 @@ fn apply(vault: &mut Vault, format: Format, reading: Reading) -> Result<ImportRe
         versions: 0,
         notices: reading.notices,
         columns_left_out: reading.columns_left_out,
+        kept_copy: None,
     };
 
     let now = crate::vault::now();
@@ -370,7 +374,16 @@ fn apply(vault: &mut Vault, format: Format, reading: Reading) -> Result<ImportRe
             .position(|candidate| candidate == kind)
             .unwrap_or(known.len())
     });
-    vault.save()?;
+
+    // An import is a merge's cousin: many items at once, from a file nobody
+    // checked line by line. Importing the wrong file should be undone by
+    // putting the copy back, not by removing items one at a time — so the
+    // same copy a merge keeps is kept first. An import that added nothing
+    // changed nothing, and writes nothing.
+    if report.added_total() > 0 {
+        report.kept_copy = crate::copies::keep(vault.path())?;
+        vault.save()?;
+    }
     Ok(report)
 }
 

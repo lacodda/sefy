@@ -180,10 +180,15 @@ fn truncate(text: &str, width: usize) -> String {
 /// `n` followed by `noun`, pluralised the lazy English way.
 pub fn count(n: usize, noun: &str) -> String {
     if n == 1 {
-        format!("{n} {noun}")
-    } else {
-        format!("{n} {noun}s")
+        return format!("{n} {noun}");
     }
+    // "copy" becomes "copies", while "key" stays "keys": a y after a
+    // consonant is the one English plural the plain -s gets wrong here.
+    let mut letters = noun.chars().rev();
+    if letters.next() == Some('y') && letters.next().is_some_and(|c| !"aeiou".contains(c)) {
+        return format!("{n} {}ies", &noun[..noun.len() - 1]);
+    }
+    format!("{n} {noun}s")
 }
 
 /// Turns a core error into the message the user should see.

@@ -256,7 +256,7 @@ fn an_imported_export_merges_back_without_a_false_conflict() {
 
     let report = merge(&mut imported, &vault).unwrap();
     assert!(report.conflicts.is_empty(), "{:?}", report.conflicts);
-    assert_eq!(report.updated, 1);
+    assert_eq!(report.updated.len(), 1);
     assert_eq!(
         payload_of(&imported, "bank"),
         note("changed after the export")
@@ -275,6 +275,34 @@ fn re_importing_an_export_does_not_duplicate_what_is_already_here() {
     assert_eq!(report.added_total(), 0);
     assert_eq!(report.skipped, 1);
     assert_eq!(vault.list().unwrap().len(), 1);
+}
+
+#[test]
+fn an_import_keeps_the_vault_as_it_was_beside_it_and_a_futile_one_writes_nothing() {
+    let fixture = fixture();
+    let mut vault = empty_vault(&fixture);
+    vault.add(NewItem::new("bank", note("original"))).unwrap();
+    vault.save().unwrap();
+    let before = std::fs::read(&fixture.path).unwrap();
+    let file = r#"{"sefy_export":1,"items":[
+        {"uuid":"0d6f3d5e-0000-4000-8000-000000000001","title":"mail","kind":"note","text":"imported"}
+    ]}"#;
+
+    let report = exchange::import(&mut vault, file).unwrap();
+
+    let kept = report
+        .kept_copy
+        .expect("an import that adds keeps a copy first");
+    assert_eq!(std::fs::read(&kept).unwrap(), before);
+
+    // The same file again adds nothing, so it must neither write nor push
+    // the useful copy down the rotation.
+    let writes = vault.writes();
+    let again = exchange::import(&mut vault, file).unwrap();
+    assert_eq!(again.added_total(), 0);
+    assert_eq!(again.kept_copy, None);
+    assert_eq!(vault.writes(), writes);
+    assert_eq!(sefy_core::copies::list(&fixture.path).len(), 1);
 }
 
 #[test]

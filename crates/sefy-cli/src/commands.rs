@@ -1,5 +1,6 @@
 //! What each subcommand does once the vault is open.
 
+use crate::autosync::AutoSync;
 use crate::cli::{
     AddKind, EditArgs, ExportFormat, FillArgs, FindArgs, GenArgs, GetArgs, HistoryArgs, ListArgs,
     OpenArgs, OtpArgs, PullArgs, RecordArgs, RemoteArgs, RestoreArgs, RunArgs,
@@ -387,8 +388,10 @@ pub fn get(vault: &Vault, args: GetArgs) -> Result<()> {
 ///
 /// `vault` is there exactly when `--save` is. The record is written before the
 /// value goes to the clipboard: a clipboard that cannot be reached must not
-/// cost a password the site has already accepted.
-pub fn generate(vault: Option<&mut Vault>, args: GenArgs) -> Result<()> {
+/// cost a password the site has already accepted. It is synced before then
+/// too, when syncing after a write is on: the clipboard wait can be long and
+/// is often cut short, and the record should not wait on it.
+pub fn generate(vault: Option<&mut Vault>, args: GenArgs, auto: &mut AutoSync) -> Result<()> {
     let recipe = if let Some(count) = args.words {
         Recipe::Words {
             count,
@@ -457,6 +460,7 @@ pub fn generate(vault: Option<&mut Vault>, args: GenArgs) -> Result<()> {
         )?;
         vault.save()?;
         say(&format!("added {title:?} as {id}"));
+        auto.catch_up(vault);
     }
     say(&description);
     if generated.bits < sefy_core::generate::OFFLINE_BITS {
@@ -1347,6 +1351,9 @@ pub fn import(vault: &mut Vault, input: Option<PathBuf>) -> Result<()> {
         );
     }
 
+    if let Some(kept) = &report.kept_copy {
+        println!("{}", kept_line(kept));
+    }
     if let Some(path) = input {
         println!(
             "{} still holds all of it in the clear; delete it once the import looks right",
@@ -1356,8 +1363,13 @@ pub fn import(vault: &mut Vault, input: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Folds another vault file into this one.
-pub fn merge(vault: &mut Vault, other: &Path, other_password_env: Option<&str>) -> Result<()> {
+/// Folds another vault file into this one, or says what doing so would change.
+pub fn merge(
+    vault: &mut Vault,
+    other: &Path,
+    other_password_env: Option<&str>,
+    dry_run: bool,
+) -> Result<()> {
     if other == vault.path() {
         bail!("that is this vault; merging a file into itself would do nothing");
     }
@@ -1370,17 +1382,42 @@ pub fn merge(vault: &mut Vault, other: &Path, other_password_env: Option<&str>) 
     )?;
     let source = session::open(other, &password)?;
 
+    if dry_run {
+        let report = sefy_core::merge::preview(vault, &source)?;
+        println!("here, from {}:", other.display());
+        print_lines(&preview_lines(&report, true));
+        println!("{NOTHING_DONE}");
+        return Ok(());
+    }
+
     let report = sefy_core::merge(vault, &source)?;
 
-    report_merge(&report, "nothing to merge; the two vaults already agree");
+    print_lines(&merge_lines(
+        &report,
+        "nothing to merge; the two vaults already agree",
+    ));
     Ok(())
 }
 
 /// Replaces the master password and rewrites the file under it.
 pub fn change_password(vault: &mut Vault, password_env: Option<&str>) -> Result<()> {
     let password = session::new_password(password_env)?;
-    vault.change_password(password.as_bytes())?;
+    let change = vault.change_password(password.as_bytes())?;
     println!("password changed");
+    if change.resealed > 0 {
+        println!(
+            "{} beside the vault sealed under it too",
+            output::count(change.resealed, "copy")
+        );
+    }
+    for left in &change.left {
+        // Named rather than deleted: it is not known what it is, only that the
+        // old password does not open it.
+        println!(
+            "{} does not open under the old password and was left as it was",
+            left.display()
+        );
+    }
     Ok(())
 }
 
@@ -1455,7 +1492,7 @@ pub fn open(vault: &Vault, args: OpenArgs) -> Result<()> {
 /// `--set` is the moment of enrolment: the site shows a key and asks for the
 /// first code to prove it was taken. Storing and answering are one command so
 /// the key is in the vault before the site considers two-factor sign-in on.
-pub fn otp(vault: &mut Vault, args: OtpArgs) -> Result<()> {
+pub fn otp(vault: &mut Vault, args: OtpArgs, auto: &mut AutoSync) -> Result<()> {
     let summary = vault.resolve(&args.reference).map_err(output::explain)?;
     let item = vault.get(summary.id)?;
     let title = &item.summary.title;
@@ -1492,6 +1529,9 @@ pub fn otp(vault: &mut Vault, args: OtpArgs) -> Result<()> {
         )?;
         vault.save()?;
         say(&format!("stored the one-time password key of {title:?}"));
+        // Before the code or the picture: both can wait on the person for a
+        // while, and the key should reach the other machines regardless.
+        auto.catch_up(vault);
     }
 
     let stored = fields
@@ -1819,6 +1859,8 @@ pub fn status(vault: &Vault) -> Result<()> {
         None => println!("synced   never"),
     }
 
+    println!("copies   {}", copies_line(vault.path()));
+
     let plugins = sefy_core::plugin::discover_in(&sefy_core::plugin::search_paths());
     if plugins.is_empty() {
         println!("plugins  none installed");
@@ -1839,26 +1881,53 @@ pub fn status(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
+/// The copies kept beside a vault, in one phrase: how many, and how old the
+/// most recent is.
+pub(crate) fn copies_line(vault: &Path) -> String {
+    let copies = sefy_core::copies::list(vault);
+    let Some(newest) = copies.first() else {
+        return "none yet; one is kept before a merge or an import changes the vault".to_owned();
+    };
+    let taken = newest
+        .taken
+        .and_then(|taken| taken.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|elapsed| {
+            format!(
+                ", newest {}",
+                crate::when::moment(elapsed.as_secs() as i64, now())
+            )
+        })
+        .unwrap_or_default();
+    format!(
+        "{} beside the vault{taken}",
+        output::count(copies.len(), "copy")
+    )
+}
+
 /// The vault file's size, in units a person reads.
 ///
 /// Absent rather than an error if the file cannot be measured: the vault is
 /// open, so it plainly exists, and a status that failed over one cosmetic line
 /// would be worse than one missing it.
 fn file_size(path: &Path) -> Option<String> {
-    let bytes = std::fs::metadata(path).ok()?.len();
+    Some(size(std::fs::metadata(path).ok()?.len()))
+}
+
+/// A number of bytes, in units a person reads.
+pub(crate) fn size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = 1024 * KB;
-    Some(if bytes < KB {
+    if bytes < KB {
         format!("{bytes} B")
     } else if bytes < MB {
         format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
         format!("{:.1} MB", bytes as f64 / MB as f64)
-    })
+    }
 }
 
 /// Unix seconds, for rendering how long ago something happened.
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs() as i64)
@@ -1877,42 +1946,51 @@ pub fn push(vault: &mut Vault, args: RemoteArgs) -> Result<()> {
     Ok(())
 }
 
-/// Fetches the remote copy and folds it in.
+/// Fetches the remote copy and folds it in, or says what that would change.
 pub fn pull(vault: &mut Vault, args: PullArgs, master: &str) -> Result<()> {
     let plugin = transport(args.remote.transport.as_deref())?;
     let remote_password = remote_password(&args, master)?;
+    let name = &args.remote.name;
 
-    let report = sefy_core::pull(
-        vault,
-        &plugin,
-        &args.remote.name,
-        remote_password.as_bytes(),
-    )?;
+    if args.dry_run {
+        let report =
+            sefy_core::sync::preview_pull(vault, &plugin, name, remote_password.as_bytes())?;
+        println!("here, from {name:?} through {}:", plugin.name());
+        print_lines(&preview_lines(&report.merged, true));
+        println!("{NOTHING_DONE}");
+        return Ok(());
+    }
 
-    println!("pulled {:?} through {}", args.remote.name, plugin.name());
+    let report = sefy_core::pull(vault, &plugin, name, remote_password.as_bytes())?;
+
+    println!("pulled {name:?} through {}", plugin.name());
     if let Some(message) = &report.transport.message {
         println!("{message}");
     }
-    report_merge(
-        &report.merged,
-        "nothing came back that this vault did not already have",
-    );
+    print_lines(&merge_lines(&report.merged, NOTHING_CAME_BACK));
     Ok(())
 }
 
-/// Pulls, then pushes the result back.
+/// Pulls, then pushes the result back; or says what each leg would change.
 pub fn sync(vault: &mut Vault, args: PullArgs, master: &str) -> Result<()> {
     let plugin = transport(args.remote.transport.as_deref())?;
     let remote_password = remote_password(&args, master)?;
+    let name = &args.remote.name;
 
-    let report = sefy_core::sync(
-        vault,
-        &plugin,
-        &args.remote.name,
-        remote_password.as_bytes(),
-    )?;
+    if args.dry_run {
+        let preview =
+            sefy_core::sync::preview_sync(vault, &plugin, name, remote_password.as_bytes())?;
+        println!("here, from {name:?} through {}:", plugin.name());
+        print_lines(&preview_lines(&preview.coming, true));
+        println!("there, once the result is pushed:");
+        print_lines(&preview_lines(&preview.going, false));
+        println!("{NOTHING_DONE}");
+        return Ok(());
+    }
 
-    println!("synced {:?} through {}", args.remote.name, plugin.name());
+    let report = sefy_core::sync(vault, &plugin, name, remote_password.as_bytes())?;
+
+    println!("synced {name:?} through {}", plugin.name());
     for message in [
         report.pulled.transport.message.as_deref(),
         report.pushed.message.as_deref(),
@@ -1922,12 +2000,15 @@ pub fn sync(vault: &mut Vault, args: PullArgs, master: &str) -> Result<()> {
     {
         println!("{message}");
     }
-    report_merge(
-        &report.pulled.merged,
-        "nothing came back that this vault did not already have",
-    );
+    print_lines(&merge_lines(&report.pulled.merged, NOTHING_CAME_BACK));
     Ok(())
 }
+
+/// What a pull or a sync says when the remote held nothing new.
+pub(crate) const NOTHING_CAME_BACK: &str = "nothing came back that this vault did not already have";
+
+/// The last line of every dry run.
+const NOTHING_DONE: &str = "dry run: nothing was written here or sent anywhere";
 
 /// The master password of the copy on the other side.
 ///
@@ -1948,7 +2029,7 @@ fn remote_password(args: &PullArgs, master: &str) -> Result<String> {
 /// Named, or the only one installed. Guessing between several would mean
 /// choosing where somebody's vault goes, and a wrong guess there is not a
 /// mistake that announces itself.
-fn transport(name: Option<&str>) -> Result<sefy_core::Plugin> {
+pub(crate) fn transport(name: Option<&str>) -> Result<sefy_core::Plugin> {
     let installed = sefy_core::plugin::discover();
 
     if let Some(name) = name {
@@ -1985,18 +2066,23 @@ fn transport(name: Option<&str>) -> Result<sefy_core::Plugin> {
     }
 }
 
-/// Prints what a merge did.
+/// What a merge did, as lines to print.
 ///
-/// Shared by `merge`, `pull` and `sync`: the outcome is the same thing in all
-/// three, and a conflict has to read the same way whichever brought it in.
-/// Only the line for "the two already agree" differs, since what the user did
-/// differs.
-fn report_merge(report: &sefy_core::MergeReport, nothing_to_do: &str) {
+/// Shared by `merge`, `pull`, `sync` and syncing after a write: the outcome is
+/// the same thing in all of them, and a conflict has to read the same way
+/// whichever brought it in. Only the line for "the two already agree" differs,
+/// since what the user did differs.
+///
+/// Counts rather than names: a merge after every write would otherwise fill
+/// the screen with titles nobody asked about. Naming each item is what
+/// `--dry-run` is for. Conflicts are the exception and are always named —
+/// they are the one outcome somebody has to look at.
+pub(crate) fn merge_lines(report: &sefy_core::MergeReport, nothing_to_do: &str) -> Vec<String> {
     if report.is_empty() {
-        println!("{nothing_to_do}");
-        return;
+        return vec![nothing_to_do.to_owned()];
     }
 
+    let mut lines = Vec::new();
     let brought = if report.versions > 0 {
         format!(
             "; {} brought across",
@@ -2005,43 +2091,119 @@ fn report_merge(report: &sefy_core::MergeReport, nothing_to_do: &str) {
     } else {
         String::new()
     };
-    println!(
+    lines.push(format!(
         "merged: {} added, {} updated, {} unchanged{brought}",
-        report.added, report.updated, report.unchanged
-    );
+        report.added.len(),
+        report.updated.len(),
+        report.unchanged
+    ));
 
     if report.unsupported > 0 {
-        println!(
+        lines.push(format!(
             "{} left where it was: a kind this version of sefy does not know.\n\
              Nothing was lost — merge again from a build that knows it.",
             output::count(report.unsupported, "item")
-        );
+        ));
     }
 
     if !report.conflicts.is_empty() {
         // Loud on purpose: a conflict means two versions of one secret, and
         // only the person who made them can say which is right. The one that
         // was not chosen is not gone, and this is where they learn where it is.
-        println!(
+        lines.push(format!(
             "\n{} changed on both sides.",
             output::count(report.conflicts.len(), "item")
-        );
-        println!(
+        ));
+        lines.push(
             "The copy changed more recently is current; the other is kept in the item's history:"
+                .to_owned(),
         );
         for conflict in &report.conflicts {
             let whose = match conflict.current {
                 sefy_core::Side::Here => "this vault's is current",
                 sefy_core::Side::There => "the other copy's is current",
             };
-            println!(
+            lines.push(format!(
                 "  {:?} ({whose}): sefy history {}",
                 conflict.title, conflict.id
-            );
+            ));
         }
-        println!(
+        lines.push(
             "Compare with sefy history ID VERSION; bring one back with sefy restore ID VERSION."
+                .to_owned(),
         );
+    }
+
+    if let Some(kept) = &report.kept_copy {
+        lines.push(kept_line(kept));
+    }
+    lines
+}
+
+/// What a merge would do, item by item, as indented lines.
+///
+/// A preview names everything: deciding whether to go ahead is exactly when
+/// "3 added" is not enough, and "which three" is the question.
+///
+/// `here` says whether the report is about this vault. Ids are shown only
+/// then: an id in the remote copy names nothing on this machine.
+pub(crate) fn preview_lines(report: &sefy_core::MergeReport, here: bool) -> Vec<String> {
+    let id = |id: i64| {
+        if here {
+            format!(" ({id})")
+        } else {
+            String::new()
+        }
+    };
+    if report.is_empty() {
+        return vec!["  nothing would change".to_owned()];
+    }
+
+    let mut lines = Vec::new();
+    for item in &report.added {
+        lines.push(format!("  add       {:?}", item.title));
+    }
+    for item in &report.updated {
+        lines.push(format!("  update    {:?}{}", item.title, id(item.id)));
+    }
+    for conflict in &report.conflicts {
+        let outcome = match conflict.current {
+            sefy_core::Side::Here => "keeps its contents; the other side's go to its history",
+            sefy_core::Side::There => "takes the other side's contents; its own go to its history",
+        };
+        lines.push(format!(
+            "  conflict  {:?}{} {outcome}",
+            conflict.title,
+            id(conflict.id)
+        ));
+    }
+
+    let mut also = Vec::new();
+    if report.versions > 0 {
+        also.push(format!(
+            "{} brought across",
+            output::count(report.versions, "earlier version")
+        ));
+    }
+    if report.unsupported > 0 {
+        also.push(format!(
+            "{} of a kind this sefy does not know left where it is",
+            output::count(report.unsupported, "item")
+        ));
+    }
+    also.push(format!("{} unchanged", report.unchanged));
+    lines.push(format!("  {}", also.join("; ")));
+    lines
+}
+
+/// The line naming where a vault was kept before a change.
+fn kept_line(kept: &Path) -> String {
+    format!("the vault as it was is kept as {}", kept.display())
+}
+
+fn print_lines(lines: &[String]) {
+    for line in lines {
+        println!("{line}");
     }
 }
 

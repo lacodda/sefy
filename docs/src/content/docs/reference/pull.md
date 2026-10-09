@@ -18,6 +18,7 @@ sefy pull [OPTIONS]
 | `--name <NAME>` | What the remote copy is called. Default `vault`. |
 | `--remote-password-env <VAR>` | Read the remote copy's password from this variable. |
 | `--ask-remote-password` | Ask for the remote copy's password instead of reusing this vault's. |
+| `--dry-run` | Say what the pull would change, item by item, and change nothing. |
 
 ```console
 $ sefy pull
@@ -25,6 +26,7 @@ Master password:
 pulled "vault" through github
 downloaded 12.4 KiB
 merged: 2 added, 1 updated, 14 unchanged
+the vault as it was is kept as /home/you/Documents/.notes.db.1
 ```
 
 ## It merges, it does not replace
@@ -49,6 +51,29 @@ The copy changed more recently is current; the other is kept in the item's histo
 Compare with sefy history ID VERSION; bring one back with sefy restore ID VERSION.
 ```
 
+## Looking first
+
+```console
+$ sefy pull --dry-run
+here, from "vault" through github:
+  add       "wifi"
+  add       "github"
+  update    "mail" (3)
+  14 unchanged
+dry run: nothing was written here or sent anywhere
+```
+
+The remote copy is fetched for real — there is no other way to know what it
+holds — and the merge runs on a copy of this vault held in memory. Nothing is
+written, no copy is kept and no transfer is recorded: the vault is exactly as it
+was.
+
+## A copy before the merge
+
+When a pull changes anything, the vault as it was is kept beside it first, as
+`FILE.1` — the three most recent are kept. A pull that finds nothing new keeps
+none. See [A copy before every merge](/sefy/guides/syncing/#a-copy-before-every-merge).
+
 ## The remote copy's password
 
 A pull brings back a copy of *this* vault, so the same master password is the
@@ -69,7 +94,7 @@ those two apart.
 ## What touches the disk
 
 The transport has to write the fetched copy somewhere, so sefy gives it a
-scratch path and removes it as soon as the merge is done — on the failure path
+scratch path and removes it as soon as it has been read — on the failure path
 as well as the successful one. What sits there in between is the **sealed** blob,
 the same thing anyone would find at the remote; the decrypted database still
 never leaves memory.

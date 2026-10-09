@@ -14,20 +14,26 @@
 //! Each side knows which versions it has been through, so "the other copy is
 //! simply behind" and "both copies moved on" can be told apart — and only the
 //! second is a conflict.
+//!
+//! A [`preview`] is the same merge, run on a copy of the destination that
+//! nothing ever writes. It is not a separate prediction of what the merge
+//! would do, and so it cannot drift from it.
 
+use crate::copies;
 use crate::error::Result;
 use crate::history::Version;
 use crate::model::{NewItem, Payload};
 use crate::vault::Vault;
+use std::path::PathBuf;
 
 /// What a merge did, and what it could not decide on its own.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MergeReport {
     /// Items the destination did not have, copied across with their history.
-    pub added: usize,
+    pub added: Vec<MergedItem>,
     /// Items whose contents, title or tags were taken from the other side
     /// because it had moved on and this one had not.
-    pub updated: usize,
+    pub updated: Vec<MergedItem>,
     /// Items already identical, or already ahead here, left alone.
     pub unchanged: usize,
     /// Items whose contents changed on both sides; the older of the two was
@@ -43,6 +49,22 @@ pub struct MergeReport {
     /// rather than merely unread — so it stays put, and is counted here instead
     /// of being passed over in silence.
     pub unsupported: usize,
+    /// Where the vault's file was kept as it was before the merge wrote it,
+    /// when the merge changed anything.
+    ///
+    /// Always `None` for a [`preview`], which writes nothing and so has
+    /// nothing to keep a copy before.
+    pub kept_copy: Option<PathBuf>,
+}
+
+/// One item a merge brought across or changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergedItem {
+    /// The item, in the vault merged into. For an item a preview adds, the id
+    /// it would get.
+    pub id: i64,
+    /// Title it carries there after the merge.
+    pub title: String,
 }
 
 /// One item whose contents changed on both sides since the copies parted.
@@ -74,11 +96,19 @@ impl MergeReport {
     /// not — this build simply could not tell. History that came across counts
     /// too: the vault is different for having it.
     pub fn is_empty(&self) -> bool {
-        self.added == 0
-            && self.updated == 0
-            && self.conflicts.is_empty()
-            && self.versions == 0
-            && self.unsupported == 0
+        !self.changed() && self.unsupported == 0
+    }
+
+    /// Whether the merge changed the vault merged into.
+    ///
+    /// Unlike [`MergeReport::is_empty`], items left where they were do not
+    /// count: reporting them is owed, but they moved nothing, and a vault
+    /// nothing moved in needs neither a copy kept nor a write.
+    pub fn changed(&self) -> bool {
+        !self.added.is_empty()
+            || !self.updated.is_empty()
+            || !self.conflicts.is_empty()
+            || self.versions > 0
     }
 }
 
@@ -117,7 +147,42 @@ enum Contents {
 /// "deleted over there" from "added over here" — the two look identical from
 /// this side — and deleting someone's secret on a guess is not a trade worth
 /// making.
+///
+/// A merge that changes anything first [keeps a copy](crate::copies) of the
+/// destination's file as it was, and writes nothing if that copy cannot be
+/// made. A merge that changes nothing writes nothing at all.
 pub fn merge(destination: &mut Vault, source: &Vault) -> Result<MergeReport> {
+    let mut report = fold(destination, source)?;
+
+    if report.changed() {
+        report.kept_copy = copies::keep(destination.path())?;
+        destination.save()?;
+    }
+    Ok(report)
+}
+
+/// What [`merge`] would do, with nothing written.
+///
+/// The merge runs for real, on a copy of the destination held in memory and
+/// dropped afterwards: the report is the one the merge itself would give.
+pub fn preview(destination: &Vault, source: &Vault) -> Result<MergeReport> {
+    folded(destination, source).map(|(_, report)| report)
+}
+
+/// A copy of `destination` with `source` folded into it, and what that did.
+///
+/// For a preview that has to look past the merge: what a sync would send back
+/// up is what the remote lacks of the merged result, and only the merged
+/// result can say.
+pub(crate) fn folded(destination: &Vault, source: &Vault) -> Result<(Vault, MergeReport)> {
+    let mut copy = destination.scratch_copy()?;
+    let report = fold(&mut copy, source)?;
+    Ok((copy, report))
+}
+
+/// Folds `source` into `destination` in memory; the caller decides what is
+/// written.
+pub(crate) fn fold(destination: &mut Vault, source: &Vault) -> Result<MergeReport> {
     let mut report = MergeReport::default();
 
     for incoming_summary in source.list()? {
@@ -136,7 +201,8 @@ pub fn merge(destination: &mut Vault, source: &Vault) -> Result<MergeReport> {
         let their_past = source.past_versions(incoming_summary.id)?;
 
         let Some(id) = destination.find_by_uuid(uuid)? else {
-            let (_, kept) = destination.add_travelled(
+            let title = incoming.summary.title.clone();
+            let (id, kept) = destination.add_travelled(
                 NewItem {
                     title: incoming.summary.title,
                     payload: incoming.payload,
@@ -147,7 +213,7 @@ pub fn merge(destination: &mut Vault, source: &Vault) -> Result<MergeReport> {
                 &their_stamp,
                 &their_past,
             )?;
-            report.added += 1;
+            report.added.push(MergedItem { id, title });
             report.versions += kept;
             continue;
         };
@@ -226,14 +292,15 @@ pub fn merge(destination: &mut Vault, source: &Vault) -> Result<MergeReport> {
             destination.set_updated_at(id, updated_at)?;
         }
 
+        let title = if take_labels {
+            incoming.summary.title
+        } else {
+            existing.summary.title
+        };
         if matches!(contents, Contents::Diverged) {
             report.conflicts.push(Conflict {
                 id,
-                title: if take_labels {
-                    incoming.summary.title
-                } else {
-                    existing.summary.title
-                },
+                title,
                 current: if theirs_newer {
                     Side::There
                 } else {
@@ -241,13 +308,12 @@ pub fn merge(destination: &mut Vault, source: &Vault) -> Result<MergeReport> {
                 },
             });
         } else if moved || take_labels {
-            report.updated += 1;
+            report.updated.push(MergedItem { id, title });
         } else {
             report.unchanged += 1;
         }
     }
 
-    destination.save()?;
     Ok(report)
 }
 
@@ -329,7 +395,7 @@ mod tests {
 
         let report = merge(&mut mine, &theirs).unwrap();
 
-        assert_eq!(report.updated, 0, "a tie is not an update");
+        assert!(report.updated.is_empty(), "a tie is not an update");
         assert_eq!(report.conflicts.len(), 1);
         assert_eq!(report.conflicts[0].current, Side::Here);
         assert_eq!(text(&mine, id), "changed here", "the local edit survives");
@@ -403,7 +469,7 @@ mod tests {
         let report = merge(&mut mine, &theirs).unwrap();
 
         assert!(report.conflicts.is_empty(), "{report:?}");
-        assert_eq!(report.updated, 1);
+        assert_eq!(report.updated.len(), 1);
         assert_eq!(text(&mine, id), "new text");
         assert_eq!(mine.summary(id).unwrap().title, "renamed");
     }
@@ -490,5 +556,106 @@ mod tests {
         for password in ["first", "from here", "from there"] {
             assert!(kept.contains(&login(password)), "{password} was lost");
         }
+    }
+
+    /// Two copies that have drifted: one item added over there, the shared
+    /// one changed on both sides, so every part of a report has something in
+    /// it.
+    fn drifted() -> (tempfile::TempDir, Vault, Vault, i64) {
+        let (directory, mut mine, mut theirs, id, their_id) = two_copies();
+        mine.update_at(id, None, Some(note("mine")), None, 10)
+            .unwrap();
+        mine.save().unwrap();
+        theirs
+            .update_at(their_id, None, Some(note("theirs")), None, 20)
+            .unwrap();
+        theirs
+            .add(NewItem::new("wifi", note("from there")))
+            .unwrap();
+        (directory, mine, theirs, id)
+    }
+
+    fn without_the_copy(mut report: MergeReport) -> MergeReport {
+        report.kept_copy = None;
+        report
+    }
+
+    #[test]
+    fn a_preview_is_the_merge_and_leaves_the_vault_as_it_was() {
+        let (_directory, mine, theirs, id) = drifted();
+        let before = std::fs::read(mine.path()).unwrap();
+
+        let previewed = preview(&mine, &theirs).unwrap();
+
+        // Nothing moved: not on disk, and not in the open vault either.
+        assert_eq!(std::fs::read(mine.path()).unwrap(), before);
+        assert_eq!(mine.writes(), 1, "only the save made by the fixture");
+        assert_eq!(text(&mine, id), "mine");
+        assert_eq!(mine.list().unwrap().len(), 1);
+        assert!(
+            copies::list(mine.path()).is_empty(),
+            "a preview keeps no copy"
+        );
+
+        // And what it said is what the merge then does, item for item.
+        let (_again, mut mine_again, theirs_again, _) = drifted();
+        let merged = merge(&mut mine_again, &theirs_again).unwrap();
+        assert_eq!(previewed.kept_copy, None);
+        assert_eq!(previewed, without_the_copy(merged));
+        assert_eq!(previewed.added.len(), 1, "{previewed:?}");
+        assert_eq!(previewed.added[0].title, "wifi");
+        assert_eq!(previewed.conflicts.len(), 1);
+    }
+
+    #[test]
+    fn a_merge_that_changes_the_vault_keeps_it_as_it_was_first() {
+        let (_directory, mut mine, theirs, _) = drifted();
+        let before = std::fs::read(mine.path()).unwrap();
+
+        let report = merge(&mut mine, &theirs).unwrap();
+
+        let kept = report.kept_copy.expect("a copy was kept");
+        assert_eq!(kept, copies::path(mine.path(), 1));
+        assert_eq!(
+            std::fs::read(&kept).unwrap(),
+            before,
+            "the copy is the file as it was before the merge wrote it"
+        );
+        assert_ne!(std::fs::read(mine.path()).unwrap(), before);
+    }
+
+    #[test]
+    fn a_merge_that_changes_nothing_writes_nothing_and_keeps_no_copy() {
+        // Otherwise every sync that found the two in step would push a useful
+        // copy out of the rotation with one identical to the vault.
+        let (_directory, mut mine, theirs, _, _) = two_copies();
+        let before = std::fs::read(mine.path()).unwrap();
+
+        let report = merge(&mut mine, &theirs).unwrap();
+
+        assert!(!report.changed(), "{report:?}");
+        assert_eq!(report.kept_copy, None);
+        assert_eq!(mine.writes(), 0);
+        assert_eq!(std::fs::read(mine.path()).unwrap(), before);
+        assert!(copies::list(mine.path()).is_empty());
+    }
+
+    #[test]
+    fn a_merge_that_cannot_keep_a_copy_does_not_write() {
+        let (_directory, mut mine, theirs, _) = drifted();
+        let before = std::fs::read(mine.path()).unwrap();
+        // The copy is written through a temporary file beside it; a directory
+        // in that place makes the write fail the way a full disk would.
+        let mut blocker = copies::path(mine.path(), 1).into_os_string();
+        blocker.push(".sefy-tmp");
+        std::fs::create_dir(&blocker).unwrap();
+
+        merge(&mut mine, &theirs).unwrap_err();
+
+        assert_eq!(
+            std::fs::read(mine.path()).unwrap(),
+            before,
+            "no copy, no write: the merge must not cost the only state there was"
+        );
     }
 }

@@ -44,6 +44,14 @@ everything below is an expansion of it.
   vault: anyone who later opens the vault can read the old one too. Removing
   the item with [`rm`](/sefy/reference/rm/) removes its history, and nothing
   short of that does.
+- **What the copies beside the vault still hold.** Before a merge, a pull, a
+  sync or an import changes the vault, sefy keeps the file as it was as
+  `FILE.1`, `FILE.2` and `FILE.3` — sealed, under the same password. An item
+  removed after a copy was taken is still in that copy until three more merges
+  rotate it out. They are named like any rotated backup and say nothing about
+  sefy, but they are three more files that open with the vault's password;
+  delete them by hand to be rid of them sooner. See
+  [A copy before every merge](/sefy/guides/syncing/#a-copy-before-every-merge).
 
 ## Why not deniability
 

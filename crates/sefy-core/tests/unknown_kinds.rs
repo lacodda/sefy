@@ -193,7 +193,7 @@ fn a_merge_leaves_an_unknown_item_where_it_is_and_moves_the_rest() {
 
     let report = merge(&mut target, &with_unknown).unwrap();
 
-    assert_eq!(report.added, 1, "the readable item comes across");
+    assert_eq!(report.added.len(), 1, "the readable item comes across");
     assert_eq!(
         report.unsupported, 1,
         "the unreadable one is reported, not copied as an empty item"

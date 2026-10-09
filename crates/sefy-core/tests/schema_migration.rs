@@ -579,7 +579,7 @@ mod migrated_apart {
         let report = sefy_core::merge(&mut mine, &theirs).unwrap();
 
         assert!(report.conflicts.is_empty(), "{report:?}");
-        assert_eq!(report.updated, 1);
+        assert_eq!(report.updated.len(), 1);
         let id = mine.resolve("a note from 0.7.1").unwrap().id;
         assert_eq!(
             mine.history(id).unwrap().len(),

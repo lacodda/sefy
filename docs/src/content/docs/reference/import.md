@@ -149,6 +149,14 @@ under "not imported" rather than failing the file. One entry from a newer sefy,
 or of a type Bitwarden added last month, should not keep the other nine hundred
 out. See [Versions and compatibility](/sefy/concepts/versions/).
 
+## A copy before it writes
+
+An import that adds anything keeps the vault as it was beside it first, as
+`FILE.1` - the same copy a merge keeps. Importing the wrong file is then undone
+by putting the copy back, not by removing items one at a time. An import that
+adds nothing writes nothing. See
+[A copy before every merge](/sefy/guides/syncing/#a-copy-before-every-merge).
+
 ## Related
 
 - [`export`](/sefy/reference/export/) - writing a file, and the formats

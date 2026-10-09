@@ -37,6 +37,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod copies;
 pub mod crypto;
 pub mod db;
 pub mod error;
@@ -61,7 +62,7 @@ pub use exchange::{
 pub use format::FORMAT_VERSION;
 pub use generate::{Classes, Generated, Language, Recipe, generate};
 pub use history::{Change, ChangeKind, Line, Version};
-pub use merge::{Conflict, MergeReport, Side, merge};
+pub use merge::{Conflict, MergeReport, MergedItem, Side, merge};
 pub use model::{
     Field, FieldSpec, Item, ItemKind, ItemSummary, LEGACY_LOGIN_NAME, NewItem, Payload, Query,
     Template,
@@ -69,5 +70,5 @@ pub use model::{
 pub use otp::Totp;
 pub use plugin::{PROTOCOL_VERSION, Plugin};
 pub use strength::{Strength, estimate, estimate_generated};
-pub use sync::{PullReport, SyncReport, pull, push, sync};
-pub use vault::{Stats, SyncStamp, Vault};
+pub use sync::{Fetched, PullReport, SyncPreview, SyncReport, fetch, pull, push, sync};
+pub use vault::{PasswordChange, Stats, SyncStamp, Vault};

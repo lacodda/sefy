@@ -95,6 +95,9 @@ content share no prefix, because the salt and nonce are fresh every time.
 	<Card title="Several machines, one vault" icon="random">
 		`sefy sync` moves the sealed file through a transport and folds what comes back in - when both sides changed an item, the other version waits in its history, nothing dropped on a timestamp. The transport never sees the password or an item.
 	</Card>
+	<Card title="Sync without surprises" icon="laptop">
+		`sefy sync --dry-run` names every item each side would gain before either does. `SEFY_AUTO_SYNC=on` syncs after every change, a merge keeps the vault as it was beside it first, and `sefy doctor` checks the vault, the transport and the clipboard on this machine.
+	</Card>
 	<Card title="Every value keeps its past" icon="list-format">
 		An edit keeps what it replaced. `sefy history` shows how each version differs from now without printing a secret, and `sefy restore mail 2 --field password` brings back the password a site never accepted the change of.
 	</Card>
