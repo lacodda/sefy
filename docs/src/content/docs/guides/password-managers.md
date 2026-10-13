@@ -37,6 +37,9 @@ sefy import ./bitwarden_export.json
 Folders become tags. The last few passwords Bitwarden kept for each login come
 along as that item's [history](/sefy/reference/history/), so `sefy history
 github` shows when the password changed and `sefy restore` can bring one back.
+A card's expiry month and year become its
+[`expires`](/sefy/reference/audit/#when-a-record-stops-working), which
+`sefy audit` counts from.
 
 Two things do not come across, and the import names each item they belong to:
 passkeys, which no password manager can export, and items in the trash. An
@@ -57,7 +60,8 @@ tagged `Internet/Shops` - and the recycle bin is left behind. One-time password
 keys come across whether KeePass or KeePassXC set them up. Attachments become
 file items of their own, titled after the entry: an SSH key attached to
 `server` arrives as `server - id_ed25519`. An entry's history becomes the
-item's.
+item's, and an entry set to expire keeps that date as its
+[`expires`](/sefy/reference/audit/#when-a-record-stops-working).
 
 KeePassXC's XML export leaves the attachments' bytes out, so from KeePassXC
 they have to travel separately. The import lists each one; save it and add it
@@ -113,7 +117,8 @@ keepassxc-cli import ./sefy.xml ./passwords.kdbx
 ```
 
 In KeePass 2, **File → Import → KeePass XML (2.x)**. Bitwarden reads the same
-file under "KeePass 2 (xml)".
+file under "KeePass 2 (xml)". A record's `expires` becomes the entry's own
+expiry, so KeePass marks it when the day comes.
 
 Leave `--with-history` out unless you mean to take every earlier password
 along: without it the file holds what is current and nothing more.

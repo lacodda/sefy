@@ -13,6 +13,7 @@
 
 use super::{Entry, Lineage, Outcome, Reading, Record, UNREADABLE_TOTP, normalize_uuid, title_or};
 use crate::error::{Error, Result};
+use crate::expiry;
 use crate::model::{ItemKind, NewItem, Payload};
 use crate::time;
 use serde::Deserialize;
@@ -192,7 +193,15 @@ fn read_item(item: Item, groups: &HashMap<String, String>, reading: &mut Reading
             let mut record = Record::new(ItemKind::Card);
             record.put("number", &text(&card, "number"), None);
             record.put("holder", &text(&card, "cardholderName"), None);
-            record.put("expiry", &expiry(&card), None);
+            // Month and year put together as printed: what a card's date was
+            // before it was one sefy counts from. The record turns it into the
+            // date, the same way as for a card arriving from then, and keeps
+            // half a date - a year on its own - under that old name instead.
+            record.put(
+                expiry::LEGACY_CARD_NAME,
+                &printed_expiry(&card),
+                Some(false),
+            );
             record.put("cvv", &text(&card, "code"), None);
             record.put("brand", &text(&card, "brand"), Some(false));
             finish(record, notes, custom, &title, reading)
@@ -464,7 +473,7 @@ fn scalar(value: &Value) -> Option<String> {
 
 /// A card's expiry as it is printed on one: `MM/YYYY`, or whichever half is
 /// there.
-fn expiry(card: &Map<String, Value>) -> String {
+fn printed_expiry(card: &Map<String, Value>) -> String {
     let month = text(card, "expMonth");
     let year = text(card, "expYear");
     let month = match month.trim().parse::<u32>() {
@@ -510,8 +519,8 @@ mod tests {
     fn an_expiry_comes_out_as_printed() {
         let card: Map<String, Value> =
             serde_json::from_str(r#"{"expMonth":"3","expYear":"2029"}"#).unwrap();
-        assert_eq!(expiry(&card), "03/2029");
+        assert_eq!(printed_expiry(&card), "03/2029");
         let card: Map<String, Value> = serde_json::from_str(r#"{"expYear":"2029"}"#).unwrap();
-        assert_eq!(expiry(&card), "2029");
+        assert_eq!(printed_expiry(&card), "2029");
     }
 }

@@ -209,6 +209,16 @@ pub enum Error {
     #[error("not a one-time password key: {0}")]
     InvalidOtpKey(&'static str),
 
+    /// What was offered as the date a record stops working is not one.
+    ///
+    /// The text is quoted: a date is a public field, and seeing what was
+    /// typed is the quickest way to see what is wrong with it.
+    #[error(
+        "{0:?} is not a date sefy can read; write the day as 2027-01-31, \
+         or a month as 2027-01 or 01/27, the way a card prints it"
+    )]
+    UnreadableExpiry(String),
+
     /// A filesystem operation failed.
     #[error("{context}: {source}")]
     Io {

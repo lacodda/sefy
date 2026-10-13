@@ -37,13 +37,17 @@ kind:        card
 tags:        money
 number:      <hidden — use sefy get --field number>
 holder:      A LOVELACE
-expiry:      01/29
+expires:     2029-01 (in 840 days)
 cvv:         <hidden — use sefy get --field cvv>
 pin:         <hidden — use sefy get --field pin>
 ```
 
 A field the record does not carry is simply not there: `show` prints what is
 stored, so an account with no URL has no `url` line rather than an empty one.
+
+A record's [`expires`](/sefy/reference/audit/#when-a-record-stops-working) comes
+with how far off it is - `(in 840 days)`, `(today)`, `(expired 3 days ago)` - since
+the distance is the part that is read.
 
 For a file, the stored name and size:
 

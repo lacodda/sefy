@@ -44,6 +44,16 @@ past what its kind suggested:
 sefy edit "deploy key" --set fingerprint=SHA256:…
 ```
 
+Two fields have a shape, and a value that does not fit it is refused rather
+than stored: a one-time password key, and
+[`expires`](/sefy/reference/audit/#when-a-record-stops-working), the last day a
+record works. That one takes `2027-01-31`, a month as `2027-01`, or a card's
+`01/27`, and keeps it in one of the first two shapes:
+
+```sh
+sefy edit github --set expires=2027-01-31
+```
+
 A value passed this way is **public**: it has already been through the shell
 history, so calling it secret would be a promise sefy cannot keep. A field that
 already exists keeps whatever secrecy it was stored with — changing a password's

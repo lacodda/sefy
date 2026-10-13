@@ -60,6 +60,16 @@ Naming one variable twice is refused, and so are two spellings of one name
 like `TOKEN` and `token` — Windows holds those as one variable, and a script
 should not lose a value when it moves there.
 
+A token past the last day it works still goes to the command, with a warning on
+stderr first - the likeliest reason the command is about to fail. One with 30
+days or fewer left is mentioned the same way; see
+[When a record stops working](/sefy/reference/audit/#when-a-record-stops-working).
+
+```console
+$ sefy run -e TOKEN=deploy -- ./deploy.sh
+warning: "deploy" expired 13 days ago (2026-09-30)
+```
+
 ## What else the command sees
 
 The rest of the environment is passed on as it is, with one exception: the

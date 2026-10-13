@@ -164,6 +164,16 @@ pub enum Command {
     /// a command line. The command's exit status becomes sefy's.
     Run(RunArgs),
 
+    /// Look for what in the vault deserves a second look.
+    ///
+    /// Passwords that are easy to guess, shared between items or unchanged
+    /// for over a year; a card, a token or a key kept in two items; records
+    /// past or within 30 days of the last day they work. Worked out on this
+    /// machine, from the vault alone: nothing is looked up and nothing is
+    /// sent. Values are never shown. The exit status is non-zero when
+    /// anything is found.
+    Audit,
+
     /// Show what and where this vault is, without revealing any of it.
     ///
     /// Counts, versions and the last transfer - never a title or a value. It
@@ -446,9 +456,12 @@ pub enum AddKind {
         #[arg(long)]
         holder: Option<String>,
 
-        /// Expiry date, as printed on the card.
-        #[arg(long)]
-        expiry: Option<String>,
+        /// The month the card runs out, as printed on it: 03/29.
+        ///
+        /// Stored as the month it names, 2029-03, which is what `sefy audit`
+        /// counts from; `sefy fill` hands it over as printed again.
+        #[arg(long, value_name = "MM/YY")]
+        expires: Option<String>,
 
         /// Anything else worth remembering.
         #[arg(long)]
@@ -527,7 +540,8 @@ pub enum AddKind {
 
     /// A token for an API: token, url, scopes, expires, notes.
     ///
-    /// The token is asked for; the other fields are passed with --set.
+    /// The token is asked for; the other fields are passed with --set, the
+    /// last day it works as --set expires=2027-01-31.
     ApiToken(RecordArgs),
 
     /// A bank account: account, holder, bank, routing, notes.

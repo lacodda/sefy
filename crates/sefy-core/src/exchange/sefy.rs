@@ -36,6 +36,7 @@
 use super::{Entry, ExportReport, Exported, Lineage, Outcome, Reading, gather};
 use crate::db::Stamp;
 use crate::error::{Error, Result};
+use crate::expiry;
 use crate::history::Version;
 use crate::model::{Field, ItemKind, NewItem, Payload};
 use crate::vault::Vault;
@@ -508,7 +509,7 @@ fn read_fields(index: usize, kind: &ItemKind, contents: &Contents<'_>) -> Result
             }
             seen.push(&field.name);
         }
-        return Ok(contents
+        let mut fields: Vec<Field> = contents
             .fields
             .iter()
             .map(|field| Field {
@@ -516,7 +517,10 @@ fn read_fields(index: usize, kind: &ItemKind, contents: &Contents<'_>) -> Result
                 value: field.value.clone(),
                 secret: field.secret,
             })
-            .collect());
+            .collect();
+        // An export from 0.14.0 or earlier names a card's date the old way.
+        expiry::upgrade_legacy(kind, &mut fields);
+        return Ok(fields);
     }
 
     let template = kind.template();
@@ -536,4 +540,41 @@ fn read_fields(index: usize, kind: &ItemKind, contents: &Contents<'_>) -> Result
             })
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_card_in_an_export_from_before_is_handed_over_under_the_new_name() {
+        let reading = read(
+            r#"{"sefy_export": 1, "items": [{
+                "title": "old card",
+                "kind": "card",
+                "fields": [
+                    {"name": "number", "value": "4111", "secret": true},
+                    {"name": "expiry", "value": "11/28", "secret": false}
+                ],
+                "history": [{
+                    "uuid": "0b6e1c1e-8f6a-4c55-9a51-0d3f5f7c2b11",
+                    "seq": 1,
+                    "made_at": 1700000000,
+                    "fields": [{"name": "expiry", "value": "10/28", "secret": false}]
+                }]
+            }]}"#,
+        )
+        .unwrap();
+        let entry = &reading.entries[0];
+        let payload = &entry.item.payload;
+        assert_eq!(payload.field(expiry::FIELD).unwrap().value, "2028-11");
+        assert!(payload.field(expiry::LEGACY_CARD_NAME).is_none());
+        let Lineage::Recorded { past, .. } = &entry.lineage else {
+            panic!("a sefy export records its lineage");
+        };
+        assert_eq!(
+            past[0].payload.field(expiry::FIELD).unwrap().value,
+            "2028-10"
+        );
+    }
 }

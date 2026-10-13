@@ -178,16 +178,83 @@ pub struct FieldSpec {
     /// Whether `sefy fill` hands it over: something typed into a form when
     /// the record is used, as a login is and a note is not.
     pub fill: bool,
+    /// What `sefy audit` holds its value to.
+    pub audit: AuditAs,
 }
 
 impl FieldSpec {
-    const fn new(name: &'static str, description: &'static str, secret: bool, fill: bool) -> Self {
+    const fn new(
+        name: &'static str,
+        description: &'static str,
+        secret: bool,
+        fill: bool,
+        audit: AuditAs,
+    ) -> Self {
         Self {
             name,
             description,
             secret,
             fill,
+            audit,
         }
+    }
+}
+
+/// What a secret is, as far as an audit is concerned.
+///
+/// Said in the template rather than worked out from a field's name, so a new
+/// kind of record is audited by adding its row and nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditAs {
+    /// A secret a person chose: it can be guessed, reused and left unchanged
+    /// for years, and the audit looks for all three.
+    Password,
+    /// A secret someone issued: a card number, a token, a key. Nobody chose
+    /// it, so it is not weak and not reused in the usual sense - but the same
+    /// one in two items is almost always one thing recorded twice.
+    Unique,
+    /// Nothing to check: a public value, or a secret whose shape is its
+    /// nature. Every PIN is four digits, and two cards sharing a CVV is
+    /// chance.
+    Nothing,
+}
+
+impl AuditAs {
+    /// What a field of a record of `kind` is audited as.
+    ///
+    /// A field its kind's template lists is what the template says. One it
+    /// does not list is what a field of that name is in the templates that
+    /// do - a `password` added to a bank record is still a password - provided
+    /// it is secret: a public value is nothing to audit, whatever its name.
+    pub fn of(kind: &ItemKind, field: &Field) -> Self {
+        if let Some(spec) = kind
+            .template()
+            .and_then(|template| template.field(&field.name))
+        {
+            return spec.audit;
+        }
+        if !field.secret {
+            return Self::Nothing;
+        }
+        TEMPLATES
+            .iter()
+            .find_map(|template| template.field(&field.name))
+            .map_or(Self::Nothing, |spec| spec.audit)
+    }
+}
+
+/// Checks a value on its way into a field, for the fields whose value has a
+/// shape, and returns what to store.
+///
+/// Two do. A one-time password key that cannot make a code is found out now,
+/// while the site that issued it is still open, rather than at the next
+/// sign-in. A date that cannot be counted from would leave an audit unable to
+/// say when the record stops working - the one thing it was written down for.
+pub fn normalize_value(name: &str, value: &str) -> crate::Result<String> {
+    match name {
+        crate::otp::FIELD => crate::otp::normalize(value),
+        crate::expiry::FIELD => crate::expiry::normalize(value),
+        _ => Ok(value.to_owned()),
     }
 }
 
@@ -196,6 +263,9 @@ const PUBLIC: bool = false;
 const SECRET: bool = true;
 const FILL: bool = true;
 const KEEP: bool = false;
+const CHOSEN: AuditAs = AuditAs::Password;
+const ISSUED: AuditAs = AuditAs::Unique;
+const UNCHECKED: AuditAs = AuditAs::Nothing;
 
 /// Every kind that is made of fields, and what those fields are.
 ///
@@ -211,29 +281,62 @@ static TEMPLATES: &[Template] = &[
                 "username, email, or whatever the service calls it",
                 PUBLIC,
                 FILL,
+                UNCHECKED,
             ),
-            FieldSpec::new("password", "the secret itself", SECRET, FILL),
-            FieldSpec::new("url", "where the account lives", PUBLIC, KEEP),
+            FieldSpec::new("password", "the secret itself", SECRET, FILL, CHOSEN),
+            FieldSpec::new("url", "where the account lives", PUBLIC, KEEP, UNCHECKED),
             // Filled as the code it makes at that moment, never as itself.
             FieldSpec::new(
                 crate::otp::FIELD,
                 "key for one-time passwords",
                 SECRET,
                 FILL,
+                ISSUED,
             ),
-            FieldSpec::new("notes", "anything else worth remembering", PUBLIC, KEEP),
+            FieldSpec::new(
+                "notes",
+                "anything else worth remembering",
+                PUBLIC,
+                KEEP,
+                UNCHECKED,
+            ),
         ],
     },
     Template {
         kind: ItemKind::Card,
         fields: &[
-            FieldSpec::new("number", "the card number", SECRET, FILL),
-            FieldSpec::new("holder", "name embossed on the card", PUBLIC, FILL),
-            FieldSpec::new("expiry", "expiry date, as printed", PUBLIC, FILL),
-            FieldSpec::new("cvv", "verification code on the back", SECRET, FILL),
+            FieldSpec::new("number", "the card number", SECRET, FILL, ISSUED),
+            FieldSpec::new(
+                "holder",
+                "name embossed on the card",
+                PUBLIC,
+                FILL,
+                UNCHECKED,
+            ),
+            // Filled as printed, 03/29, which is what a payment form asks for.
+            FieldSpec::new(
+                crate::expiry::FIELD,
+                "the month it runs out, as printed: 03/29",
+                PUBLIC,
+                FILL,
+                UNCHECKED,
+            ),
+            FieldSpec::new(
+                "cvv",
+                "verification code on the back",
+                SECRET,
+                FILL,
+                UNCHECKED,
+            ),
             // Typed at a terminal, never into a form.
-            FieldSpec::new("pin", "the PIN", SECRET, KEEP),
-            FieldSpec::new("notes", "bank, account, anything else", PUBLIC, KEEP),
+            FieldSpec::new("pin", "the PIN", SECRET, KEEP, UNCHECKED),
+            FieldSpec::new(
+                "notes",
+                "bank, account, anything else",
+                PUBLIC,
+                KEEP,
+                UNCHECKED,
+            ),
         ],
     },
     Template {
@@ -244,45 +347,89 @@ static TEMPLATES: &[Template] = &[
                 "the private key, as it appears in the file",
                 SECRET,
                 KEEP,
+                ISSUED,
             ),
             FieldSpec::new(
                 "passphrase",
                 "passphrase protecting the private key",
                 SECRET,
                 FILL,
+                CHOSEN,
             ),
-            FieldSpec::new("public-key", "the public key", PUBLIC, KEEP),
-            FieldSpec::new("host", "where the key is used", PUBLIC, KEEP),
-            FieldSpec::new("notes", "anything else worth remembering", PUBLIC, KEEP),
+            FieldSpec::new("public-key", "the public key", PUBLIC, KEEP, UNCHECKED),
+            FieldSpec::new("host", "where the key is used", PUBLIC, KEEP, UNCHECKED),
+            FieldSpec::new(
+                "notes",
+                "anything else worth remembering",
+                PUBLIC,
+                KEEP,
+                UNCHECKED,
+            ),
         ],
     },
     Template {
         kind: ItemKind::Wifi,
         fields: &[
-            FieldSpec::new("ssid", "the network's name", PUBLIC, FILL),
-            FieldSpec::new("password", "the network key", SECRET, FILL),
-            FieldSpec::new("security", "WPA2, WPA3, open", PUBLIC, KEEP),
-            FieldSpec::new("notes", "where it is, whose it is", PUBLIC, KEEP),
+            FieldSpec::new("ssid", "the network's name", PUBLIC, FILL, UNCHECKED),
+            FieldSpec::new("password", "the network key", SECRET, FILL, CHOSEN),
+            FieldSpec::new("security", "WPA2, WPA3, open", PUBLIC, KEEP, UNCHECKED),
+            FieldSpec::new("notes", "where it is, whose it is", PUBLIC, KEEP, UNCHECKED),
         ],
     },
     Template {
         kind: ItemKind::ApiToken,
         fields: &[
-            FieldSpec::new("token", "the token itself", SECRET, FILL),
-            FieldSpec::new("url", "where it is issued and revoked", PUBLIC, KEEP),
-            FieldSpec::new("scopes", "what it is allowed to do", PUBLIC, KEEP),
-            FieldSpec::new("expires", "when it stops working", PUBLIC, KEEP),
-            FieldSpec::new("notes", "what uses it", PUBLIC, KEEP),
+            FieldSpec::new("token", "the token itself", SECRET, FILL, ISSUED),
+            FieldSpec::new(
+                "url",
+                "where it is issued and revoked",
+                PUBLIC,
+                KEEP,
+                UNCHECKED,
+            ),
+            FieldSpec::new(
+                "scopes",
+                "what it is allowed to do",
+                PUBLIC,
+                KEEP,
+                UNCHECKED,
+            ),
+            FieldSpec::new(
+                crate::expiry::FIELD,
+                "the last day it works: 2027-01-31",
+                PUBLIC,
+                KEEP,
+                UNCHECKED,
+            ),
+            FieldSpec::new("notes", "what uses it", PUBLIC, KEEP, UNCHECKED),
         ],
     },
     Template {
         kind: ItemKind::Bank,
         fields: &[
-            FieldSpec::new("account", "account number or IBAN", SECRET, FILL),
-            FieldSpec::new("holder", "whose name the account is in", PUBLIC, FILL),
-            FieldSpec::new("bank", "the bank", PUBLIC, FILL),
-            FieldSpec::new("routing", "SWIFT/BIC, routing or sort code", PUBLIC, FILL),
-            FieldSpec::new("notes", "branch, contact, anything else", PUBLIC, KEEP),
+            FieldSpec::new("account", "account number or IBAN", SECRET, FILL, ISSUED),
+            FieldSpec::new(
+                "holder",
+                "whose name the account is in",
+                PUBLIC,
+                FILL,
+                UNCHECKED,
+            ),
+            FieldSpec::new("bank", "the bank", PUBLIC, FILL, UNCHECKED),
+            FieldSpec::new(
+                "routing",
+                "SWIFT/BIC, routing or sort code",
+                PUBLIC,
+                FILL,
+                UNCHECKED,
+            ),
+            FieldSpec::new(
+                "notes",
+                "branch, contact, anything else",
+                PUBLIC,
+                KEEP,
+                UNCHECKED,
+            ),
         ],
     },
 ];
@@ -620,6 +767,72 @@ mod tests {
                 assert!(field.secret, "{} keeps its key in the open", template.kind);
             }
         }
+    }
+
+    #[test]
+    fn a_field_name_is_audited_the_same_way_in_every_template() {
+        // What lets a field outside its kind's template borrow the audit of a
+        // field of the same name elsewhere: the answer has to be one answer.
+        for template in TEMPLATES {
+            for field in template.fields {
+                for other in TEMPLATES {
+                    if let Some(same) = other.field(field.name) {
+                        assert_eq!(
+                            same.audit, field.audit,
+                            "{} in {} and {}",
+                            field.name, template.kind, other.kind
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn only_a_secret_is_ever_audited() {
+        for template in TEMPLATES {
+            for field in template.fields {
+                if !field.secret {
+                    assert_eq!(field.audit, AuditAs::Nothing, "{}", field.name);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_field_outside_the_template_is_audited_as_its_name_is_elsewhere() {
+        let bank = ItemKind::Bank;
+        assert_eq!(
+            AuditAs::of(&bank, &Field::secret("password", "p")),
+            AuditAs::Password
+        );
+        assert_eq!(
+            AuditAs::of(&bank, &Field::secret("token", "t")),
+            AuditAs::Unique
+        );
+        // Public, it is not a secret to audit, whatever it is called.
+        assert_eq!(
+            AuditAs::of(&bank, &Field::public("password", "p")),
+            AuditAs::Nothing
+        );
+        // A name no template has.
+        assert_eq!(
+            AuditAs::of(&bank, &Field::secret("recovery", "r")),
+            AuditAs::Nothing
+        );
+        // Its own template answers first.
+        assert_eq!(
+            AuditAs::of(&ItemKind::Card, &Field::secret("pin", "1234")),
+            AuditAs::Nothing
+        );
+    }
+
+    #[test]
+    fn a_value_with_a_shape_is_checked_and_stored_in_it() {
+        assert_eq!(normalize_value("expires", "03/29").unwrap(), "2029-03");
+        assert!(normalize_value("expires", "soon").is_err());
+        assert_eq!(normalize_value("notes", " as is ").unwrap(), " as is ");
+        assert!(normalize_value(crate::otp::FIELD, "not a key!").is_err());
     }
 
     #[test]

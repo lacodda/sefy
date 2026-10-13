@@ -37,11 +37,13 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod audit;
 pub mod copies;
 pub mod crypto;
 pub mod db;
 pub mod error;
 pub mod exchange;
+pub mod expiry;
 pub mod format;
 pub mod generate;
 pub mod history;
@@ -54,18 +56,20 @@ pub mod sync;
 pub mod time;
 pub mod vault;
 
+pub use audit::{Due, Old, Place, Report, Unreadable, Weak, audit};
 pub use error::{Error, Result};
 pub use exchange::{
     EXPORT_VERSION, Export, ExportField, ExportItem, ExportReport, ExportStamp, ExportVersion,
     Exported, Format, ImportReport, Notice, Outcome, Target,
 };
+pub use expiry::Expiry;
 pub use format::FORMAT_VERSION;
 pub use generate::{Classes, Generated, Language, Recipe, generate};
 pub use history::{Change, ChangeKind, Line, Version};
 pub use merge::{Conflict, MergeReport, MergedItem, Side, merge};
 pub use model::{
-    Field, FieldSpec, Item, ItemKind, ItemSummary, LEGACY_LOGIN_NAME, NewItem, Payload, Query,
-    Template,
+    AuditAs, Field, FieldSpec, Item, ItemKind, ItemSummary, LEGACY_LOGIN_NAME, NewItem, Payload,
+    Query, Template,
 };
 pub use otp::Totp;
 pub use plugin::{PROTOCOL_VERSION, Plugin};

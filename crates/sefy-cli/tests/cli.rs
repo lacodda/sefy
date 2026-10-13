@@ -1906,7 +1906,7 @@ fn a_card_round_trips_and_get_with_no_field_gives_the_number() {
             "wallet",
             "--holder",
             "A Cardholder",
-            "--expiry",
+            "--expires",
             "12/30",
             "--number-env",
             "CARD_NUMBER",
@@ -1939,6 +1939,20 @@ fn a_card_round_trips_and_get_with_no_field_gives_the_number() {
         .assert()
         .success()
         .stdout(contains("4815"));
+
+    // The month as printed goes in, and the month it names is what is kept.
+    fixture
+        .sefy()
+        .args(["get", "wallet", "--field", "expires", "--stdout"])
+        .assert()
+        .success()
+        .stdout("2030-12\n");
+    fixture
+        .sefy()
+        .args(["show", "wallet"])
+        .assert()
+        .success()
+        .stdout(contains("expires:     2030-12 (in "));
 }
 
 #[test]
@@ -3616,5 +3630,226 @@ mod history {
             .assert()
             .success()
             .stdout(contains("3 versions").and(contains("lost a merge conflict")));
+    }
+}
+
+/// The day `days` from today, as an `expires` value.
+fn days_from_today(days: i64) -> String {
+    let today = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+        / 86_400;
+    let (year, month, day) = sefy_core::time::civil_from_days(today + days);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+fn add_token(fixture: &Fixture, title: &str, token: &str, expires: &str) {
+    fixture
+        .sefy()
+        .env("TOKEN", token)
+        .args(["add", "api-token", title, "--secret-env", "token=TOKEN"])
+        .arg("--set")
+        .arg(format!("expires={expires}"))
+        .assert()
+        .success();
+}
+
+fn add_login(fixture: &Fixture, title: &str, password: &str) {
+    fixture
+        .sefy()
+        .env("ITEM_PASSWORD", password)
+        .args([
+            "add",
+            "login",
+            title,
+            "--login",
+            "ada",
+            "--item-password-env",
+            "ITEM_PASSWORD",
+        ])
+        .assert()
+        .success();
+}
+
+mod audit {
+    use super::*;
+
+    #[test]
+    fn a_vault_with_nothing_to_look_at_says_so_and_succeeds() {
+        let fixture = Fixture::with_vault();
+        add_login(&fixture, "mail", "vT4#qLw9!zR2@xN7$kP5");
+        add_token(&fixture, "ci", "ghp_synthetic", &days_from_today(400));
+        add_note(&fixture, "diary", "password1", &[]);
+
+        fixture.sefy().arg("audit").assert().success().stdout(
+            contains("looked at 1 password and 1 date in 3 items")
+                .and(contains("nothing to look at")),
+        );
+    }
+
+    #[test]
+    fn what_it_finds_is_named_by_item_and_field_and_never_shown() {
+        let fixture = Fixture::with_vault();
+        add_login(&fixture, "forum", "password1");
+        add_login(&fixture, "shop", "password1");
+        add_token(&fixture, "gone", "ghp_gone_synthetic", &days_from_today(-3));
+        add_token(&fixture, "soon", "ghp_soon_synthetic", &days_from_today(5));
+        add_token(&fixture, "fine", "ghp_fine_synthetic", &days_from_today(90));
+
+        let output = fixture.sefy().arg("audit").output().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+
+        assert_eq!(output.status.code(), Some(1), "{stdout}{stderr}");
+        // Two weak, one shared, one expired, one coming up.
+        assert!(stderr.contains("error: 5 findings"), "{stderr}");
+        assert!(stdout.contains("2 passwords are easy to guess"), "{stdout}");
+        assert!(
+            stdout.contains("1 password is shared by more than one item"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("3 days ago"), "{stdout}");
+        assert!(stdout.contains("in 5 days"), "{stdout}");
+        assert!(!stdout.contains("fine"), "{stdout}");
+        for secret in ["password1", "ghp_"] {
+            assert!(!stdout.contains(secret), "{secret} leaked: {stdout}");
+            assert!(!stderr.contains(secret), "{secret} leaked: {stderr}");
+        }
+    }
+
+    #[test]
+    fn it_changes_nothing() {
+        let fixture = Fixture::with_vault();
+        add_login(&fixture, "forum", "password1");
+        let before = std::fs::read(&fixture.path).unwrap();
+        fixture.sefy().arg("audit").assert().failure();
+        assert_eq!(std::fs::read(&fixture.path).unwrap(), before);
+    }
+}
+
+mod expires {
+    use super::*;
+
+    #[test]
+    fn a_date_is_checked_on_the_way_in_and_kept_in_one_shape() {
+        let fixture = Fixture::with_vault();
+        fixture
+            .sefy()
+            .env("TOKEN", "t")
+            .args([
+                "add",
+                "api-token",
+                "odd",
+                "--secret-env",
+                "token=TOKEN",
+                "--set",
+                "expires=next spring",
+            ])
+            .assert()
+            .failure()
+            .stderr(contains("\"next spring\" is not a date sefy can read"));
+        fixture
+            .sefy()
+            .arg("ls")
+            .assert()
+            .success()
+            .stdout(contains("no items"));
+
+        add_token(&fixture, "ci", "t", "2027-01-31");
+        // Any record can say when it stops working, in any of the shapes.
+        fixture
+            .sefy()
+            .args(["edit", "ci", "--set", "expires=03/29"])
+            .assert()
+            .success();
+        fixture
+            .sefy()
+            .args(["get", "ci", "--field", "expires", "--stdout"])
+            .assert()
+            .success()
+            .stdout("2029-03\n");
+        fixture
+            .sefy()
+            .args(["edit", "ci", "--set", "expires=yesterday"])
+            .assert()
+            .failure();
+    }
+
+    #[test]
+    fn taking_a_secret_near_its_date_warns_and_a_pipe_still_gets_the_secret_alone() {
+        let fixture = Fixture::with_vault();
+        add_token(&fixture, "gone", "ghp_synthetic", &days_from_today(-2));
+        fixture
+            .sefy()
+            .args(["get", "gone", "--stdout"])
+            .assert()
+            .success()
+            .stdout("ghp_synthetic\n")
+            .stderr(contains("warning: \"gone\" expired 2 days ago"));
+
+        add_token(&fixture, "today", "t", &days_from_today(0));
+        fixture
+            .sefy()
+            .args(["get", "today", "--stdout"])
+            .assert()
+            .success()
+            .stderr(contains("expires today"));
+
+        // Thirty days is still coming up.
+        add_token(&fixture, "month", "t", &days_from_today(30));
+        fixture
+            .sefy()
+            .args(["get", "month", "--stdout"])
+            .assert()
+            .success()
+            .stderr(contains("expires in 30 days"));
+
+        // A date further off is nothing to say anything about.
+        add_token(&fixture, "far", "t", &days_from_today(31));
+        fixture
+            .sefy()
+            .args(["get", "far", "--stdout"])
+            .assert()
+            .success()
+            .stderr("");
+    }
+
+    #[test]
+    fn a_one_time_code_from_a_record_past_its_date_is_warned_about() {
+        let fixture = Fixture::with_vault();
+        add_plain_login(&fixture, "forge");
+        fixture
+            .sefy()
+            .arg("edit")
+            .arg("forge")
+            .arg("--set")
+            .arg(format!("expires={}", days_from_today(-1)))
+            .assert()
+            .success();
+        fixture
+            .sefy()
+            .env("OTP_KEY", "JBSWY3DPEHPK3PXP")
+            .args(["otp", "forge", "--key-env", "OTP_KEY", "--stdout"])
+            .assert()
+            .success()
+            .stderr(contains("warning: \"forge\" expired yesterday"));
+    }
+
+    #[test]
+    fn a_command_run_with_a_due_secret_is_warned_about_it() {
+        let fixture = Fixture::with_vault();
+        add_token(&fixture, "gone", "ghp_synthetic", &days_from_today(-1));
+        let mut command = fixture.sefy();
+        command.args(["run", "--env", "TOKEN=gone", "--"]);
+        if cfg!(windows) {
+            command.args(["cmd", "/C", "exit 0"]);
+        } else {
+            command.args(["sh", "-c", "exit 0"]);
+        }
+        command
+            .assert()
+            .success()
+            .stderr(contains("warning: \"gone\" expired yesterday"));
     }
 }

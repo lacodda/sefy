@@ -26,9 +26,18 @@ clipboard cleared
 
 ```sh
 sefy get mail --field login
-sefy get visa --field expiry
+sefy get visa --field expires
 sefy get bank --clear-after 0       # leave it there
 sefy get bank --stdout | wl-copy    # for pipes and scripts
+```
+
+A record past the last day it works, or with 30 days or fewer left, says so on
+stderr as the secret is taken - so a pipe still receives the secret alone:
+
+```console
+$ sefy get deploy --stdout
+warning: "deploy" expired 13 days ago (2026-09-30)
+ghp_...
 ```
 
 ## Which field, when you do not say

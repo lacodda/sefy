@@ -36,7 +36,7 @@ hides. Only the fields a record actually holds are offered.
 | Kind | Fills |
 | --- | --- |
 | `login` | `login`, `password`, a code from `totp` |
-| `card` | `number`, `holder`, `expiry`, `cvv` |
+| `card` | `number`, `holder`, `expires` as printed (`01/29`), `cvv` |
 | `ssh-key` | `passphrase` |
 | `wifi` | `ssid`, `password` |
 | `api-token` | `token` |

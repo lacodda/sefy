@@ -69,19 +69,19 @@ Everything sefy writes from now on says `login`.
 
 ## `sefy add card <TITLE>`
 
-Fields: **`number`**, `holder`, `expiry`, **`cvv`**, **`pin`**, `notes`.
+Fields: **`number`**, `holder`, `expires`, **`cvv`**, **`pin`**, `notes`.
 
 | Option | Meaning |
 | --- | --- |
 | `--holder <NAME>` | Name embossed on the card. |
-| `--expiry <DATE>` | Expiry date, as printed. |
+| `--expires <MM/YY>` | The month it runs out, as printed: `01/29`. Kept as `2029-01`. |
 | `--notes <TEXT>` | Bank, account, anything else. |
 | `--no-cvv` | Do not ask for the CVV. |
 | `--no-pin` | Do not ask for the PIN. |
 | `--tag <TAG>` | Tags. |
 
 ```console
-$ sefy add card "visa" --holder "A LOVELACE" --expiry 01/29 --tag money
+$ sefy add card "visa" --holder "A LOVELACE" --expires 01/29 --tag money
 Card number:
 CVV:
 PIN:
@@ -95,6 +95,12 @@ on the machine while the command runs. A card you do not know the PIN of takes
 nothing does the same. Nothing typed is nothing stored — the field is left out
 rather than kept empty, since "there is none" and "it is the empty string" are
 different claims.
+
+The month is kept as the month it names, `2029-01`, which is what
+[`sefy audit`](/sefy/reference/audit/) counts from; [`fill`](/sefy/reference/fill/)
+hands it to a payment form as printed again. Up to 0.14.0 this field was called
+`expiry` and kept as typed; a card stored then reads with its date under the new
+name.
 
 ## `sefy add ssh-key <TITLE>`
 
@@ -150,10 +156,14 @@ $ sefy add wifi home --set ssid=HomeNet --set security=WPA3 --tag house
 password (the network key; empty to leave out):
 added "home" as 2
 
-$ sefy add api-token ci --set url=https://example.com/settings/tokens --set scopes=read
+$ sefy add api-token ci --set url=https://example.com/settings/tokens --set expires=2027-01-31
 token (the token itself; empty to leave out):
 added "ci" as 3
 ```
+
+`expires` is the last day the record works, `2027-01-31`, or a month,
+`2027-01`. Any record can carry one, and a value that is not a date is refused;
+see [When a record stops working](/sefy/reference/audit/#when-a-record-stops-working).
 
 A secret field passed with `--set` is **refused**, not quietly accepted: it
 would already be in the shell history, and calling it secret after that would

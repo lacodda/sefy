@@ -79,7 +79,7 @@ pub fn add(vault: &mut Vault, kind: AddKind) -> Result<()> {
         AddKind::Card {
             title,
             holder,
-            expiry,
+            expires,
             notes,
             no_cvv,
             no_pin,
@@ -91,7 +91,10 @@ pub fn add(vault: &mut Vault, kind: AddKind) -> Result<()> {
             let number = session::secret("Card number: ", number_env.as_deref())?;
             let mut fields = vec![Field::secret("number", number)];
             push_optional(&mut fields, "holder", holder, false);
-            push_optional(&mut fields, "expiry", expiry, false);
+            let expires = expires
+                .map(|value| checked(sefy_core::expiry::FIELD, value))
+                .transpose()?;
+            push_optional(&mut fields, sefy_core::expiry::FIELD, expires, false);
             if !no_cvv {
                 push_typed(
                     &mut fields,
@@ -239,12 +242,12 @@ fn record(kind: ItemKind, args: RecordArgs) -> Result<(NewItem, String)> {
             };
             push_typed(&mut fields, spec.name, value)?;
         } else if let Some((_, value)) = given.iter().find(|(name, _)| name == spec.name) {
-            fields.push(Field::public(spec.name, value.clone()));
+            fields.push(Field::public(spec.name, checked(spec.name, value.clone())?));
         }
     }
     for (name, value) in &given {
         if template.field(name).is_none() {
-            fields.push(Field::public(name.clone(), value.clone()));
+            fields.push(Field::public(name.clone(), checked(name, value.clone())?));
         }
     }
     for (name, variable) in &from_env {
@@ -289,16 +292,37 @@ fn assignments(option: &str, shape: &str, raw: &[String]) -> Result<Vec<(String,
     Ok(pairs)
 }
 
-/// Checks a value on its way into a field, for the fields that have a shape.
-///
-/// Only a one-time password key has one: a key that cannot make a code is
-/// found out now, when the site that issued it is still open, rather than at
-/// the next sign-in, when it is too late to fetch it again.
+/// Checks a value on its way into a field, for the fields that have a shape:
+/// a one-time password key, and the date a record stops working. The core
+/// says which and how, so every way a value arrives holds it to the same.
 fn checked(name: &str, value: String) -> Result<String> {
-    if name == sefy_core::otp::FIELD {
-        return Ok(sefy_core::otp::normalize(&value)?);
+    Ok(sefy_core::model::normalize_value(name, &value)?)
+}
+
+/// Says, on stderr, that a record is past or near the last day it works.
+///
+/// Said where a secret is taken, because that is when it matters: a token
+/// that stopped working last week is why the command about to use it will
+/// fail. On stderr, so a pipe still receives the secret alone.
+fn warn_if_due(item: &Item) {
+    if let Some(warning) = due(item, now()) {
+        eprintln!("warning: {warning}");
     }
-    Ok(value)
+}
+
+/// What [`warn_if_due`] says about `item` at `now`, if anything.
+fn due(item: &Item, now: i64) -> Option<String> {
+    let sefy_core::expiry::Stated::Date(date) = sefy_core::expiry::of(&item.payload)? else {
+        return None;
+    };
+    let days = date.days_left(now);
+    (days <= sefy_core::expiry::SOON_DAYS).then(|| {
+        format!(
+            "{:?} {} ({date})",
+            item.summary.title,
+            crate::when::due(days)
+        )
+    })
 }
 
 /// The value an item hands over, and the name of what was taken.
@@ -356,6 +380,7 @@ pub fn get(vault: &Vault, args: GetArgs) -> Result<()> {
     let summary = vault.resolve(&args.reference).map_err(output::explain)?;
     let item = vault.get(summary.id)?;
     let (value, description) = value_of(&item, args.field.as_deref(), "--field")?;
+    warn_if_due(&item);
 
     if args.stdout {
         println!("{value}");
@@ -541,6 +566,18 @@ pub fn show(vault: &Vault, reference: &str) -> Result<()> {
                         &stored.name,
                         &format!("<hidden — use sefy get --field {}>", stored.name),
                     );
+                } else if stored.name == sefy_core::expiry::FIELD
+                    && let Some(date) = sefy_core::Expiry::parse(&stored.value)
+                {
+                    // The distance is the part that is read; the date is
+                    // what was written.
+                    let days = date.days_left(now());
+                    let distance = if days < 0 {
+                        crate::when::due(days)
+                    } else {
+                        crate::when::days_away(days)
+                    };
+                    field(&stored.name, &format!("{} ({distance})", stored.value));
                 } else {
                     field(&stored.name, &stored.value);
                 }
@@ -1458,6 +1495,7 @@ pub fn open(vault: &Vault, args: OpenArgs) -> Result<()> {
 
     crate::browser::open(&url.value)?;
     println!("opened {}", url.value);
+    warn_if_due(&item);
 
     if args.no_password {
         return Ok(());
@@ -1503,6 +1541,7 @@ pub fn otp(vault: &mut Vault, args: OtpArgs, auto: &mut AutoSync) -> Result<()> 
         );
     };
     let mut fields = fields.clone();
+    warn_if_due(&item);
 
     // Under --stdout everything but the code goes to stderr, so a pipe
     // receives the code and nothing else.
@@ -1590,8 +1629,8 @@ pub fn otp(vault: &mut Vault, args: OtpArgs, auto: &mut AutoSync) -> Result<()> 
 /// Hands over a record's fields one at a time, Enter between them.
 ///
 /// Which fields, and in what order, is the template's word: a login gives its
-/// login, its password and a one-time code, a card its number, holder, expiry
-/// and CVV. A one-time code is made when its turn comes rather than up front,
+/// login, its password and a one-time code, a card its number, holder, the
+/// month it runs out and CVV. A one-time code is made when its turn comes rather than up front,
 /// so time spent on the fields before it does not eat into its life.
 pub fn fill(vault: &Vault, args: FillArgs) -> Result<()> {
     use std::io::IsTerminal;
@@ -1627,6 +1666,7 @@ pub fn fill(vault: &Vault, args: FillArgs) -> Result<()> {
             summary.id
         );
     }
+    warn_if_due(&item);
 
     let mut clipboard = output::Clipboard::open()?;
     let total = steps.len();
@@ -1644,6 +1684,14 @@ pub fn fill(vault: &Vault, args: FillArgs) -> Result<()> {
             (
                 totp.code_at(now),
                 format!("one-time code (valid for {}s)", totp.remaining(now)),
+            )
+        } else if field.name == sefy_core::expiry::FIELD
+            && let Some(date) = sefy_core::Expiry::parse(&field.value)
+        {
+            // As printed on a card, which is what a payment form asks for.
+            (
+                date.printed(),
+                format!("{} ({})", field.name, date.printed()),
             )
         } else {
             (field.value.clone(), field.name.clone())
@@ -1778,6 +1826,7 @@ impl<'a> Mapping<'a> {
         let summary = vault.resolve(self.reference).map_err(output::explain)?;
         let item = vault.get(summary.id)?;
         let (value, name) = value_of(&item, self.field, "#FIELD")?;
+        warn_if_due(&item);
         // Refused here rather than left to the system: it would surface as the
         // command failing to start, which points at the command.
         if value.contains('\0') {

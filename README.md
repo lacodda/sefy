@@ -136,6 +136,9 @@ Every command, with its flags: **[the reference](https://lacodda.github.io/sefy/
   before it touches one, `SEFY_AUTO_SYNC=on` syncs after every change, a merge
   keeps the vault as it was beside it first, and `sefy doctor` checks the
   vault, the transport and the clipboard on this machine.
+- **An audit that stays home.** `sefy audit` names weak, reused and
+  year-old passwords, the card or token kept twice, and every record past or
+  near its `expires` date - worked out offline, without showing a value.
 - **A vault that is never a trap.** `import` reads KeePass, Bitwarden and
   browser exports, history included; `export` writes sefy JSON, KeePass XML or
   CSV - in the clear only after you say so explicitly.

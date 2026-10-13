@@ -135,7 +135,12 @@ fn a_migrated_vault_still_takes_new_items() {
 
     let reopened = Vault::open(&path, PASSWORD).unwrap();
     assert_eq!(reopened.list().unwrap().len(), 4);
-    assert_eq!(value_of(&fields_of(&reopened, "visa"), "expiry"), "01/29");
+    // Written under the name a card's date had up to 0.14.0, read under the
+    // one it has now.
+    assert_eq!(
+        value_of(&fields_of(&reopened, "visa"), "expires"),
+        "2029-01"
+    );
 }
 
 #[test]

@@ -101,6 +101,9 @@ content share no prefix, because the salt and nonce are fresh every time.
 	<Card title="Every value keeps its past" icon="list-format">
 		An edit keeps what it replaced. `sefy history` shows how each version differs from now without printing a secret, and `sefy restore mail 2 --field password` brings back the password a site never accepted the change of.
 	</Card>
+	<Card title="An audit that stays home" icon="approve-check">
+		`sefy audit` names the passwords that are weak, shared between items or unchanged for over a year, the card or token kept twice, and every record past or within a month of its `expires` date. Worked out offline from the vault alone, and no value is ever shown.
+	</Card>
 	<Card title="Never a trap" icon="external">
 		`sefy import` brings in what KeePass, Bitwarden or a browser exported, earlier passwords included. `sefy export` writes it all back out as KeePass XML, CSV or sefy JSON - after making you acknowledge exactly what that file is.
 	</Card>

@@ -53,6 +53,12 @@ everything below is an expansion of it.
   delete them by hand to be rid of them sooner. See
   [A copy before every merge](/sefy/guides/syncing/#a-copy-before-every-merge).
 
+- **A password that leaked but looks fine.** [`sefy audit`](/sefy/reference/audit/)
+  works from the vault alone and never checks a list of breached passwords - not
+  even by sending part of a hash - so a strong password used in one place that
+  turned up in someone else's breach is not flagged. The site's own notice, or a
+  breach service you check yourself, is how that one is found.
+
 ## Why not deniability
 
 Plausible deniability is a much stronger claim: that an examiner cannot prove

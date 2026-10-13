@@ -52,6 +52,7 @@ get the same command.
 - [`find`](/sefy/reference/find/) — search items by text, kind and tags
 - [`show`](/sefy/reference/show/) — show an item without its secret fields
 - [`status`](/sefy/reference/status/) — what and where this vault is, without its contents
+- [`audit`](/sefy/reference/audit/) — weak, reused and old passwords, secrets kept twice, dates coming up
 
 ### Items
 
@@ -159,7 +160,7 @@ narrow the text, or use an id
 `0` on success, `1` on any error, `2` when the command line itself is wrong.
 A sync after a change that failed is a warning, not an error: the change
 succeeded. [`doctor`](/sefy/reference/doctor/) ends with `1` when any check
-failed.
+failed, and [`audit`](/sefy/reference/audit/) when it found anything.
 Errors go to stderr; a wrong password and a file that is not a vault produce
 the same message, because an authenticated blob genuinely cannot tell the two
 apart.

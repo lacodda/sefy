@@ -169,7 +169,7 @@ pub fn table(items: &[ItemSummary]) {
 }
 
 /// Shortens a title to fit the column, marking that it was cut.
-fn truncate(text: &str, width: usize) -> String {
+pub(crate) fn truncate(text: &str, width: usize) -> String {
     if text.chars().count() <= width {
         return text.to_owned();
     }

@@ -1,9 +1,10 @@
-//! Rendering a moment, for the one place that shows one.
+//! Rendering moments and days.
 //!
-//! sefy stores times as Unix seconds and, until now, never printed one. A date
-//! crate for a single line of `sefy status` would be a dependency carried into
-//! every build and every audit of what this program links against — a poor
-//! trade for arithmetic that is a few lines and has not changed since 1582.
+//! sefy stores times as Unix seconds and prints them in a handful of lines:
+//! `status`, `audit`, a record's date in `show`. A date crate for those would
+//! be a dependency carried into every build and every audit of what this
+//! program links against — a poor trade for arithmetic that is a few lines and
+//! has not changed since 1582.
 //!
 //! Everything here is UTC. A local time would need the platform's zone
 //! database, which is the dependency this avoids, and would also make the
@@ -34,6 +35,34 @@ pub fn date_time(at: i64) -> String {
         seconds / 3600,
         (seconds % 3600) / 60
     )
+}
+
+/// `YYYY-MM-DD` for a Unix timestamp: the day, when the hour is beside the
+/// point.
+pub fn date(at: i64) -> String {
+    let (year, month, day) = civil_from_days(at.div_euclid(86_400));
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+/// A number of whole days from today, either way, as it is said.
+pub fn days_away(days: i64) -> String {
+    match days {
+        0 => "today".to_owned(),
+        1 => "tomorrow".to_owned(),
+        -1 => "yesterday".to_owned(),
+        days if days > 1 => format!("in {days} days"),
+        days => format!("{} days ago", -days),
+    }
+}
+
+/// Where a record stands against the last day it works, `days` from today:
+/// "expires in 5 days", "expires today", "expired yesterday".
+pub fn due(days: i64) -> String {
+    if days < 0 {
+        format!("expired {}", days_away(days))
+    } else {
+        format!("expires {}", days_away(days))
+    }
 }
 
 /// A rough distance in the past, in the largest unit that still reads.
@@ -112,6 +141,25 @@ mod tests {
         // not turn into "-1 days ago" or a panic.
         assert_eq!(ago(-5), "in the future");
         assert!(moment(100, 50).ends_with("(in the future)"));
+    }
+
+    #[test]
+    fn a_date_is_the_day_alone() {
+        assert_eq!(date(1_709_164_800 + 13 * 3600), "2024-02-29");
+        assert_eq!(date(-1), "1969-12-31");
+    }
+
+    #[test]
+    fn days_either_way_are_said_the_way_people_say_them() {
+        assert_eq!(days_away(0), "today");
+        assert_eq!(days_away(1), "tomorrow");
+        assert_eq!(days_away(-1), "yesterday");
+        assert_eq!(days_away(12), "in 12 days");
+        assert_eq!(days_away(-3), "3 days ago");
+        assert_eq!(due(5), "expires in 5 days");
+        assert_eq!(due(0), "expires today");
+        assert_eq!(due(-1), "expired yesterday");
+        assert_eq!(due(-40), "expired 40 days ago");
     }
 
     #[test]

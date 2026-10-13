@@ -24,6 +24,7 @@ use super::{
 };
 use crate::db;
 use crate::error::{Error, Result};
+use crate::expiry::{self, Expiry};
 use crate::history::Version;
 use crate::model::{ItemKind, NewItem, Payload};
 use crate::otp::{self, Algorithm, Totp};
@@ -244,7 +245,7 @@ fn read_entry(
             .next()
             .map(|(filename, bytes)| Converted::whole(Payload::File { filename, bytes }))
     } else {
-        contents(&kind, &texts, title_text, username)
+        contents(&kind, &texts, title_text, username, native_expiry(entry))
     };
     let attachments: Vec<(String, Vec<u8>)> = attachments.collect();
 
@@ -286,6 +287,7 @@ fn read_entry(
                         &past_texts,
                         value(&past_texts, "Title"),
                         value(&past_texts, "UserName"),
+                        native_expiry(snapshot),
                     ) {
                         earlier.push((made_at, past.payload));
                     }
@@ -419,7 +421,22 @@ impl Converted {
     }
 }
 
-fn contents(kind: &ItemKind, texts: &[Text], title: &str, username: &str) -> Option<Converted> {
+/// The date KeePass's own expiry gives an entry, when it is turned on.
+fn native_expiry(entry: &Element) -> Option<Expiry> {
+    let times = entry.child("Times")?;
+    if !times.text_of("Expires").is_some_and(is_true) {
+        return None;
+    }
+    Expiry::ending_at(parse_time(times.text_of("ExpiryTime")?)?)
+}
+
+fn contents(
+    kind: &ItemKind,
+    texts: &[Text],
+    title: &str,
+    username: &str,
+    native: Option<Expiry>,
+) -> Option<Converted> {
     if *kind == ItemKind::Note {
         let mut text = value(texts, "Notes").to_owned();
         let mut folded = false;
@@ -474,6 +491,14 @@ fn contents(kind: &ItemKind, texts: &[Text], title: &str, username: &str) -> Opt
             continue;
         }
         record.put(key, &text.value, Some(text.protected));
+    }
+    // KeePass keeps an entry's expiry beside its strings rather than among
+    // them. A string of sefy's own says the same thing more exactly - a card's
+    // month rather than its last day - and wins when both are there.
+    if let Some(date) = native
+        && !record.has(expiry::FIELD)
+    {
+        record.put(expiry::FIELD, &date.to_string(), Some(false));
     }
 
     record.into_payload().map(|payload| Converted {
@@ -684,13 +709,20 @@ fn entry(
     }
     let created = time::format_rfc3339(snapshot.created_at);
     let updated = time::format_rfc3339(snapshot.updated_at);
+    // A date sefy can count from becomes KeePass's own expiry too, so KeePass
+    // marks the entry the way sefy's audit does. The field goes out as a
+    // string as well, which is what a sefy reading the file back prefers.
+    let (expiry_time, expires) = match expiry::of(snapshot.payload) {
+        Some(expiry::Stated::Date(date)) => (time::format_rfc3339(date.ends_at()), "True"),
+        _ => (updated.clone(), "False"),
+    };
     out.push_str(&format!(
         "{indent}\t<Times>\n\
          {indent}\t\t<CreationTime>{created}</CreationTime>\n\
          {indent}\t\t<LastModificationTime>{updated}</LastModificationTime>\n\
          {indent}\t\t<LastAccessTime>{updated}</LastAccessTime>\n\
-         {indent}\t\t<ExpiryTime>{updated}</ExpiryTime>\n\
-         {indent}\t\t<Expires>False</Expires>\n\
+         {indent}\t\t<ExpiryTime>{expiry_time}</ExpiryTime>\n\
+         {indent}\t\t<Expires>{expires}</Expires>\n\
          {indent}\t\t<UsageCount>0</UsageCount>\n\
          {indent}\t\t<LocationChanged>{updated}</LocationChanged>\n\
          {indent}\t</Times>\n"

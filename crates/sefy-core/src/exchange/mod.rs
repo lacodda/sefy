@@ -24,6 +24,7 @@ pub use sefy::{EXPORT_VERSION, Export, ExportField, ExportItem, ExportStamp, Exp
 
 use crate::db::{self, Stamp};
 use crate::error::{Error, Result};
+use crate::expiry;
 use crate::history::Version;
 use crate::model::{Field, ItemKind, ItemSummary, NewItem, Payload};
 use crate::otp;
@@ -511,6 +512,14 @@ impl Record {
             .or(secret)
             .unwrap_or(true);
 
+        // A date another tool wrote its own way is stored the way sefy keeps
+        // one; a value that is not a date stays as it came, for the audit to
+        // name rather than for the import to drop.
+        let value = match name {
+            expiry::FIELD => expiry::normalize(value).unwrap_or_else(|_| value.to_owned()),
+            _ => value.to_owned(),
+        };
+
         let mut unique = name.to_owned();
         let mut counter = 2;
         while self.has(&unique) {
@@ -519,7 +528,7 @@ impl Record {
         }
         self.fields.push(Field {
             name: unique,
-            value: value.to_owned(),
+            value,
             secret,
         });
     }
@@ -562,6 +571,7 @@ impl Record {
         }
         let template = self.kind.template();
         let mut fields = self.fields;
+        expiry::upgrade_legacy(&self.kind, &mut fields);
         fields.sort_by_key(|field| {
             template
                 .and_then(|template| {
@@ -699,6 +709,27 @@ mod tests {
             payload.field("url-3").unwrap().value,
             "https://three.example"
         );
+    }
+
+    #[test]
+    fn a_card_from_another_tool_never_carries_its_date_under_the_old_name() {
+        // Read on the way out of the vault as well, but nothing this build
+        // writes should need that: what an import hands over is already the
+        // new name.
+        let mut record = Record::new(ItemKind::Card);
+        record.put("number", "4111", None);
+        record.put(expiry::LEGACY_CARD_NAME, "03/2029", Some(false));
+        let payload = record.into_payload().unwrap();
+        assert_eq!(payload.field(expiry::FIELD).unwrap().value, "2029-03");
+        assert!(payload.field(expiry::LEGACY_CARD_NAME).is_none());
+
+        // Half a date stays as it came, public.
+        let mut record = Record::new(ItemKind::Card);
+        record.put(expiry::LEGACY_CARD_NAME, "2029", Some(false));
+        let payload = record.into_payload().unwrap();
+        let kept = payload.field(expiry::LEGACY_CARD_NAME).unwrap();
+        assert_eq!(kept.value, "2029");
+        assert!(!kept.secret);
     }
 
     #[test]

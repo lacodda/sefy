@@ -5,6 +5,7 @@
 //! never pointed at a path, so no plaintext page ever reaches the disk.
 
 use crate::error::{Error, Result};
+use crate::expiry;
 use crate::history::{self, Version};
 use crate::model::{
     Field, Item, ItemKind, ItemSummary, LEGACY_LOGIN_NAME, NewItem, Payload, Query,
@@ -1028,10 +1029,14 @@ pub fn get_item(connection: &Connection, id: i64) -> Result<Item> {
         | ItemKind::SshKey
         | ItemKind::Wifi
         | ItemKind::ApiToken
-        | ItemKind::Bank => Payload::Fields {
-            kind: summary.kind.clone(),
-            fields: read_fields(connection, id)?,
-        },
+        | ItemKind::Bank => {
+            let mut fields = read_fields(connection, id)?;
+            expiry::upgrade_legacy(&summary.kind, &mut fields);
+            Payload::Fields {
+                kind: summary.kind.clone(),
+                fields,
+            }
+        }
         ItemKind::File => connection.query_row(
             "SELECT filename, bytes FROM files WHERE item_id = ?1",
             params![id],
@@ -1278,7 +1283,7 @@ mod tests {
                     [
                         Field::secret("number", "4111"),
                         Field::public("holder", "Ada"),
-                        Field::public("expiry", "01/29"),
+                        Field::public("expires", "2029-01"),
                     ],
                 ),
             ),
@@ -1291,9 +1296,37 @@ mod tests {
             panic!("expected a record made of fields");
         };
         let names: Vec<&str> = fields.iter().map(|field| field.name.as_str()).collect();
-        assert_eq!(names, ["number", "holder", "expiry"]);
+        assert_eq!(names, ["number", "holder", "expires"]);
         assert!(fields[0].secret);
         assert!(!fields[1].secret);
+    }
+
+    #[test]
+    fn a_card_stored_with_its_date_as_printed_reads_with_it_under_the_new_name() {
+        // What 0.14.0 and earlier wrote, and what such a build still writes
+        // into a vault this one has opened: the row is never rewritten, so the
+        // reading is what has to know.
+        let mut connection = create().unwrap();
+        let id = insert_item(
+            &mut connection,
+            NewItem::new(
+                "card",
+                Payload::fields(
+                    ItemKind::Card,
+                    [
+                        Field::secret("number", "4111"),
+                        Field::public(crate::expiry::LEGACY_CARD_NAME, "01/29"),
+                    ],
+                ),
+            ),
+            10,
+            None,
+        )
+        .unwrap();
+
+        let item = get_item(&connection, id).unwrap();
+        assert_eq!(item.payload.field("expires").unwrap().value, "2029-01");
+        assert!(item.payload.field("expiry").is_none());
     }
 
     #[test]

@@ -123,7 +123,7 @@ fn every_kind(fixture: &Fixture) -> Vault {
                     [
                         Field::secret("number", "4111111111111111"),
                         Field::public("holder", "A LOVELACE"),
-                        Field::public("expiry", "03/2029"),
+                        Field::public("expires", "2029-03"),
                         Field::secret("cvv", "123"),
                     ],
                 ),
@@ -755,6 +755,171 @@ fn a_keepass_export_round_trips_every_kind() {
     assert_eq!(again.skipped, 6);
 }
 
+/// One entry, as KeePass writes it, with its own expiry turned on or off.
+fn keepass_entry_expiring(strings: &str, expires: bool, at: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<KeePassFile>
+	<Meta><Generator>KeePass</Generator></Meta>
+	<Root>
+		<Group>
+			<UUID>AAECAwQFBgcICQoLDA0ODw==</UUID>
+			<Name>Root</Name>
+			<Entry>
+				<UUID>EBESExQVFhcYGRobHB0eHw==</UUID>
+				<Times>
+					<ExpiryTime>{at}</ExpiryTime>
+					<Expires>{}</Expires>
+				</Times>
+				{strings}
+			</Entry>
+		</Group>
+	</Root>
+</KeePassFile>
+"#,
+        if expires { "True" } else { "False" }
+    )
+}
+
+#[test]
+fn a_date_goes_to_keepass_as_its_own_expiry_and_comes_back_from_it() {
+    let origin = fixture();
+    let vault = every_kind(&origin);
+    let exported = exchange::export(&vault, Target::KeePass { history: false }).unwrap();
+    // The card's month runs out at the start of the next one; the other
+    // entries have no expiry turned on.
+    assert!(
+        exported
+            .text
+            .contains("<ExpiryTime>2029-04-01T00:00:00Z</ExpiryTime>"),
+        "{}",
+        exported.text.as_str()
+    );
+    assert_eq!(exported.text.matches("<Expires>True</Expires>").count(), 1);
+
+    // An entry KeePass made keeps its expiry in its times and nowhere else.
+    let strings = "<String><Key>Title</Key><Value>ci</Value></String>\
+                   <String><Key>Password</Key><Value>synthetic</Value></String>";
+    let destination = fixture();
+    let mut vault = empty_vault(&destination);
+    exchange::import(
+        &mut vault,
+        &keepass_entry_expiring(strings, true, "2027-02-01T00:00:00Z"),
+    )
+    .unwrap();
+    assert_eq!(
+        field(&payload_of(&vault, "ci"), "expires"),
+        Some(("2027-01-31".to_owned(), false))
+    );
+
+    // Turned off, the time KeePass still writes means nothing.
+    let other = fixture();
+    let mut vault = empty_vault(&other);
+    exchange::import(
+        &mut vault,
+        &keepass_entry_expiring(strings, false, "2027-02-01T00:00:00Z"),
+    )
+    .unwrap();
+    assert_eq!(field(&payload_of(&vault, "ci"), "expires"), None);
+
+    // A string of sefy's own says it more exactly, and wins.
+    let both = "<String><Key>Title</Key><Value>ci</Value></String>\
+                <String><Key>Password</Key><Value>synthetic</Value></String>\
+                <String><Key>expires</Key><Value>2029-03</Value></String>";
+    let third = fixture();
+    let mut vault = empty_vault(&third);
+    exchange::import(
+        &mut vault,
+        &keepass_entry_expiring(both, true, "2029-04-01T00:00:00Z"),
+    )
+    .unwrap();
+    assert_eq!(
+        field(&payload_of(&vault, "ci"), "expires"),
+        Some(("2029-03".to_owned(), false))
+    );
+    // And the entry's own expiry does not arrive beside it as a second date.
+    assert_eq!(field(&payload_of(&vault, "ci"), "expires-2"), None);
+}
+
+#[test]
+fn a_date_another_tool_wrote_its_own_way_is_stored_the_way_sefy_keeps_one() {
+    let strings = "<String><Key>Title</Key><Value>card</Value></String>\
+                   <String><Key>Password</Key><Value>synthetic</Value></String>\
+                   <String><Key>expires</Key><Value>05/31</Value></String>";
+    let first = fixture();
+    let mut vault = empty_vault(&first);
+    exchange::import(
+        &mut vault,
+        &keepass_entry_expiring(strings, false, "2000-01-01T00:00:00Z"),
+    )
+    .unwrap();
+    assert_eq!(
+        field(&payload_of(&vault, "card"), "expires"),
+        Some(("2031-05".to_owned(), false))
+    );
+
+    // One that is not a date is kept as it came, for the audit to name.
+    let strings = "<String><Key>Title</Key><Value>odd</Value></String>\
+                   <String><Key>Password</Key><Value>synthetic</Value></String>\
+                   <String><Key>expires</Key><Value>never</Value></String>";
+    let other = fixture();
+    let mut vault = empty_vault(&other);
+    exchange::import(
+        &mut vault,
+        &keepass_entry_expiring(strings, false, "2000-01-01T00:00:00Z"),
+    )
+    .unwrap();
+    assert_eq!(
+        field(&payload_of(&vault, "odd"), "expires").unwrap().0,
+        "never"
+    );
+}
+
+#[test]
+fn a_card_in_a_keepass_export_from_before_reads_with_its_date_under_the_new_name() {
+    // What 0.14.0 wrote for a card: its kind marked, its date as a string
+    // under the old name.
+    let strings = "<String><Key>Title</Key><Value>old card</Value></String>\
+                   <String><Key>number</Key><Value>4111111111111111</Value></String>\
+                   <String><Key>expiry</Key><Value>01/29</Value></String>";
+    let document = keepass_entry_expiring(strings, false, "2000-01-01T00:00:00Z").replace(
+        "</Entry>",
+        "<CustomData><Item><Key>sefy-kind</Key><Value>card</Value></Item></CustomData></Entry>",
+    );
+    let fixture = fixture();
+    let mut vault = empty_vault(&fixture);
+    exchange::import(&mut vault, &document).unwrap();
+    let card = payload_of(&vault, "old card");
+    assert_eq!(card.kind(), ItemKind::Card);
+    assert_eq!(field(&card, "expires"), Some(("2029-01".to_owned(), false)));
+    assert_eq!(field(&card, "expiry"), None);
+}
+
+#[test]
+fn a_card_in_an_export_from_before_reads_with_its_date_under_the_new_name() {
+    let export = r#"{
+        "sefy_export": 1,
+        "items": [{
+            "uuid": "0b6e1c1e-8f6a-4c55-9a51-0d3f5f7c2b10",
+            "title": "old card",
+            "kind": "card",
+            "tags": [],
+            "created_at": 1700000000,
+            "updated_at": 1700000000,
+            "fields": [
+                {"name": "number", "value": "4111111111111111", "secret": true},
+                {"name": "expiry", "value": "11/28", "secret": false}
+            ]
+        }]
+    }"#;
+    let fixture = fixture();
+    let mut vault = empty_vault(&fixture);
+    exchange::import(&mut vault, export).unwrap();
+    let card = payload_of(&vault, "old card");
+    assert_eq!(field(&card, "expires"), Some(("2028-11".to_owned(), false)));
+    assert_eq!(field(&card, "expiry"), None);
+}
+
 #[test]
 fn a_keepass_export_carries_history_when_asked() {
     let origin = fixture();
@@ -973,7 +1138,8 @@ fn a_bitwarden_export_maps_every_type_and_names_what_it_could_not() {
         field(&visa, "number"),
         Some(("4111111111111111".to_owned(), true))
     );
-    assert_eq!(field(&visa, "expiry").unwrap().0, "03/2029");
+    // Bitwarden keeps month and year apart; sefy keeps the month they make.
+    assert_eq!(field(&visa, "expires"), Some(("2029-03".to_owned(), false)));
     assert_eq!(field(&visa, "cvv"), Some(("123".to_owned(), true)));
     assert_eq!(field(&visa, "brand").unwrap().0, "Visa");
 

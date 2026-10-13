@@ -346,9 +346,8 @@ pub(crate) fn decode(json: &str) -> Result<Payload> {
                 .map_err(|_| Error::UnreadableVersion)?,
         },
         ItemKind::Unknown(name) => Payload::Unknown { kind: name },
-        kind => Payload::Fields {
-            kind,
-            fields: stored
+        kind => {
+            let mut fields: Vec<Field> = stored
                 .fields
                 .into_iter()
                 .map(|field| Field {
@@ -356,8 +355,10 @@ pub(crate) fn decode(json: &str) -> Result<Payload> {
                     value: field.value,
                     secret: field.secret,
                 })
-                .collect(),
-        },
+                .collect();
+            crate::expiry::upgrade_legacy(&kind, &mut fields);
+            Payload::Fields { kind, fields }
+        }
     })
 }
 
@@ -392,6 +393,22 @@ mod tests {
             let json = encode(&payload).unwrap();
             assert_eq!(decode(&json).unwrap(), payload);
         }
+    }
+
+    #[test]
+    fn a_card_kept_with_its_date_as_printed_reads_with_it_under_the_new_name() {
+        // A version written up to 0.14.0 is frozen JSON: it is never rewritten,
+        // so a comparison with the current contents would otherwise see the
+        // date removed and another added.
+        let payload = decode(
+            r#"{"kind":"card","fields":[
+                {"name":"number","value":"4111","secret":true},
+                {"name":"expiry","value":"01/29","secret":false}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(payload.field("expires").unwrap().value, "2029-01");
+        assert!(payload.field("expiry").is_none());
     }
 
     #[test]

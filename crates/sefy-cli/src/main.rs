@@ -4,6 +4,7 @@
 //! read the master password, open the vault in memory, act, and — for anything
 //! that changed something — seal it back to disk.
 
+mod audit;
 mod autosync;
 mod browser;
 mod cli;
@@ -134,6 +135,7 @@ fn run(arguments: Cli) -> Result<()> {
         Command::Open(args) => commands::open(&vault, args),
         Command::Otp(args) => commands::otp(&mut vault, args, &mut auto),
         Command::Fill(args) => commands::fill(&vault, args),
+        Command::Audit => audit::run(&vault),
         Command::Status => commands::status(&vault),
         Command::Export {
             output,
