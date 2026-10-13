@@ -19,6 +19,57 @@ Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
 
+## [0.15.0] - 2026-10-13
+
+An audit that stays home: what in the vault deserves a second look, worked out
+on this machine from the vault alone, and a date on every record that says when
+it stops working.
+
+**`sefy audit`** names the passwords that are easy to guess (zxcvbn below 3 of
+4, with the record's own title, login and address counting against it), the
+ones shared by more than one item, and the ones that have had their value for
+over a year - read from the history, so a new address for a login does not make
+its password any younger. It names a card, a token, a key or an account kept in
+two items, and every record past or within 30 days of its date. Nothing is
+looked up anywhere, and no value is printed: places, not secrets. The exit
+status is `1` when it finds anything, so a scheduled audit is a check.
+
+What is checked is the template's word: each field of a kind now says whether
+it is a password someone chose, a secret someone issued, or nothing to audit. A
+PIN and a CVV are not checked - every PIN is four digits.
+
+**`expires`**, on any record, is the last day it works: `2027-01-31`, or a
+month, `2027-01`, the way a card prints it. `add` and `edit` refuse a value that
+is not a date and read a card's `01/27` as its month. `show` says how far off it
+is, and `get`, `open`, `fill`, `otp` and `run` warn on stderr when a record is
+past it or within 30 days of it. `fill` hands a card's month to a form as
+printed. A KeePass entry's own expiry comes in as `expires` and goes back out as
+one; a Bitwarden card's month and year come in as its `expires`.
+
+### Breaking Changes
+
+**Vault files: none.** The file format is still version 1 and the database
+schema is unchanged at 5; checked both ways with the published 0.14.0 binary.
+
+**A card's date is `expires`, no longer `expiry`.** One name for one thing on
+every kind, kept as a month rather than as typed. `sefy add card --expiry` is
+now `--expires`. Nothing needs migrating: a card stored, kept in history or
+exported with `expiry` reads with its date under the new name. A printed date
+that is not one - a year on its own - stays as an `expiry` field, and `audit`
+names it. 0.14.0 opens a vault 0.15.0 has written and shows a card's `expires`
+as an extra field, but no longer fills it; and 0.14.0 merging a card that
+0.15.0 edited may call it changed on both sides, keeping the other copy current
+and its own in the history. Update every machine that shares a vault.
+
+**`sefy-core` library:** `FieldSpec` gains `audit: AuditAs`; `FieldSpec::new`
+is private, as before. New: the `audit` module (`audit()`, `Report`, `Weak`,
+`Old`, `Due`, `Unreadable`, `Place`), the `expiry` module (`Expiry`,
+`normalize`, `of`, `Stated`), `model::normalize_value`, `AuditAs::of`, and
+`Error::UnreadableExpiry`.
+
+### Features
+- Audit the vault, and give every record a date it stops working
+
 ## [0.14.0] - 2026-10-09
 
 Syncing without surprises: see what a sync would do before it does it, have
