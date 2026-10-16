@@ -86,6 +86,7 @@ get the same command.
 ### The vault itself
 
 - [`change-password`](/sefy/reference/change-password/) — replace the master password
+- [`wipe`](/sefy/reference/wipe/) — overwrite and delete the vault and the copies beside it
 - [`plugin`](/sefy/reference/plugin/) — inspect the installed transports
 - [`completions`](/sefy/reference/completions/) — print a shell completion script
 
@@ -160,7 +161,8 @@ narrow the text, or use an id
 `0` on success, `1` on any error, `2` when the command line itself is wrong.
 A sync after a change that failed is a warning, not an error: the change
 succeeded. [`doctor`](/sefy/reference/doctor/) ends with `1` when any check
-failed, and [`audit`](/sefy/reference/audit/) when it found anything.
+failed, [`audit`](/sefy/reference/audit/) when it found anything, and
+[`wipe`](/sefy/reference/wipe/) when a file it was to destroy is still on disk.
 Errors go to stderr; a wrong password and a file that is not a vault produce
 the same message, because an authenticated blob genuinely cannot tell the two
 apart.

@@ -95,13 +95,11 @@ generated 20 characters: 130 bits of entropy, strength 4/4
 copied it to the clipboard; clearing in 45s
 ```
 
-Items are addressed by title, by an exact id, or by text to search for; when
-the words could mean more than one thing, sefy shows what they could mean
-rather than guessing. `sefy open` loads the site and puts the password on the
-clipboard in one step, `sefy fill` passes login, password and one-time code
-over one Enter at a time, `sefy sync` carries the vault through a transport and
-folds what comes back into this one, and `sefy status` says what you are
-holding without saying what is in it.
+Items are addressed by title, id or text to search for, and sefy lists what
+the words could mean rather than guessing. `sefy open` loads the site with the
+password on the clipboard, `sefy fill` passes login, password and one-time code
+one Enter at a time, `sefy sync` carries the vault through a transport, and
+`sefy status` says what you hold without saying what is in it.
 
 Every command, with its flags: **[the reference](https://lacodda.github.io/sefy/reference/commands/)**.
 
@@ -142,6 +140,9 @@ Every command, with its flags: **[the reference](https://lacodda.github.io/sefy/
 - **A vault that is never a trap.** `import` reads KeePass, Bitwarden and
   browser exports, history included; `export` writes sefy JSON, KeePass XML or
   CSV - in the clear only after you say so explicitly.
+- **An end, when one is needed.** `sefy wipe` overwrites the vault, the copies
+  beside it and any unfinished save with random bytes and deletes them, once
+  you type the vault's name back - there is no `--yes`.
 
 ## Install
 
@@ -186,14 +187,13 @@ for transports.
 
 ## Status
 
-The vault file format is stable at version 1, and the plugin protocol at
-version 1 since 0.3.0; both promises hold across every release below. The
-database schema inside the ciphertext moves between releases, and older
-builds keep reading a vault safely even when they cannot see everything in
-it - the [versions and compatibility](https://lacodda.github.io/sefy/concepts/versions/)
-page has the detail.
-
-Released versions and what landed in each: [CHANGELOG on the Releases page](https://github.com/lacodda/sefy/releases).
+**v0.16.0**, in daily use. The vault file format is stable at version 1 and
+the plugin protocol at version 1 since 0.3.0; the database schema inside the
+ciphertext moves between releases, and older builds keep reading a vault
+safely even when they cannot see everything in it - see
+[versions and compatibility](https://lacodda.github.io/sefy/concepts/versions/).
+What landed in each version:
+[CHANGELOG](https://github.com/lacodda/sefy/blob/main/CHANGELOG.md).
 
 ## Contributing
 

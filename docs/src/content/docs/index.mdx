@@ -107,6 +107,9 @@ content share no prefix, because the salt and nonce are fresh every time.
 	<Card title="Never a trap" icon="external">
 		`sefy import` brings in what KeePass, Bitwarden or a browser exported, earlier passwords included. `sefy export` writes it all back out as KeePass XML, CSV or sefy JSON - after making you acknowledge exactly what that file is.
 	</Card>
+	<Card title="An end, when one is needed" icon="close">
+		`sefy wipe` overwrites the vault, the copies beside it and any unfinished save with random bytes and deletes them - once you type the vault's name back. There is no `--yes`, and it says plainly what an SSD or a backup may keep out of its reach.
+	</Card>
 	<Card title="Honest about limits" icon="warning">
 		Inconspicuous, not deniable. It hides from a passing glance and a cloud scanner, not from a forensic examiner or from anyone who can compel a password.
 	</Card>

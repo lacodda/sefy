@@ -7,6 +7,7 @@ use crate::error::{Error, Result};
 use crate::format;
 use crate::history::Version;
 use crate::model::{Field, Item, ItemSummary, NewItem, Payload, Query};
+use crate::wipe::{self, Wiped};
 use rusqlite::Connection;
 use std::cell::Cell;
 use std::fs;
@@ -501,6 +502,36 @@ impl Vault {
         };
         db::meta_set(&self.connection, LAST_SYNC, &stamp.encode())
     }
+
+    /// Destroys this vault on disk: the file, the copies kept beside it and
+    /// any write a crash left unfinished — every part [`wipe::parts`] lists.
+    /// Each is overwritten with random bytes in place, synced and deleted.
+    ///
+    /// Only an open vault can be wiped. A file with no header cannot be told
+    /// from any other file except by opening it, so the password is what says
+    /// this is a vault, and this one; a wipe of the wrong file would be just
+    /// as final. The vault is consumed: there is nothing left to save it back
+    /// into.
+    ///
+    /// The remote copy, if the vault was ever synced, is not touched; the
+    /// result says when it was last reached. See [`crate::wipe`] for what an
+    /// overwrite does and does not reach.
+    pub fn wipe(self) -> Wiped {
+        // As with `save`: a copy without a file of its own carries the real
+        // vault's path, and must never destroy what it was copied from.
+        assert_eq!(
+            self.backing,
+            Backing::File,
+            "a vault with no file of its own was asked to wipe"
+        );
+        // A stamp that cannot be read is a stamp that is not there: the wipe
+        // goes ahead either way, and this is only what it says about the
+        // remote afterwards.
+        let last_sync = self.last_sync().ok().flatten();
+        let parts = wipe::parts(&self.path);
+        drop(self);
+        wipe::carry_out(parts, last_sync)
+    }
 }
 
 /// The current contents of a record with one field taken from an earlier
@@ -655,8 +686,9 @@ pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
 /// The name is derived from the target rather than randomized: a leftover
 /// temporary from a crashed write is then reused instead of accumulating, and
 /// anything already sitting at that path — including a directory — surfaces as
-/// a write error rather than being quietly worked around.
-fn temporary_path(path: &Path) -> PathBuf {
+/// a write error rather than being quietly worked around. A wipe looks for it
+/// by the same name.
+pub(crate) fn temporary_path(path: &Path) -> PathBuf {
     let mut name = path
         .file_name()
         .unwrap_or_else(|| std::ffi::OsStr::new("vault"))

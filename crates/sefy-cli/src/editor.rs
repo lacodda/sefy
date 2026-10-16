@@ -8,7 +8,7 @@
 //! would be worse in every way that matters.
 
 use anyhow::{Context, Result, bail};
-use std::io::{IsTerminal, Write};
+use std::io::IsTerminal;
 use std::path::Path;
 use std::process::Command;
 
@@ -84,17 +84,15 @@ fn spawn(editor: &str, path: &Path) -> Result<std::process::ExitStatus> {
         .with_context(|| format!("cannot run {program}"))
 }
 
-/// Overwrites a draft before deleting it.
+/// Overwrites a draft before deleting it, the way a wipe destroys a vault.
 ///
-/// On a journalling or copy-on-write filesystem this does not guarantee the
-/// old bytes are gone, and it is not meant to: it is a cheap way to avoid
-/// leaving an obvious plaintext file behind, not a secure-erase claim.
+/// On an SSD or a copy-on-write filesystem this does not guarantee the old
+/// bytes are gone, and it is not meant to: it is a cheap way to avoid leaving
+/// an obvious plaintext file behind, not a secure-erase claim.
 fn shred(path: &Path) {
-    if let Ok(metadata) = std::fs::metadata(path)
-        && let Ok(mut file) = std::fs::File::create(path)
-    {
-        let _ = file.write_all(&vec![0u8; metadata.len() as usize]);
-        let _ = file.sync_all();
+    if let Err(error) = sefy_core::wipe::destroy(path) {
+        // An editor that still holds the file is the likely cause; the draft
+        // is plaintext, so where it is matters more than a clean exit.
+        eprintln!("warning: {error}; the draft may still be there, in the clear");
     }
-    let _ = std::fs::remove_file(path);
 }

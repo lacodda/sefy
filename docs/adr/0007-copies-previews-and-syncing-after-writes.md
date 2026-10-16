@@ -116,7 +116,7 @@ the clipboard history some desktops keep.
 - Up to three more files beside the vault, each opening with its password and
   holding what the vault held before a merge — items removed since included.
   The threat model says so; `status` and `doctor` show them.
-- A future `wipe` has to cover the copies as well as the vault.
+- A future `wipe` has to cover the copies as well as the vault; ADR-0009 does.
 - `MergeReport` names the items it added and updated, which the previews print
   and the GUI will need; the CLI's ordinary merge output stays counts.
 - `Vault::change_password` returns what it did to the copies.

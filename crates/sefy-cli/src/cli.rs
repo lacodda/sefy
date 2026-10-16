@@ -270,6 +270,21 @@ pub enum Command {
         new_password_env: Option<String>,
     },
 
+    /// Destroy the vault: overwrite it, the copies beside it and any
+    /// unfinished save with random bytes, and delete them.
+    ///
+    /// It asks for the master password, lists every file it will destroy,
+    /// and goes ahead only once the vault's file name is typed back. There is
+    /// no --yes, and without a terminal it refuses. The remote copy is not
+    /// touched.
+    ///
+    /// The overwrite reaches the blocks the file system shows for each file,
+    /// and no others. An SSD and a copy-on-write file system keep replaced
+    /// blocks out of reach; a snapshot, a backup or a synced folder's history
+    /// keeps a copy of its own. What survives there is the sealed vault,
+    /// which still needs the password - but a wipe cannot promise it is gone.
+    Wipe,
+
     /// Send this vault to the remote, replacing the copy there.
     ///
     /// The file that travels is the sealed one; the transport carrying it never

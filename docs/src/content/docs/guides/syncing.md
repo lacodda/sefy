@@ -235,7 +235,7 @@ sefy --vault notes.bak.1 get bank --stdout
 
 A copy holds what the vault held then — including items removed since. They
 rotate out after three more merges; delete them by hand when you want them gone
-sooner.
+sooner. [`wipe`](/sefy/reference/wipe/) destroys them along with the vault.
 
 [`status`](/sefy/reference/status/) says how many copies there are and how old
 the newest is; [`doctor`](/sefy/reference/doctor/) also checks that each one

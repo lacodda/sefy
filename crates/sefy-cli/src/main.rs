@@ -19,6 +19,7 @@ mod picker;
 mod qr;
 mod session;
 mod when;
+mod wipe;
 
 use anyhow::Result;
 use autosync::AutoSync;
@@ -89,6 +90,12 @@ fn run(arguments: Cli) -> Result<()> {
         // so it resolves both itself rather than failing on them here.
         Command::Doctor(remote) => {
             return doctor::run(arguments.vault, password_env, remote, arguments.auto_sync);
+        }
+        // A wipe asks its question before the password, and ends with no
+        // vault left to sync.
+        Command::Wipe => {
+            let path = session::vault_path(arguments.vault)?;
+            return wipe::run(&path, password_env);
         }
         _ => {}
     }
@@ -164,10 +171,13 @@ fn run(arguments: Cli) -> Result<()> {
         Command::Pull(args) => commands::pull(&mut vault, args, &password),
         Command::Sync(args) => commands::sync(&mut vault, args, &password),
         // Handled above: these before the vault is opened, `run` just after.
+        // A wipe opens the vault itself, once it knows there is a terminal
+        // to ask on.
         Command::Init
         | Command::Plugin { .. }
         | Command::Completions { .. }
         | Command::Doctor(_)
+        | Command::Wipe
         | Command::Run(_) => unreachable!(),
     };
 

@@ -50,8 +50,16 @@ everything below is an expansion of it.
   removed after a copy was taken is still in that copy until three more merges
   rotate it out. They are named like any rotated backup and say nothing about
   sefy, but they are three more files that open with the vault's password;
-  delete them by hand to be rid of them sooner. See
+  delete them by hand to be rid of them sooner, and
+  [`sefy wipe`](/sefy/reference/wipe/) destroys them with the vault. See
   [A copy before every merge](/sefy/guides/syncing/#a-copy-before-every-merge).
+- **What a wipe cannot reach.** [`sefy wipe`](/sefy/reference/wipe/)
+  overwrites the vault and its copies on the blocks the file system shows for
+  them. An SSD, a copy-on-write file system, a snapshot, a backup or a synced
+  folder's history can keep older blocks of the vault, and every earlier save
+  handed its blocks back to the file system long before. What survives is
+  still sealed - under the password, or an earlier one - so a wipe does not
+  help against someone who has both.
 
 - **A password that leaked but looks fine.** [`sefy audit`](/sefy/reference/audit/)
   works from the vault alone and never checks a list of breached passwords - not

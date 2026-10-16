@@ -55,6 +55,7 @@ pub mod strength;
 pub mod sync;
 pub mod time;
 pub mod vault;
+pub mod wipe;
 
 pub use audit::{Due, Old, Place, Report, Unreadable, Weak, audit};
 pub use error::{Error, Result};
@@ -76,3 +77,4 @@ pub use plugin::{PROTOCOL_VERSION, Plugin};
 pub use strength::{Strength, estimate, estimate_generated};
 pub use sync::{Fetched, PullReport, SyncPreview, SyncReport, fetch, pull, push, sync};
 pub use vault::{PasswordChange, Stats, SyncStamp, Vault};
+pub use wipe::Wiped;

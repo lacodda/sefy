@@ -428,6 +428,62 @@ fn rm_without_a_terminal_refuses_rather_than_assuming_yes() {
 }
 
 #[test]
+fn wipe_without_a_terminal_refuses_even_given_the_name() {
+    // The name arriving through a pipe is a script answering for a person:
+    // exactly what a wipe must not take as a yes.
+    let fixture = Fixture::with_vault();
+    add_note(&fixture, "precious", "text", &[]);
+    sefy_core::copies::keep(&fixture.path).unwrap();
+    let vault = std::fs::read(&fixture.path).unwrap();
+    let copy = sefy_core::copies::path(&fixture.path, 1);
+
+    fixture
+        .sefy()
+        .arg("wipe")
+        .write_stdin("notes.bak\n")
+        .assert()
+        .failure()
+        .stderr(contains("on a terminal, and input is not one"))
+        .stderr(contains("there is no --yes"));
+
+    assert_eq!(std::fs::read(&fixture.path).unwrap(), vault);
+    assert!(copy.exists());
+}
+
+#[test]
+fn wipe_refuses_before_it_asks_for_the_password() {
+    // A script that cannot confirm learns so first, rather than paying for
+    // a key derivation - or being told its password is wrong.
+    let fixture = Fixture::with_vault();
+
+    fixture
+        .sefy()
+        .env("SEFY_TEST_PASSWORD", "not the password")
+        .arg("wipe")
+        .assert()
+        .failure()
+        .stderr(contains("there is no --yes"))
+        .stderr(contains("wrong password").not());
+
+    assert!(fixture.path.exists());
+}
+
+#[test]
+fn wipe_has_no_way_to_say_yes_in_advance() {
+    let fixture = Fixture::with_vault();
+
+    for yes in ["--yes", "-y", "--force"] {
+        fixture
+            .sefy()
+            .args(["wipe", yes])
+            .assert()
+            .code(2)
+            .stderr(contains("unexpected argument"));
+    }
+    assert!(fixture.path.exists());
+}
+
+#[test]
 fn change_password_takes_a_separate_variable_for_the_new_one() {
     let fixture = Fixture::with_vault();
     add_note(&fixture, "kept", "text", &[]);
