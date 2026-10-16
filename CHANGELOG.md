@@ -19,6 +19,45 @@ Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
 
+## [0.16.0] - 2026-10-16
+
+An end for a vault, when one is needed: everything of it sefy wrote on this
+disk, destroyed on purpose, with a plain account of what no program reaches.
+
+**`sefy wipe`** asks for the master password, lists every file it will
+destroy - the vault, the copies kept beside it before a merge, and the
+temporary file of a save that crashed - and goes ahead only once the vault's
+file name is typed back. Each file is overwritten in place with random bytes, synced and
+deleted. There is no `--yes`, and without a terminal it refuses before it asks
+for the password, even when the name arrives on stdin. A file it cannot
+overwrite is left as it was and named, the rest are destroyed anyway, and the
+exit status is `1`. The remote copy is not touched; the wipe says which
+transport last carried the vault.
+
+The overwrite reaches the blocks the file system shows for each file. An SSD,
+a copy-on-write file system, a snapshot, a backup, a synced folder's history
+and every earlier save can keep older blocks of the vault; the reference page
+and the threat model say so.
+
+### Fixed
+
+- **The `--editor` draft is overwritten where it is.** It used to be truncated
+  before the zeros were written, which handed its blocks - holding the note in
+  the clear - back to the file system first. It is now overwritten in place
+  with random bytes, like a wiped vault, and a draft that cannot be is named
+  on stderr.
+
+### Breaking Changes
+
+**Vault files: none.** The file format is still version 1 and the database
+schema is unchanged at 5.
+
+**`sefy-core` library:** new `wipe` module (`parts`, `destroy`, `Part`, `Role`,
+`Wiped`) and `Vault::wipe`, which consumes the vault.
+
+### Features
+- Destroy a vault on purpose with `sefy wipe`
+
 ## [0.15.0] - 2026-10-13
 
 An audit that stays home: what in the vault deserves a second look, worked out
