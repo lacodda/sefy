@@ -13,9 +13,7 @@
 //!
 //! Elsewhere the dialog is Tauri's, which offers none of these switches.
 
-use std::path::Path;
-#[cfg(windows)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Shows the dialog over `owner`, opening in `folder`, and gives back the
 /// chosen file, or nothing when the person cancels.
