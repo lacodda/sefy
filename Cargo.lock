@@ -3312,7 +3312,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "sefy"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3333,7 +3333,7 @@ dependencies = [
 
 [[package]]
 name = "sefy-core"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "argon2",
  "base64 0.23.1",
@@ -3356,7 +3356,7 @@ dependencies = [
 
 [[package]]
 name = "sefy-gui"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "sefy-core",
  "serde",
@@ -3372,7 +3372,7 @@ dependencies = [
 
 [[package]]
 name = "sefy-plugin-github"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3381,7 +3381,7 @@ dependencies = [
 
 [[package]]
 name = "sefy-plugin-sftp"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "serde",
  "serde_json",
