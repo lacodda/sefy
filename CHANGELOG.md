@@ -19,6 +19,38 @@ Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
 
+## [0.17.0] - 2026-10-22
+
+The first window over the same vault, and a core that says once what the
+command line and the window both show.
+
+**`sefy status` has a `sealed` line**: the key derivation and what it costs,
+the cipher and the file format - `Argon2id (64 MiB, 3 passes, 4 lanes),
+XChaCha20-Poly1305, format v1` - read from the numbers the key derivation runs
+on rather than from a sentence written beside them.
+
+**A desktop app has started**, in `gui/`, on Tauri and the line's design
+system. It unlocks a vault and describes it the way `sefy status` does; the
+items themselves are the next version. It is built and tested in CI on all
+three systems and not released yet - see CONTRIBUTING to run it from source.
+It keeps no list of the vaults it has opened, and on Windows its file dialog
+is told to leave no trace of the file in the system's own lists either
+(ADR-0010).
+
+### Breaking Changes
+
+**Vault files: none.** The file format is still version 1 and the database
+schema is unchanged at 5.
+
+**`sefy-core` library:** additions only - `Vault::status` and `Status`,
+`Stats::written_by_newer`, `format::SEALING` and `Sealing`, and
+`clipboard::HOLD_SECONDS`, the clipboard lifetime the CLI's `--clear-after`
+defaults to.
+
+### Features
+- Describe a vault's status and sealing in one place
+- Start the desktop app on Tauri and dowel
+
 ## [0.16.0] - 2026-10-16
 
 An end for a vault, when one is needed: everything of it sefy wrote on this
