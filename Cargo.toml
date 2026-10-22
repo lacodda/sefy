@@ -4,6 +4,7 @@ members = [
     "crates/sefy-cli",
     "crates/sefy-plugin-github",
     "crates/sefy-plugin-sftp",
+    "gui/src-tauri",
 ]
 resolver = "2"
 

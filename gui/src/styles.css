@@ -1,0 +1,51 @@
+@import 'tailwindcss';
+
+/*
+ * The theme is dowel's - the token vocabulary of the lacodda line in dark and
+ * light - with sefy's one colour, the teal of its mark. Everything else is
+ * derived from that colour: the hover shade, the soft fill, the focus ring,
+ * the trace of teal in the greys, and what colour text has to be to sit on an
+ * accent fill. What is left in this file belongs to this window rather than
+ * to the line.
+ */
+@import 'dowel-ui/theme.css';
+@import 'dowel-ui/accents/sefy.css';
+
+/* The copied registry components are this project's files, and Tailwind only
+ * writes the classes it finds in the files it scans. */
+@source './';
+
+/*
+ * The window is a window, not a page: exactly its own size, and nothing in it
+ * scrolls the document. A trackpad finds a scrollable document and slides the
+ * whole frame sideways.
+ */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * The splash's sweep, in the bundle.
+ *
+ * dowel's Splash declares its keyframes in a `<style>` of its own, and Tauri
+ * writes hashes into the window's `style-src`, under which `'unsafe-inline'`
+ * no longer counts: a `<style>` made while the page runs is dropped without a
+ * word, and the bar would sit parked off the end of its track. The same rule
+ * here arrives with the stylesheet the page loaded, which the policy allows.
+ */
+@keyframes dowel-splash-sweep {
+  to {
+    left: 100%;
+  }
+}

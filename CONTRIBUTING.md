@@ -13,12 +13,42 @@ unoptimized build makes it several times slower still.
 The library is published separately as [`sefy-core`](https://crates.io/crates/sefy-core)
 if you want vaults from your own code.
 
+On Linux the workspace includes the desktop app, which builds against the
+system's webview: install WebKitGTK first (`libwebkit2gtk-4.1-dev` and its
+companions, as `.github/workflows/ci.yml` lists them).
+
+## The desktop app
+
+The window is a Tauri app over the same core, in `gui/` - its page in `gui/`,
+its Rust in `gui/src-tauri`. It is not released yet. To run it from source
+(Node 22 and pnpm):
+
+```
+cd gui
+pnpm install
+pnpm tauri dev          # the window, rebuilt on every change
+pnpm lint               # types, the design system's lint rules, tests
+```
+
+The page's components come from the line's design system,
+[dowel](https://lacodda.github.io/dowel/), as copies under
+`gui/src/components/ui/`. The types that cross between the page and Rust are
+generated; after changing one in `gui/src-tauri/src/wire.rs`:
+
+```
+SEFY_BLESS=1 cargo test -p sefy-gui --test bindings
+```
+
+Why the window keeps no list of vaults, and how its file dialog is told not to
+remember one either: [ADR-0010](docs/adr/0010-the-desktop-app.md).
+
 ## Repository layout
 
 - `crates/sefy-core` - the vault library: format, cryptography, schema and merge.
 - `crates/sefy-cli` - the `sefy` command.
 - `crates/sefy-plugin-github`, `crates/sefy-plugin-sftp` - the two transports
   that ship alongside the CLI.
+- `gui/` - the desktop app: the page, and `gui/src-tauri` - the `sefy-gui` crate.
 - `docs/` - the documentation site (Astro Starlight); architecture decision
   records live in `docs/adr/`.
 

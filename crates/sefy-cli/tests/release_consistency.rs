@@ -285,14 +285,18 @@ fn the_documented_vault_format_version_matches_the_code() {
     );
 }
 
-/// Directory names of every workspace member under `crates/`.
+/// Every workspace member, as its path from the repository root:
+/// `crates/sefy-core`, `gui/src-tauri`.
 ///
 /// Reads the whole `members = [...]` block rather than one line: the list was
 /// written on a single line until a fourth crate made rustfmt spread it out,
 /// and a parser that stopped at the first line would then quietly find nothing.
+/// And every member, not only those under `crates/`: the desktop app lives
+/// beside its frontend in `gui/`, and a gate that read one directory would not
+/// fail on it - it would not see it.
 fn workspace_members() -> Vec<String> {
     let manifest = read("Cargo.toml");
-    let mut names = Vec::new();
+    let mut members = Vec::new();
     let mut inside = false;
 
     for line in manifest.lines() {
@@ -304,12 +308,7 @@ fn workspace_members() -> Vec<String> {
             inside = true;
         }
 
-        names.extend(
-            trimmed
-                .split('"')
-                .filter(|part| part.starts_with("crates/"))
-                .map(|part| part.trim_start_matches("crates/").to_owned()),
-        );
+        members.extend(trimmed.split('"').skip(1).step_by(2).map(str::to_owned));
 
         if trimmed.contains(']') {
             break;
@@ -317,10 +316,29 @@ fn workspace_members() -> Vec<String> {
     }
 
     assert!(
-        !names.is_empty(),
-        "no workspace members found; the manifest's `members` list is not being read"
+        members.len() >= 4,
+        "found {members:?}; the manifest's `members` list is not being read"
     );
-    names
+    for member in &members {
+        assert!(
+            repo_root().join(member).join("Cargo.toml").is_file(),
+            "{member} is listed as a member and has no Cargo.toml"
+        );
+    }
+    members
+}
+
+/// Whether a member's manifest says `publish = false`.
+fn unpublished(member: &str) -> bool {
+    read(format!("{member}/Cargo.toml"))
+        .lines()
+        .any(|line| line.trim().replace(' ', "") == "publish=false")
+}
+
+/// Whether a member is the desktop app: a Tauri crate, recognised by the
+/// configuration Tauri reads beside its manifest.
+fn is_desktop_app(member: &str) -> bool {
+    repo_root().join(member).join("tauri.conf.json").is_file()
 }
 
 #[test]
@@ -333,14 +351,11 @@ fn every_binary_the_workspace_builds_reaches_the_release() {
 
     let binaries: Vec<String> = workspace_members()
         .into_iter()
-        .filter(|name| {
-            // Libraries have nothing to ship in an archive of executables.
-            repo_root()
-                .join("crates")
-                .join(name)
-                .join("src/main.rs")
-                .is_file()
-        })
+        // Libraries have nothing to ship in an archive of executables, and the
+        // desktop app ships as an application of its own, not as one more file
+        // beside the command line (see the test below).
+        .filter(|member| repo_root().join(member).join("src/main.rs").is_file())
+        .filter(|member| !is_desktop_app(member))
         .collect();
 
     assert!(
@@ -348,15 +363,12 @@ fn every_binary_the_workspace_builds_reaches_the_release() {
         "expected the CLI and at least one transport, found {binaries:?}"
     );
 
-    for directory in binaries {
+    for member in binaries {
         // Three names that need not agree: the directory, the package cargo
         // builds, and the executable that lands in the archive.
-        let package = manifest_field(
-            &format!("crates/{directory}/Cargo.toml"),
-            "[package]",
-            "name",
-        );
-        let binary = manifest_field(&format!("crates/{directory}/Cargo.toml"), "[[bin]]", "name");
+        let manifest = format!("{member}/Cargo.toml");
+        let package = manifest_field(&manifest, "[package]", "name");
+        let binary = manifest_field(&manifest, "[[bin]]", "name");
         assert!(
             workflow.contains(&format!("-p {package}")),
             "release.yml does not build {package}; the release would ship without it"
@@ -373,20 +385,43 @@ fn every_binary_the_workspace_builds_reaches_the_release() {
 }
 
 #[test]
+fn the_desktop_app_is_one_crate_and_never_a_published_one() {
+    // The window is built from its frontend by Tauri; `cargo install` of the
+    // crate alone would compile a window with nothing in it to show. So it is
+    // not published, and it is the only member the archive check above lets
+    // by - a second Tauri crate, or this one losing `publish = false`, is a
+    // decision about how sefy ships and fails here until it is made.
+    let apps: Vec<String> = workspace_members()
+        .into_iter()
+        .filter(|member| is_desktop_app(member))
+        .collect();
+    assert_eq!(
+        apps,
+        ["gui/src-tauri"],
+        "the desktop apps the workspace builds"
+    );
+    assert!(
+        unpublished("gui/src-tauri"),
+        "gui/src-tauri/Cargo.toml must say `publish = false`"
+    );
+}
+
+#[test]
 fn every_crate_that_is_published_is_named_in_the_publish_workflow() {
     // Same trap on the crates.io side, and just as quiet: the tag publishes
     // what the workflow lists, not what the workspace holds.
     let workflow = read(".github/workflows/publish.yml");
 
-    let crates = workspace_members();
-
-    for directory in crates {
+    for member in workspace_members() {
         // The crate's published name, which need not match its directory.
-        let name = manifest_field(
-            &format!("crates/{directory}/Cargo.toml"),
-            "[package]",
-            "name",
-        );
+        let name = manifest_field(&format!("{member}/Cargo.toml"), "[package]", "name");
+        if unpublished(&member) {
+            assert!(
+                !workflow.contains(&format!("--package {name}")),
+                "publish.yml publishes {name}, whose manifest says it is never published"
+            );
+            continue;
+        }
         assert!(
             workflow.contains(&format!("--package {name}")),
             "publish.yml never publishes {name}; a release would leave it behind on crates.io"
@@ -504,8 +539,15 @@ fn nothing_outside_a_transport_knows_which_transport_it_is() {
     // Checked as a gate rather than remembered, because the leak would arrive
     // as a small convenience: one `if plugin.name() == "github"` and the next
     // transport starts asking for exceptions.
-    for area in ["crates/sefy-core/src", "crates/sefy-cli/src"] {
-        for file in rust_files(&repo_root().join(area)) {
+    // The desktop app too, both halves: a window that knew which transport it
+    // was showing would be the same leak with buttons on it.
+    for area in [
+        "crates/sefy-core/src",
+        "crates/sefy-cli/src",
+        "gui/src-tauri/src",
+        "gui/src",
+    ] {
+        for file in source_files(&repo_root().join(area)) {
             let text = fs::read_to_string(&file).unwrap();
             for (number, line) in text.lines().enumerate() {
                 let code = line.split("//").next().unwrap_or("").to_lowercase();
@@ -546,8 +588,8 @@ fn nothing_outside_a_transport_knows_which_transport_it_is() {
     }
 }
 
-/// Every `.rs` file under a directory, recursively.
-fn rust_files(directory: &Path) -> Vec<PathBuf> {
+/// Every Rust and TypeScript source file under a directory, recursively.
+fn source_files(directory: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     let entries = fs::read_dir(directory)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", directory.display()));
@@ -555,8 +597,10 @@ fn rust_files(directory: &Path) -> Vec<PathBuf> {
     for entry in entries.filter_map(Result::ok) {
         let path = entry.path();
         if path.is_dir() {
-            found.extend(rust_files(&path));
-        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            found.extend(source_files(&path));
+        } else if path.extension().is_some_and(|extension| {
+            ["rs", "ts", "tsx"].contains(&extension.to_str().unwrap_or(""))
+        }) {
             found.push(path);
         }
     }

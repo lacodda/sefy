@@ -1,0 +1,64 @@
+[package]
+name = "sefy-gui"
+description = "The desktop app of sefy: the same vault, in a window"
+version.workspace = true
+edition.workspace = true
+# Tauri's own floor, above the workspace's: the command line keeps its 1.88
+# promise for `cargo install`, and the window, which nobody builds that way,
+# needs what Tauri needs.
+rust-version = "1.90"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+# The desktop app ships as an application bundle, not as a crate: what a
+# `cargo install` would build without its frontend is a window with nothing to
+# show.
+publish = false
+
+[lib]
+name = "sefy_gui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sefy-gui"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+sefy-core.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+zeroize.workspace = true
+tauri = { version = "2.12", features = [] }
+# Generates gui/src/ipc/ from the Rust types that cross IPC, so the wire
+# shape has one source instead of a hand-kept TypeScript twin.
+ts-rs = "12"
+
+# The file dialog is driven from Rust, never granted to the page: the page
+# cannot ask for a save dialog or a folder it has no use for. On Windows it is
+# the common item dialog, called directly, because it is the one that can be
+# told not to add the file to the system's recent documents (src/pick.rs); the
+# version and features are the ones Tauri already builds.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+] }
+
+[target.'cfg(not(windows))'.dependencies]
+tauri-plugin-dialog = "2.8"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+# Deny rather than forbid: the file dialog on Windows is COM, and one module
+# (src/pick.rs) allows itself the calls, each with its reason. Everything else
+# stays without.
+[lints.rust]
+unsafe_code = "deny"
