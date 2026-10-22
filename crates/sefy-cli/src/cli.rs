@@ -637,7 +637,7 @@ pub struct GetArgs {
     ///
     /// sefy waits that long before exiting, and clears the clipboard only if
     /// the secret is still the value sitting on it.
-    #[arg(long, value_name = "SECONDS", default_value_t = 45)]
+    #[arg(long, value_name = "SECONDS", default_value_t = sefy_core::clipboard::HOLD_SECONDS)]
     pub clear_after: u64,
 }
 
@@ -710,7 +710,7 @@ pub struct GenArgs {
     pub stdout: bool,
 
     /// Seconds before the clipboard is cleared again; 0 leaves it there.
-    #[arg(long, value_name = "SECONDS", default_value_t = 45)]
+    #[arg(long, value_name = "SECONDS", default_value_t = sefy_core::clipboard::HOLD_SECONDS)]
     pub clear_after: u64,
 }
 
@@ -754,7 +754,7 @@ pub struct OpenArgs {
     pub no_password: bool,
 
     /// Seconds before the clipboard is cleared again; 0 leaves it there.
-    #[arg(long, value_name = "SECONDS", default_value_t = 45)]
+    #[arg(long, value_name = "SECONDS", default_value_t = sefy_core::clipboard::HOLD_SECONDS)]
     pub clear_after: u64,
 }
 
@@ -789,7 +789,7 @@ pub struct OtpArgs {
     pub stdout: bool,
 
     /// Seconds before the clipboard is cleared again; 0 leaves it there.
-    #[arg(long, value_name = "SECONDS", default_value_t = 45)]
+    #[arg(long, value_name = "SECONDS", default_value_t = sefy_core::clipboard::HOLD_SECONDS)]
     pub clear_after: u64,
 }
 
@@ -801,7 +801,7 @@ pub struct FillArgs {
 
     /// Seconds before the last field is cleared from the clipboard; 0 leaves
     /// it there.
-    #[arg(long, value_name = "SECONDS", default_value_t = 45)]
+    #[arg(long, value_name = "SECONDS", default_value_t = sefy_core::clipboard::HOLD_SECONDS)]
     pub clear_after: u64,
 }
 

@@ -14,7 +14,8 @@ vault    /home/you/Documents/.notes.db
 size     72.1 KB
 items    5 items  (4 login, 1 note)
 tags     3 tags
-schema   4
+schema   5
+sealed   Argon2id (64 MiB, 3 passes, 4 lanes), XChaCha20-Poly1305, format v1
 synced   2026-09-16 19:15 UTC (2 hours ago) through github (sync)
 copies   2 copies beside the vault, newest 2026-09-16 19:15 UTC (2 hours ago)
 plugins  github, sftp
@@ -27,6 +28,7 @@ plugins  github, sftp
 | `items` | How many, and how many of each kind. |
 | `tags` | How many distinct tags are in use. |
 | `schema` | Version of the database inside the blob — see [Versions](/sefy/concepts/versions/). |
+| `sealed` | How the file is sealed: the key derivation and what it costs, the cipher, the file format — see [Vault format](/sefy/concepts/vault-format/). Read from the numbers the derivation runs on, so it cannot describe one thing while the code does another. |
 | `synced` | When this vault last reached a remote, through which transport, and by which command. |
 | `copies` | The [copies kept beside the vault](/sefy/guides/syncing/#a-copy-before-every-merge) before a merge or an import changed it, and when the newest was taken. |
 | `plugins` | Transports installed on this machine, with any unusable one marked. |

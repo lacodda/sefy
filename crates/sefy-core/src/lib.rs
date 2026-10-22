@@ -38,6 +38,7 @@
 #![warn(missing_docs)]
 
 pub mod audit;
+pub mod clipboard;
 pub mod copies;
 pub mod crypto;
 pub mod db;
@@ -64,7 +65,7 @@ pub use exchange::{
     Exported, Format, ImportReport, Notice, Outcome, Target,
 };
 pub use expiry::Expiry;
-pub use format::FORMAT_VERSION;
+pub use format::{FORMAT_VERSION, SEALING, Sealing};
 pub use generate::{Classes, Generated, Language, Recipe, generate};
 pub use history::{Change, ChangeKind, Line, Version};
 pub use merge::{Conflict, MergeReport, MergedItem, Side, merge};
@@ -76,5 +77,5 @@ pub use otp::Totp;
 pub use plugin::{PROTOCOL_VERSION, Plugin};
 pub use strength::{Strength, estimate, estimate_generated};
 pub use sync::{Fetched, PullReport, SyncPreview, SyncReport, fetch, pull, push, sync};
-pub use vault::{PasswordChange, Stats, SyncStamp, Vault};
+pub use vault::{PasswordChange, Stats, Status, SyncStamp, Vault};
 pub use wipe::Wiped;

@@ -18,6 +18,48 @@ use zeroize::Zeroizing;
 /// Format version this build writes.
 pub const FORMAT_VERSION: u8 = 1;
 
+/// How a vault file is sealed, described rather than only done.
+///
+/// Whatever shows a person what protects their vault — `sefy status`, the
+/// desktop app's passport of the file — reads it from here, and the numbers
+/// are the ones the key derivation itself runs on. A front end that wrote
+/// "Argon2id, 64 MiB" into its own text would be right until the day the
+/// format moved, and then it would be the one place still saying so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sealing {
+    /// Format version these parameters belong to.
+    pub format: u8,
+    /// The key derivation function the password is stretched with.
+    pub kdf: &'static str,
+    /// Memory it uses, in KiB.
+    pub memory_kib: u32,
+    /// Passes it makes over that memory.
+    pub passes: u32,
+    /// Lanes it computes in parallel.
+    pub lanes: u32,
+    /// The authenticated cipher the database is sealed with.
+    pub cipher: &'static str,
+    /// Bytes of salt at the front of the file.
+    pub salt_len: usize,
+    /// Bytes of nonce after the salt.
+    pub nonce_len: usize,
+    /// Bytes of authentication tag at the end of the ciphertext.
+    pub tag_len: usize,
+}
+
+/// How this build seals a vault: format version 1.
+pub const SEALING: Sealing = Sealing {
+    format: FORMAT_VERSION,
+    kdf: "Argon2id",
+    memory_kib: crate::crypto::ARGON2_MEMORY_KIB,
+    passes: crate::crypto::ARGON2_ITERATIONS,
+    lanes: crate::crypto::ARGON2_PARALLELISM,
+    cipher: "XChaCha20-Poly1305",
+    salt_len: SALT_LEN,
+    nonce_len: NONCE_LEN,
+    tag_len: TAG_LEN,
+};
+
 /// Smallest possible vault file: salt, nonce, tag and a version byte.
 const MIN_FILE_LEN: usize = SALT_LEN + NONCE_LEN + TAG_LEN + 1;
 
@@ -68,6 +110,22 @@ pub fn decode(password: &[u8], file: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_description_names_what_the_key_is_derived_with() {
+        // The numbers are the derivation's own constants; the names are text,
+        // and text is what drifts. The variant the derivation runs is read off
+        // the same constant it uses, so naming a different one fails here.
+        assert_eq!(
+            SEALING.kdf.to_lowercase(),
+            crate::crypto::ARGON2_ALGORITHM.as_str()
+        );
+        // The X in XChaCha20 is the 24-byte nonce: a cipher described as plain
+        // ChaCha20-Poly1305 would have a 12-byte one.
+        assert!(SEALING.cipher.starts_with("XChaCha20"));
+        assert_eq!(SEALING.nonce_len, 24);
+        assert_eq!(SEALING.format, FORMAT_VERSION);
+    }
 
     #[test]
     fn encode_decode_roundtrip() {

@@ -986,3 +986,52 @@ fn an_item_inserted_by_an_older_build_is_given_an_identity() {
         assert_eq!(item.uuid.len(), 36, "{:?} has no identity", item.title);
     }
 }
+
+#[test]
+fn a_status_describes_the_file_and_names_nothing_inside_it() {
+    let fixture = fixture();
+
+    let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+    vault
+        .add(NewItem::new("tax office pin", note("8152")).with_tags(["paperwork"]))
+        .unwrap();
+    vault.save().unwrap();
+    // A copy beside the vault, the way a merge leaves one.
+    sefy_core::copies::keep(&fixture.path).unwrap();
+
+    let status = vault.status().unwrap();
+
+    assert_eq!(status.path, fixture.path);
+    assert_eq!(
+        status.size,
+        Some(fs::metadata(&fixture.path).unwrap().len()),
+        "the size is the file's, not the database's"
+    );
+    assert_eq!(status.stats, vault.stats().unwrap());
+    assert_eq!(status.copies.len(), 1);
+    assert_eq!(status.copies[0].number, 1);
+    assert_eq!(status.sealing, sefy_core::SEALING);
+
+    // The whole value, the way a front end would serialise it: no title, no
+    // tag, no contents anywhere in it.
+    let everything = format!("{status:?}");
+    for secret in ["tax office pin", "paperwork", "8152"] {
+        assert!(
+            !everything.contains(secret),
+            "the status carries {secret:?}: {everything}"
+        );
+    }
+}
+
+#[test]
+fn a_status_of_a_file_that_went_missing_still_answers() {
+    let fixture = fixture();
+    let vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+    vault.save().unwrap();
+    fs::remove_file(&fixture.path).unwrap();
+
+    // The vault is open in memory; what is gone is only what the disk says.
+    let status = vault.status().unwrap();
+    assert_eq!(status.size, None);
+    assert!(status.copies.is_empty());
+}

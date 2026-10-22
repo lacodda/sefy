@@ -1867,11 +1867,12 @@ const URL_FIELD: &str = "url";
 /// put a secret's title on a screen that was asked only whether the vault is
 /// there.
 pub fn status(vault: &Vault) -> Result<()> {
-    let stats = vault.stats()?;
+    let status = vault.status()?;
+    let stats = &status.stats;
 
-    println!("vault    {}", vault.path().display());
-    if let Some(size) = file_size(vault.path()) {
-        println!("size     {size}");
+    println!("vault    {}", status.path.display());
+    if let Some(bytes) = status.size {
+        println!("size     {}", size(bytes));
     }
     println!(
         "items    {}{}",
@@ -1891,12 +1892,13 @@ pub fn status(vault: &Vault) -> Result<()> {
 
     // The schema the file carries, with a word about what it means, because
     // "schema 4" alone tells a user nothing they can act on.
-    let schema = if stats.schema > sefy_core::db::SCHEMA_VERSION {
+    let schema = if stats.written_by_newer() {
         format!("{} (written by a newer sefy)", stats.schema)
     } else {
         format!("{}", stats.schema)
     };
     println!("schema   {schema}");
+    println!("sealed   {}", sealing(&status.sealing));
 
     match &stats.last_sync {
         Some(stamp) => println!(
@@ -1908,7 +1910,7 @@ pub fn status(vault: &Vault) -> Result<()> {
         None => println!("synced   never"),
     }
 
-    println!("copies   {}", copies_line(vault.path()));
+    println!("copies   {}", copies_line(&status.copies));
 
     let plugins = sefy_core::plugin::discover_in(&sefy_core::plugin::search_paths());
     if plugins.is_empty() {
@@ -1930,10 +1932,23 @@ pub fn status(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
+/// How the vault is sealed, in one line: the key derivation and its cost, the
+/// cipher, the format.
+fn sealing(sealing: &sefy_core::Sealing) -> String {
+    format!(
+        "{} ({} MiB, {} passes, {} lanes), {}, format v{}",
+        sealing.kdf,
+        sealing.memory_kib / 1024,
+        sealing.passes,
+        sealing.lanes,
+        sealing.cipher,
+        sealing.format
+    )
+}
+
 /// The copies kept beside a vault, in one phrase: how many, and how old the
 /// most recent is.
-pub(crate) fn copies_line(vault: &Path) -> String {
-    let copies = sefy_core::copies::list(vault);
+pub(crate) fn copies_line(copies: &[sefy_core::copies::Copy]) -> String {
     let Some(newest) = copies.first() else {
         return "none yet; one is kept before a merge or an import changes the vault".to_owned();
     };
@@ -1951,15 +1966,6 @@ pub(crate) fn copies_line(vault: &Path) -> String {
         "{} beside the vault{taken}",
         output::count(copies.len(), "copy")
     )
-}
-
-/// The vault file's size, in units a person reads.
-///
-/// Absent rather than an error if the file cannot be measured: the vault is
-/// open, so it plainly exists, and a status that failed over one cosmetic line
-/// would be worse than one missing it.
-fn file_size(path: &Path) -> Option<String> {
-    Some(size(std::fs::metadata(path).ok()?.len()))
 }
 
 /// A number of bytes, in units a person reads.

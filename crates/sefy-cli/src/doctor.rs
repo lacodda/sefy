@@ -205,7 +205,7 @@ fn open_vault(
 /// needed.
 fn copies(vault: &Path, password: Option<&str>) -> Check {
     let copies = sefy_core::copies::list(vault);
-    let summary = copies_line(vault);
+    let summary = copies_line(&copies);
     let Some(password) = password else {
         return Check::new("copies", Verdict::Ok, summary);
     };

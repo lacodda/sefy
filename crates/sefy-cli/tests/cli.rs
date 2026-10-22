@@ -2423,6 +2423,21 @@ fn status_reports_shape_and_never_contents() {
     assert!(printed.contains("2 tags"), "tag count: {printed}");
     assert!(printed.contains("schema"), "schema version: {printed}");
     assert!(printed.contains("never"), "a fresh vault has not synced");
+    // How it is sealed, from the numbers the key derivation runs on rather
+    // than from a sentence written beside them.
+    let sealing = sefy_core::SEALING;
+    assert!(
+        printed.contains(&format!(
+            "sealed   {} ({} MiB, {} passes, {} lanes), {}, format v{}",
+            sealing.kdf,
+            sealing.memory_kib / 1024,
+            sealing.passes,
+            sealing.lanes,
+            sealing.cipher,
+            sealing.format
+        )),
+        "sealing: {printed}"
+    );
 
     // What it must not. A status is asked by someone checking they have the
     // right file, often with somebody else in the room - it answers about the

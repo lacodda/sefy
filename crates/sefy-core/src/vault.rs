@@ -478,6 +478,29 @@ impl Vault {
         })
     }
 
+    /// What and where this vault is, without revealing any of it: the file,
+    /// its size, what it holds counted rather than read, the copies kept
+    /// beside it and how it is sealed.
+    ///
+    /// The whole answer to "is this the right file, is everything in it", in
+    /// one value, so that `sefy status` and the desktop app say the same thing
+    /// for the same reason rather than each assembling it from parts. Like
+    /// [`Vault::stats`] it names nothing inside: a title on this screen would
+    /// be a secret's name shown to someone who asked only whether the vault is
+    /// there.
+    pub fn status(&self) -> Result<Status> {
+        Ok(Status {
+            path: self.path.clone(),
+            // Absent rather than an error: the vault is open, so it plainly
+            // exists, and a status that failed over its size would be worse
+            // than one without it.
+            size: fs::metadata(&self.path).ok().map(|metadata| metadata.len()),
+            stats: self.stats()?,
+            copies: copies::list(&self.path),
+            sealing: format::SEALING,
+        })
+    }
+
     /// When this vault last reached a remote, and through which transport.
     ///
     /// `None` means it never has — or that it last did so under a build that
@@ -584,6 +607,32 @@ pub struct Stats {
     pub schema: i64,
     /// When this vault last reached a remote, if it ever has.
     pub last_sync: Option<SyncStamp>,
+}
+
+impl Stats {
+    /// Whether the database was last written by a newer sefy than this one.
+    ///
+    /// Nothing is wrong when it was — an older build reads what it knows and
+    /// carries the rest — but it is the first thing worth knowing when this
+    /// build does not show something another machine does.
+    pub fn written_by_newer(&self) -> bool {
+        self.schema > db::SCHEMA_VERSION
+    }
+}
+
+/// What and where a vault is; see [`Vault::status`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Status {
+    /// The vault file.
+    pub path: PathBuf,
+    /// Its size in bytes, when the file system says.
+    pub size: Option<u64>,
+    /// What it holds, counted.
+    pub stats: Stats,
+    /// The copies kept beside it, most recent first.
+    pub copies: Vec<copies::Copy>,
+    /// How it is sealed.
+    pub sealing: format::Sealing,
 }
 
 /// A note that this vault reached a remote, and when.

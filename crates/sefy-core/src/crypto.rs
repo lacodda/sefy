@@ -25,9 +25,14 @@ const KEY_LEN: usize = 32;
 /// They are compiled in rather than stored in the file: a parameter block in
 /// the clear would be exactly the kind of recognizable header the format exists
 /// to avoid. Changing these means minting a new format version.
-const ARGON2_MEMORY_KIB: u32 = 64 * 1024; // 64 MiB
-const ARGON2_ITERATIONS: u32 = 3;
-const ARGON2_PARALLELISM: u32 = 4;
+///
+/// Crate-visible so that [`crate::format::SEALING`] describes these numbers
+/// rather than a copy of them.
+pub(crate) const ARGON2_MEMORY_KIB: u32 = 64 * 1024; // 64 MiB
+pub(crate) const ARGON2_ITERATIONS: u32 = 3;
+pub(crate) const ARGON2_PARALLELISM: u32 = 4;
+/// The Argon2 variant the key is derived with, for the same reason.
+pub(crate) const ARGON2_ALGORITHM: Algorithm = Algorithm::Argon2id;
 
 /// A derived encryption key, wiped from memory when dropped.
 pub struct DerivedKey(Zeroizing<[u8; KEY_LEN]>);
@@ -42,7 +47,7 @@ impl DerivedKey {
             Some(KEY_LEN),
         )
         .map_err(|_| Error::KeyDerivation)?;
-        let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+        let argon2 = Argon2::new(ARGON2_ALGORITHM, Version::V0x13, params);
 
         let mut key = Zeroizing::new([0u8; KEY_LEN]);
         argon2
