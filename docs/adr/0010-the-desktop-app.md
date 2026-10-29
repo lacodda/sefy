@@ -124,6 +124,9 @@ built and tested in CI on all three systems and run from source; it is not in
 the release archives, not on crates.io (`publish = false`, held by a gate), and
 the MSRV promise stays the CLI's 1.88 — the window declares Tauri's 1.90.
 
+*Kept as decided:* the window shipped in 0.18 as an application bundle - how
+is [ADR-0011](0011-browsing-copying-and-quick-search.md#the-window-ships).
+
 ## Consequences
 
 - Opening a vault in the window costs a Browse or a drop each time the window
