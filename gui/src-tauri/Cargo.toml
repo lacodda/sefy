@@ -28,12 +28,17 @@ path = "src/main.rs"
 tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
-sefy-core.workspace = true
+# The clipboard is the core's: the same marks and the same hold as the
+# command line's `get`.
+sefy-core = { workspace = true, features = ["clipboard"] }
 
 serde.workspace = true
 serde_json.workspace = true
 zeroize.workspace = true
 tauri = { version = "2.12", features = [] }
+# Quick search from anywhere on the desktop. Registered from Rust only: no
+# capability grants the page a way to claim keys of its own.
+tauri-plugin-global-shortcut = "2.4"
 # Generates gui/src/ipc/ from the Rust types that cross IPC, so the wire
 # shape has one source instead of a hand-kept TypeScript twin.
 ts-rs = "12"
@@ -56,6 +61,11 @@ tauri-plugin-dialog = "2.8"
 
 [dev-dependencies]
 tempfile.workspace = true
+
+# Only to look at the clipboard from outside sefy in tests/clip.rs; the
+# version arboard already builds.
+[target.'cfg(windows)'.dev-dependencies]
+clipboard-win = "5.4"
 
 # Deny rather than forbid: the file dialog on Windows is COM, and one module
 # (src/pick.rs) allows itself the calls, each with its reason. Everything else

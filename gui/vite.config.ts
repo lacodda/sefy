@@ -41,6 +41,15 @@ export default defineConfig({
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
+  // Two pages, one per window: the main one, and quick search.
+  build: {
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        quick: fileURLToPath(new URL('./quick.html', import.meta.url)),
+      },
+    },
+  },
   clearScreen: false,
   server: {
     port: 1427,

@@ -49,3 +49,19 @@ body {
     left: 100%;
   }
 }
+
+/*
+ * Base UI's scroll areas, in the bundle, for the same reason.
+ *
+ * A ScrollArea draws the line's overlay scrollbar and hides the native one
+ * with a class whose rule Base UI writes into a `<style>` while the page
+ * runs. Under the window's policy that `<style>` is dropped too, and every
+ * list grows the system's own scrollbar beside the overlay one - a gutter
+ * and two arrows. `src/styles.test.ts` holds this copy to Base UI's.
+ */
+.base-ui-disable-scrollbar {
+  scrollbar-width: none;
+}
+.base-ui-disable-scrollbar::-webkit-scrollbar {
+  display: none;
+}

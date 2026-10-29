@@ -5,11 +5,14 @@
 //! out. The TypeScript side is generated from them (`tests/bindings.rs`), so
 //! the wire has one shape and not two that drift.
 //!
-//! None of them carries a secret. The vault stays in this process; what the
-//! window is told about it is shape — counts, the file, how it is sealed —
-//! until a later version reveals one field because someone asked for it.
+//! None of them carries a secret but [`Revealed`]. The vault stays in this
+//! process; what the window is told about an item is what `sefy show` prints:
+//! titles, tags, public fields, a note's text, with every secret field named
+//! and never filled in. A secret reaches the page only when someone
+//! asks to see that one field, and reaches the clipboard without passing
+//! through the page at all.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use ts_rs::TS;
 
@@ -165,6 +168,260 @@ fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
+}
+
+/// Which items the list shows: what is typed in the search box, narrowed to
+/// one kind or one tag picked in the rail.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, TS)]
+pub struct Filter {
+    /// Text to look for in titles, notes and public fields; never in a
+    /// secret, the same rule as `sefy find`.
+    pub text: Option<String>,
+    /// One kind, by the name it is stored under.
+    pub kind: Option<String>,
+    /// One tag.
+    pub tag: Option<String>,
+}
+
+/// One row of the list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemRow {
+    /// The item's id in this vault: what the window asks about it by.
+    #[ts(type = "number")]
+    pub id: i64,
+    /// What it is called.
+    pub title: String,
+    /// Its kind, as stored.
+    pub kind: String,
+    /// Whether this build knows the kind; an item a newer sefy wrote is
+    /// listed, and cannot be opened.
+    pub known: bool,
+    /// Its tags, sorted.
+    pub tags: Vec<String>,
+    /// When it last changed, in Unix seconds.
+    #[ts(type = "number")]
+    pub updated_at: i64,
+}
+
+impl ItemRow {
+    /// The row for an item the core listed.
+    pub fn of(summary: &sefy_core::ItemSummary) -> Self {
+        Self {
+            id: summary.id,
+            title: summary.title.clone(),
+            kind: summary.kind.as_str().to_owned(),
+            known: summary.kind.is_known(),
+            tags: summary.tags.clone(),
+            updated_at: summary.updated_at,
+        }
+    }
+}
+
+/// A tag and how many items carry it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct TagCount {
+    /// The tag.
+    pub tag: String,
+    /// How many items carry it.
+    #[ts(type = "number")]
+    pub count: usize,
+}
+
+/// An item opened in the card: everything `sefy show` prints, and no secret.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ItemCard {
+    /// The item's id in this vault.
+    #[ts(type = "number")]
+    pub id: i64,
+    /// Identity across vaults, the one merging matches on.
+    pub uuid: String,
+    /// What it is called.
+    pub title: String,
+    /// Its kind, as stored.
+    pub kind: String,
+    /// Its tags, sorted.
+    pub tags: Vec<String>,
+    /// When it was made, in Unix seconds.
+    #[ts(type = "number")]
+    pub created_at: i64,
+    /// When it last changed, in Unix seconds.
+    #[ts(type = "number")]
+    pub updated_at: i64,
+    /// How many earlier versions of it are kept.
+    #[ts(type = "number")]
+    pub earlier_versions: usize,
+    /// What it holds.
+    pub body: CardBody,
+}
+
+/// What an item holds, in the shape its kind gives it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(tag = "shape", rename_all = "kebab-case")]
+pub enum CardBody {
+    /// A note: its text, which `sefy show` prints too.
+    Note {
+        /// The text.
+        text: String,
+    },
+    /// A record made of fields.
+    Record {
+        /// Its fields, in the order they are meant to be read.
+        fields: Vec<CardField>,
+    },
+    /// A file kept in the vault.
+    File {
+        /// The name it had.
+        filename: String,
+        /// Its size in bytes.
+        #[ts(type = "number")]
+        size: usize,
+    },
+    /// A kind this build does not know: listed, kept, and not opened.
+    Unknown,
+}
+
+/// One field of a record, as the card draws it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(tag = "shape", rename_all = "kebab-case")]
+pub enum CardField {
+    /// A public value, shown as it is.
+    Plain {
+        /// The field's name.
+        name: String,
+        /// Its value.
+        value: String,
+        /// For the date a record stops working: days until then, negative
+        /// once it has passed.
+        #[serde(rename = "daysLeft")]
+        #[ts(rename = "daysLeft", type = "number | null")]
+        days_left: Option<i64>,
+    },
+    /// A secret: named, never sent. Shown when asked for, copied without
+    /// passing through the page.
+    Secret {
+        /// The field's name.
+        name: String,
+    },
+    /// A one-time password key. What it makes is a code, and the code is
+    /// what is shown and copied; the key itself never leaves.
+    Code {
+        /// The field's name.
+        name: String,
+        /// How many seconds a code lives.
+        #[ts(type = "number")]
+        period: u64,
+    },
+}
+
+impl ItemCard {
+    /// The card for an item, as of `now` (Unix seconds).
+    pub fn of(item: &sefy_core::Item, earlier_versions: usize, now: i64) -> Self {
+        let summary = &item.summary;
+        Self {
+            id: summary.id,
+            uuid: summary.uuid.clone(),
+            title: summary.title.clone(),
+            kind: summary.kind.as_str().to_owned(),
+            tags: summary.tags.clone(),
+            created_at: summary.created_at,
+            updated_at: summary.updated_at,
+            earlier_versions,
+            body: CardBody::of(&item.payload, now),
+        }
+    }
+}
+
+impl CardBody {
+    fn of(payload: &sefy_core::Payload, now: i64) -> Self {
+        use sefy_core::Payload;
+        match payload {
+            Payload::Note { text } => Self::Note { text: text.clone() },
+            Payload::Fields { fields, .. } => Self::Record {
+                fields: fields
+                    .iter()
+                    .map(|field| CardField::of(field, now))
+                    .collect(),
+            },
+            Payload::File { filename, bytes } => Self::File {
+                filename: filename.clone(),
+                size: bytes.len(),
+            },
+            Payload::Unknown { .. } => Self::Unknown,
+        }
+    }
+}
+
+impl CardField {
+    fn of(field: &sefy_core::Field, now: i64) -> Self {
+        let name = field.name.clone();
+        if field.name == sefy_core::otp::FIELD
+            && let Ok(totp) = sefy_core::Totp::parse(&field.value)
+        {
+            return Self::Code {
+                name,
+                period: totp.period,
+            };
+        }
+        // A key that cannot make a code is still a secret, and stays one.
+        if field.secret {
+            return Self::Secret { name };
+        }
+        let days_left = (field.name == sefy_core::expiry::FIELD)
+            .then(|| sefy_core::Expiry::parse(&field.value))
+            .flatten()
+            .map(|date| date.days_left(now));
+        Self::Plain {
+            name,
+            value: field.value.clone(),
+            days_left,
+        }
+    }
+}
+
+/// A secret field, shown because someone asked to see it.
+///
+/// The one wire value that carries a secret. It crosses only on that request
+/// and is dropped from the page when the card is closed, hidden again, or the
+/// vault locked. For a one-time password key it is the current code, never
+/// the key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct Revealed {
+    /// What the field holds.
+    pub value: String,
+}
+
+/// What a Copy put on the clipboard.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct Copied {
+    /// Which field it was, or `text` for a note, or `code` for a one-time
+    /// password.
+    pub what: String,
+    /// Seconds until it is taken back off.
+    #[ts(type = "number")]
+    pub seconds: u64,
+}
+
+/// How this window treats what leaves the vault: what the status line says.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Policy {
+    /// Seconds a copy stays on the clipboard: the core's, shared with the
+    /// command line.
+    #[ts(type = "number")]
+    pub clipboard_seconds: u64,
+    /// The quick search shortcut.
+    pub quick: Shortcut,
+}
+
+/// The quick search shortcut, and whether it is in force.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct Shortcut {
+    /// The keys, as a person presses them: `Ctrl+Alt+Space`.
+    pub keys: String,
+    /// Whether the system gave it to sefy; another program can hold it.
+    pub active: bool,
 }
 
 /// Why something the window asked for did not happen.

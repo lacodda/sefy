@@ -30,9 +30,16 @@ everything below is an expansion of it.
 - **A compromised machine.** A keylogger sees your master password; malware
   with your privileges can read the decrypted database out of sefy's memory
   while it runs.
-- **Your own clipboard, beyond the timer.** `sefy get` clears the clipboard
-  after 45 seconds by default, but anything that reads it during that window —
-  including clipboard managers that keep history — gets the secret.
+- **Your own clipboard, beyond the timer.** `sefy get` and the desktop app
+  clear the clipboard after 45 seconds, and mark every copy so that the
+  Windows clipboard history, the cloud clipboard and the clipboard managers
+  that honour the mark do not keep it. Anything that reads the clipboard
+  during those seconds and ignores the mark still gets the secret.
+- **A screen someone else can see.** The [desktop app](/sefy/guides/desktop-app/)
+  shows titles, tags and public fields while the vault is open. It shows a
+  secret only when you press **Show**, and from then until the window's page
+  forgets it the secret is a string in a webview's memory, which no program
+  can wipe. Copy never brings the secret into the page at all.
 - **A command's environment.** `sefy run` puts secrets in the environment of
   the command it starts. Any process running as you can read another's
   environment, and the command passes it on to every process it starts in

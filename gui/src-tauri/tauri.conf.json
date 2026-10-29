@@ -1,6 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "sefy",
+  "mainBinaryName": "sefy-gui",
   "identifier": "com.lacodda.sefy",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -25,6 +26,28 @@
         "generalAutofillEnabled": false,
         "backgroundColor": "#171a1d",
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ElasticOverscroll"
+      },
+      {
+        "label": "quick",
+        "create": false,
+        "url": "quick.html",
+        "title": "sefy",
+        "width": 560,
+        "height": 360,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "center": true,
+        "visible": false,
+        "focus": true,
+        "shadow": true,
+        "dragDropEnabled": false,
+        "generalAutofillEnabled": false,
+        "backgroundColor": "#171a1d",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ElasticOverscroll"
       }
     ],
     "security": {
@@ -34,7 +57,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis",
+      "app",
+      "appimage"
+    ],
     "icon": [
       "../../assets/logo-512.png",
       "../../crates/sefy-cli/assets/icon.ico"

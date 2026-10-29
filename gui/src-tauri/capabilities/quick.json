@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "quick",
+  "description": "What the page in the quick search window may do: hear that it was brought up, so it starts from an empty line. It asks this process for items and for a copy like the main window does, and puts itself away the same way; it has no window controls, no file system, no dialog, no shell.",
+  "windows": ["quick"],
+  "permissions": ["core:event:default"]
+}

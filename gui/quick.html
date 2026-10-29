@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>sefy</title>
+    <!--
+      Quick search, the small window the shortcut brings up over whatever is
+      on the screen. No splash: the window is made, hidden, when a vault is
+      unlocked, and has long finished loading by the time anyone sees it.
+      The ground is the theme's, written out for the moment before the
+      stylesheet lands; `src/splash.test.ts` holds index.html's to the same
+      colours.
+    -->
+    <style>
+      html {
+        background: #171a1d;
+      }
+      @media (prefers-color-scheme: light) {
+        html {
+          background: #ecf0f2;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/quick.tsx"></script>
+  </body>
+</html>

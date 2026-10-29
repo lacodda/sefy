@@ -60,6 +60,12 @@ function backend(file: string | null = STATUS.path, hold = true): Backend {
       }
       case 'lock':
         return null
+      case 'items':
+        return []
+      case 'tags':
+        return []
+      case 'policy':
+        return { clipboardSeconds: 45, quick: { keys: 'Ctrl+Alt+Space', active: true } }
       default:
         return null
     }
@@ -184,6 +190,7 @@ describe('the window', () => {
 
     const contents = await screen.findByRole('heading', { name: 'notes.bak' })
     const main = contents.closest('main')!
+    await userEvent.click(within(main).getByRole('button', { name: 'This vault' }))
     expect(within(main).getAllByText('3 items')).not.toHaveLength(0)
     expect(within(main).getByText('Argon2id (64 MiB, 3 passes, 4 lanes)')).toBeInTheDocument()
     expect(within(main).getByText('XChaCha20-Poly1305')).toBeInTheDocument()

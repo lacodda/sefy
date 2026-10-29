@@ -21,8 +21,8 @@ importers:
         specifier: ^2.1.1
         version: 2.1.1
       dowel-ui:
-        specifier: ^0.38.1
-        version: 0.38.1(eslint@10.13.0(jiti@2.7.0))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+        specifier: ^0.40.0
+        version: 0.40.0(eslint@10.13.0(jiti@2.7.0))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       lucide-react:
         specifier: ^1.60.0
         version: 1.61.0(@types/react@19.3.0)(react@19.3.1)
@@ -913,8 +913,8 @@ packages:
   dom-accessibility-api@0.6.3:
     resolution: {integrity: sha512-7ZgogeTnjuHbo+ct10G9Ffp0mif17idi0IyWNVA/wcwcm7NPOD/WEHVP3n7n3MhXqxoIYm8d6MuZohYWIZ4T3w==}
 
-  dowel-ui@0.38.1:
-    resolution: {integrity: sha512-fW/mxkfaM+ehcIKcvuzGStuHTjBx7KobUEeWlF20YfkmTYcDYmDMcnOkUT3uJyphIDWD3g9nOmrn8I45nbYAFQ==}
+  dowel-ui@0.40.0:
+    resolution: {integrity: sha512-cFFvSny9oxZA5d07Qgybx46mYRliL8EpoQR6d7r2c8LGPP4iLbtmjH9MWR5eyXHLMyniP/jveP5KxeAcAP+yFQ==}
     hasBin: true
     peerDependencies:
       eslint: ^9.0.0 || ^10.0.0
@@ -2401,7 +2401,7 @@ snapshots:
 
   dom-accessibility-api@0.6.3: {}
 
-  dowel-ui@0.38.1(eslint@10.13.0(jiti@2.7.0))(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
+  dowel-ui@0.40.0(eslint@10.13.0(jiti@2.7.0))(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
     dependencies:
       clsx: 2.1.1
       react: 19.3.1

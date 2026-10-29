@@ -19,7 +19,11 @@ if (!window.matchMedia) {
     }) as MediaQueryList
 }
 
-afterEach(() => {
+afterEach(async () => {
   cleanup()
+  // A page that listened for an event lets go of it when it unmounts, and
+  // the letting go finishes a turn later; the mocks it lets go through have
+  // to still be there when it does.
+  await new Promise((resolve) => setTimeout(resolve, 0))
   clearMocks()
 })

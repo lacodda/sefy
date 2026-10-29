@@ -35,6 +35,13 @@ fn export_all(dir: &Path) -> Result<(), ts_rs::ExportError> {
     sefy_gui::wire::Opening::export_all(&config)?;
     sefy_gui::wire::VaultStatus::export_all(&config)?;
     sefy_gui::wire::Failure::export_all(&config)?;
+    sefy_gui::wire::Filter::export_all(&config)?;
+    sefy_gui::wire::ItemRow::export_all(&config)?;
+    sefy_gui::wire::TagCount::export_all(&config)?;
+    sefy_gui::wire::ItemCard::export_all(&config)?;
+    sefy_gui::wire::Revealed::export_all(&config)?;
+    sefy_gui::wire::Copied::export_all(&config)?;
+    sefy_gui::wire::Policy::export_all(&config)?;
     Ok(())
 }
 
