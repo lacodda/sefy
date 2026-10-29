@@ -19,6 +19,57 @@ Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
 
+## [0.18.0] - 2026-10-28
+
+The window becomes something to use, and this is the first release that
+carries it.
+
+**The desktop app browses, searches and copies.** A rail of kinds and tags, a
+list searched the way `sefy find` searches - with titles that match ahead of
+matches inside - and an item opened the way `sefy show` prints it: every
+secret named and hidden until Show. Copy puts the field on the clipboard from
+the program itself, never through the page, counts the 45 seconds down in
+amber, and takes it back - also at lock and when the window closes. A
+one-time password shows and copies its code, never its key. Adding and
+editing items stay on the command line.
+
+**Quick search from anywhere.** Ctrl+Alt+Space (Cmd+Shift+Space on macOS)
+brings up a search line over whatever is on the screen, and Enter copies what
+`sefy get` would take. It shows nothing until something is typed, exists only
+while a vault is open, and over a locked vault brings the main window forward
+instead.
+
+**Copies stay out of the clipboard history.** Every copy - `get`, `otp`,
+`fill`, `gen` and the window's - is marked as a secret. On Windows it no
+longer lands in the Win+V history or the cloud clipboard, where 0.17 left it
+after "clipboard cleared"; macOS and Linux get the marker their clipboard
+managers read.
+
+**The window ships.** Releases carry a per-user installer for Windows,
+`sefy.app` for macOS and an AppImage for Linux, and both one-line installers
+put it beside the command line - no administrator asked. The program is
+`sefy-gui`, so it never takes the command line's name (ADR-0011).
+
+### Breaking Changes
+
+**Vault files: none.** The file format is still version 1 and the database
+schema is unchanged at 5.
+
+**`sefy-core` library:** the clipboard mechanism moved in, behind a new
+`clipboard` feature (`clipboard::Clipboard`, `clipboard::Held`), and `Error`
+gained a `Clipboard` variant - a match over `Error` without a wildcard arm
+needs one.
+
+### Build
+- Ship the desktop app with releases and installers
+
+### CI
+- Build with the newest Node 22 Astro accepts
+
+### Features
+- Keep copied secrets out of clipboard history
+- Browse, search and copy items, with quick search
+
 ## [0.17.0] - 2026-10-22
 
 The first window over the same vault, and a core that says once what the
