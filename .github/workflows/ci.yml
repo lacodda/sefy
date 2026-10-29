@@ -50,6 +50,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - run: cargo test --workspace --all-features
+      # The tests that write to the real clipboard: ignored on a machine where
+      # someone may have copied something, run here. One at a time, since the
+      # clipboard is one object for the whole desktop.
+      - name: Test the clipboard (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cargo test -p sefy-core --features clipboard --test clipboard -- --ignored --test-threads=1
+          cargo test -p sefy-gui --test clip -- --ignored --test-threads=1
 
   # rust-version is a promise to anyone running `cargo install`. Without a job
   # that actually builds on it, the number silently rots the first time a new
@@ -96,3 +104,54 @@ jobs:
       - name: Build
         run: pnpm build
         working-directory: gui
+
+  # The desktop app's bundles, built the way release.yml builds them, on
+  # every push: a packaging step that breaks should break here, not on the
+  # tag, after the crates have gone out.
+  bundle:
+    name: desktop app (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+            made: nsis/sefy_*_x64-setup.exe
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage
+            made: appimage/sefy_*_amd64.AppImage
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: app
+            made: macos/sefy.app/Contents/MacOS/sefy-gui
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the webview the desktop app builds against
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: gui/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: gui/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install
+        run: pnpm install --frozen-lockfile
+        working-directory: gui
+      - name: Build the desktop app (tauri build)
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+        working-directory: gui
+      - name: The bundle is where the release looks for it
+        shell: bash
+        run: ls -l target/${{ matrix.target }}/release/bundle/${{ matrix.made }}

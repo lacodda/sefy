@@ -95,3 +95,56 @@ public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint M
     Write-Host "Note: could not update the user PATH ($($_.Exception.Message)); add $dir to it yourself."
 }
 Write-Host "Installed sefy $tag to $dir\sefy.exe"
+
+# The desktop app: the release's own installer, run silently for this user
+# only - no administrator, nothing outside your account. It is what puts sefy
+# in the Start menu and in Apps. A window that is open holds an unlocked
+# vault, and replacing the program under it is the person's to do, so a
+# running one is left as it is and the note says how to finish.
+$version = $tag.Substring(1)
+$app = Join-Path $env:LOCALAPPDATA "sefy\sefy-gui.exe"
+if (Get-Process sefy-gui -ErrorAction SilentlyContinue) {
+    Write-Host "Note: the desktop app is open - lock it, close it and run the installer again to update it."
+} else {
+    $setupName = "sefy_${version}_x64-setup.exe"
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) "sefy-install-$([guid]::NewGuid())"
+    New-Item -ItemType Directory -Force $tmp | Out-Null
+    try {
+        $setup = Join-Path $tmp $setupName
+        $setupUrl = "https://github.com/$repo/releases/download/$tag/$setupName"
+        Write-Host "Downloading $setupUrl"
+        # The progress bar of Windows PowerShell slows the download itself
+        # down by an order of magnitude.
+        $progress = $ProgressPreference
+        $ProgressPreference = "SilentlyContinue"
+        try {
+            Invoke-WebRequest $setupUrl -OutFile $setup -UseBasicParsing
+        } finally {
+            $ProgressPreference = $progress
+        }
+        # Started as a process of its own and waited for: the arguments reach
+        # the installer intact only this way.
+        $run = Start-Process -FilePath $setup -ArgumentList "/S", "/CURRENTUSER" -PassThru -Wait
+        if ($run.ExitCode -eq 2) {
+            # An upgrade can stop at the old version's uninstaller, which the
+            # installer runs first and gives up on when it does not answer 0.
+            # Its update mode installs over the old files instead.
+            $run = Start-Process -FilePath $setup -ArgumentList "/S", "/UPDATE", "/CURRENTUSER" -PassThru -Wait
+        }
+        if ($run.ExitCode -ne 0) {
+            throw "The desktop app's installer stopped with code $($run.ExitCode)"
+        }
+    } finally {
+        Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    # The file, not the exit code, says what is installed: an installer can
+    # finish cleanly and leave the old version in place.
+    if (-not (Test-Path $app)) {
+        throw "The desktop app's installer finished, but $app is not there"
+    }
+    $installed = (Get-Item $app).VersionInfo.FileVersion
+    if ($installed -ne $version) {
+        throw "The desktop app's installer finished, but $app is version $installed rather than $version"
+    }
+    Write-Host "Installed the sefy desktop app $tag to $app - start it from the Start menu."
+}

@@ -64,8 +64,73 @@ jobs:
             sefy-*.tar.gz
           if-no-files-found: error
 
+  # The desktop app, as each system installs an application: a per-user NSIS
+  # installer on Windows, the .app on macOS, an AppImage on Linux. The names
+  # are Tauri's own (`<productName>_<version>_<arch>`), and the installers in
+  # tools/ fetch them by those names.
+  bundle:
+    name: desktop app (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: app
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the webview the desktop app builds against
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: gui/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: gui/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install
+        run: pnpm install --frozen-lockfile
+        working-directory: gui
+      - name: Build the desktop app (tauri build)
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+        working-directory: gui
+      - name: Collect
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          bundle="target/${{ matrix.target }}/release/bundle"
+          mkdir out
+          case "${{ runner.os }}" in
+            Windows) cp "$bundle/nsis/sefy_${version}_x64-setup.exe" out/ ;;
+            Linux) cp "$bundle/appimage/sefy_${version}_amd64.AppImage" out/ ;;
+            # An .app is a directory; it travels as a tarball, which keeps its
+            # layout and the executable bit.
+            macOS) tar czf "out/sefy_${version}_aarch64.app.tar.gz" -C "$bundle/macos" sefy.app ;;
+          esac
+          ls -l out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bundle-${{ matrix.target }}
+          path: out/*
+          if-no-files-found: error
+
   release:
-    needs: build
+    needs: [build, bundle]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

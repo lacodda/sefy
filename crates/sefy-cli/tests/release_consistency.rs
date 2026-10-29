@@ -353,7 +353,7 @@ fn every_binary_the_workspace_builds_reaches_the_release() {
         .into_iter()
         // Libraries have nothing to ship in an archive of executables, and the
         // desktop app ships as an application of its own, not as one more file
-        // beside the command line (see the test below).
+        // beside the command line (see the_desktop_app_reaches_the_release_and_both_installers).
         .filter(|member| repo_root().join(member).join("src/main.rs").is_file())
         .filter(|member| !is_desktop_app(member))
         .collect();
@@ -389,8 +389,9 @@ fn the_desktop_app_is_one_crate_and_never_a_published_one() {
     // The window is built from its frontend by Tauri; `cargo install` of the
     // crate alone would compile a window with nothing in it to show. So it is
     // not published, and it is the only member the archive check above lets
-    // by - a second Tauri crate, or this one losing `publish = false`, is a
-    // decision about how sefy ships and fails here until it is made.
+    // by - into the bundles the next check holds it to. A second Tauri crate,
+    // or this one losing `publish = false`, is a decision about how sefy
+    // ships and fails here until it is made.
     let apps: Vec<String> = workspace_members()
         .into_iter()
         .filter(|member| is_desktop_app(member))
@@ -404,6 +405,82 @@ fn the_desktop_app_is_one_crate_and_never_a_published_one() {
         unpublished("gui/src-tauri"),
         "gui/src-tauri/Cargo.toml must say `publish = false`"
     );
+}
+
+/// A string field of the desktop app's `tauri.conf.json`, read the naive way
+/// the manifest fields above are: `"key": "value"`, the first one in the file.
+fn tauri_field(key: &str) -> String {
+    let conf = read("gui/src-tauri/tauri.conf.json");
+    let marker = format!("\"{key}\": \"");
+    let at = conf
+        .find(&marker)
+        .unwrap_or_else(|| panic!("tauri.conf.json has no {key}"));
+    let rest = &conf[at + marker.len()..];
+    rest[..rest.find('"').expect("the value is closed")].to_owned()
+}
+
+#[test]
+fn the_desktop_app_reaches_the_release_and_both_installers() {
+    // Kept out of the archive check above, the window still has to ship: a
+    // release whose installers fetch a bundle nobody built fails for every
+    // new user, and one that builds a bundle no installer fetches leaves the
+    // window on the release page and off every machine. The names are
+    // Tauri's - `<productName>_<version>_<arch>` - and the executable inside
+    // is the crate's binary, which must not be `sefy`: on Linux and macOS the
+    // two programs would share one name on PATH.
+    let product = tauri_field("productName");
+    let binary = tauri_field("mainBinaryName");
+    assert_eq!(product, "sefy");
+    assert_eq!(
+        binary,
+        manifest_field("gui/src-tauri/Cargo.toml", "[[bin]]", "name"),
+        "the bundle should carry the binary the crate builds, under its own name"
+    );
+    assert_ne!(
+        binary, "sefy",
+        "the window would take the command line's name"
+    );
+
+    let windows = format!("{product}_${{version}}_x64-setup.exe");
+    let linux = format!("{product}_${{version}}_amd64.AppImage");
+    let macos = format!("{product}_${{version}}_aarch64.app.tar.gz");
+
+    let release = read(".github/workflows/release.yml");
+    assert!(
+        release.contains("tauri build"),
+        "release.yml never builds the desktop app"
+    );
+    for name in [&windows, &linux, &macos] {
+        assert!(
+            release.contains(name.as_str()),
+            "release.yml does not put {name} on the release"
+        );
+    }
+
+    let ci = read(".github/workflows/ci.yml");
+    assert!(
+        ci.contains("tauri build"),
+        "ci.yml never builds the bundles, so packaging breaks first on the tag"
+    );
+
+    let powershell = read("tools/install.ps1");
+    assert!(
+        powershell.contains(&windows),
+        "install.ps1 does not fetch {windows}"
+    );
+    assert!(
+        powershell.contains(&format!("{binary}.exe")),
+        "install.ps1 does not check the {binary}.exe it installed"
+    );
+
+    // The installer spells the variable in capitals, as shell scripts do.
+    let shell = read("tools/install.sh").replace("${VERSION}", "${version}");
+    for name in [&linux, &macos] {
+        assert!(
+            shell.contains(name.as_str()),
+            "install.sh does not fetch {name}"
+        );
+    }
 }
 
 #[test]

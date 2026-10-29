@@ -140,6 +140,11 @@ Every command, with its flags: **[the reference](https://lacodda.github.io/sefy/
 - **A vault that is never a trap.** `import` reads KeePass, Bitwarden and
   browser exports, history included; `export` writes sefy JSON, KeePass XML or
   CSV - in the clear only after you say so explicitly.
+- **A window, and a line over every window.** The desktop app opens the
+  same vault: search it, open an item, copy a field without it touching the
+  screen - every secret stays hidden until you ask to see it. Ctrl+Alt+Space
+  brings up a search line over whatever you are doing, and Enter copies the
+  password.
 - **An end, when one is needed.** `sefy wipe` overwrites the vault, the copies
   beside it and any unfinished save with random bytes and deletes them, once
   you type the vault's name back - there is no `--yes`.
@@ -171,8 +176,9 @@ On Windows use the PowerShell line above: `install.sh` carries the macOS and Lin
 
 Both installers take the newest release by default; set `SEFY_VERSION` to a tag
 to pin one, and `SEFY_INSTALL_DIR` to choose where the binary lands. They also
-place any transport the archive carries into sefy's plugins directory, so
-`sefy plugin list` finds it without a second step.
+place any transport the archive carries into sefy's plugins directory, and
+install the [desktop app](https://lacodda.github.io/sefy/guides/desktop-app/)
+for your account - no administrator asked.
 
 Shell completions: `sefy completions bash` (also `zsh`, `fish`, `powershell`,
 `elvish`).
@@ -187,12 +193,12 @@ for transports.
 
 ## Status
 
-**v0.17.0**, in daily use. The vault file format is stable at version 1 and
+**v0.18.0**, in daily use. The vault file format is stable at version 1 and
 the plugin protocol at version 1 since 0.3.0; the database schema inside the
 ciphertext moves between releases, and older builds keep reading a vault
-safely even when they cannot see everything in it - see
-[versions and compatibility](https://lacodda.github.io/sefy/concepts/versions/).
-A desktop app over the same core is being built and is not released yet.
+safely - see [versions and compatibility](https://lacodda.github.io/sefy/concepts/versions/).
+The desktop app ships from 0.18.0: it browses, searches and copies, while
+adding and editing items stay on the command line.
 What landed in each version:
 [CHANGELOG](https://github.com/lacodda/sefy/blob/main/CHANGELOG.md).
 

@@ -35,7 +35,8 @@ Or take a prebuilt archive from [Releases](https://github.com/lacodda/sefy/relea
 
 Both one-line installers also place any transport the archive carries into
 sefy's plugins directory, so [`sefy sync`](/sefy/reference/sync/) has something
-to call. Installing through cargo or npm gets the CLI alone; add the git
+to call, and install the [desktop app](/sefy/guides/desktop-app/) - the same
+vault in a window, with a quick search line one shortcut away. Installing through cargo or npm gets the CLI alone; add the git
 transport with `cargo install sefy-plugin-github` (a git repository) or
 `cargo install sefy-plugin-sftp` (your own server), and see
 [Syncing through a transport](/sefy/guides/syncing/) or
@@ -192,6 +193,8 @@ sefy run -e GITHUB_TOKEN=github -- ./release.sh
 
 ## Where next
 
+- [The desktop app](/sefy/guides/desktop-app/) - the same vault in a window,
+  and quick search from anywhere on the screen.
 - [Moving between password managers](/sefy/guides/password-managers/) —
   arriving from KeePass, Bitwarden or a browser, and leaving again.
 - [Moving a vault between machines](/sefy/guides/moving-a-vault/) — copying it,
