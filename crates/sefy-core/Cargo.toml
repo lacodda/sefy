@@ -32,9 +32,22 @@ tempfile.workspace = true
 thiserror.workspace = true
 zeroize.workspace = true
 zxcvbn.workspace = true
+arboard = { workspace = true, optional = true }
+
+[features]
+# The system clipboard, the way every front end puts secrets on it
+# (`clipboard::Clipboard`). Off by default: a program that only reads vaults
+# has no reason to link a desktop's clipboard.
+clipboard = ["dep:arboard"]
 
 [dev-dependencies]
 base64.workspace = true
 flate2.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+
+# Only to look at the clipboard from outside sefy in tests/clipboard.rs: which
+# formats a copied secret carries, and what someone else copied. The version
+# arboard already builds.
+[target.'cfg(windows)'.dev-dependencies]
+clipboard-win = "5.4"

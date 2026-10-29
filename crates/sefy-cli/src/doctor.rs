@@ -402,26 +402,25 @@ fn auto_sync_check(switch: Option<Switch>, remote: &RemoteArgs, reachable: bool)
 /// some desktops keep, so this only opens the clipboard and reads it — the
 /// two things that fail on a machine with no clipboard at all.
 fn clipboard() -> Check {
-    let mut clipboard = match arboard::Clipboard::new() {
+    let mut clipboard = match sefy_core::clipboard::Clipboard::open() {
         Ok(clipboard) => clipboard,
         Err(error) => {
             return Check::new(
                 "clipboard",
                 Verdict::Fail,
                 format!(
-                    "cannot reach it: {error}\nget, otp and gen can print with --stdout instead"
+                    "{error}
+get, otp and gen can print with --stdout instead"
                 ),
             );
         }
     };
-    match clipboard.get_text() {
-        Ok(_) | Err(arboard::Error::ContentNotAvailable) => {
-            Check::new("clipboard", Verdict::Ok, "reachable")
-        }
+    match clipboard.check() {
+        Ok(()) => Check::new("clipboard", Verdict::Ok, "reachable"),
         Err(error) => Check::new(
             "clipboard",
             Verdict::Fail,
-            format!("reachable, but cannot be read: {error}"),
+            format!("reachable, but {error}"),
         ),
     }
 }

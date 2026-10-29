@@ -77,8 +77,17 @@ then lets go, so the secret disappears when sefy exits either way. There
 `--clear-after 0` means "hold it for a long while" rather than "leave it
 forever", since letting go immediately would make the value unpastable.
 
-A clipboard manager that keeps history gets the secret regardless — the timer
-clears the clipboard, not someone else's copy of it.
+Every copy is marked as a secret on its way onto the clipboard. On Windows
+that keeps it out of the clipboard history (Win+V) and off the cloud clipboard,
+which would otherwise carry it to every machine signed in to the same account
+and keep it after the timer has cleared the clipboard; clipboard managers that
+honour the same mark pass it by. macOS and Linux get the marker their
+clipboard managers read. A program that watches the clipboard and ignores the
+marks still sees the secret while it is there - the timer clears the
+clipboard, not someone else's copy of it.
+
+The [desktop app](/sefy/guides/desktop-app/) copies the same way, for the same
+45 seconds.
 
 ## Stored files
 

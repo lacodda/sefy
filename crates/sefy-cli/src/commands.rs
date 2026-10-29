@@ -1668,7 +1668,7 @@ pub fn fill(vault: &Vault, args: FillArgs) -> Result<()> {
     }
     warn_if_due(&item);
 
-    let mut clipboard = output::Clipboard::open()?;
+    let mut clipboard = output::open_clipboard()?;
     let total = steps.len();
     for (index, field) in steps.iter().enumerate() {
         let (value, label) = if field.name == sefy_core::otp::FIELD {

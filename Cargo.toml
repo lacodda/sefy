@@ -49,7 +49,9 @@ quick-xml = "0.42"
 flate2 = "1"
 
 anyhow = "1"
-arboard = "3"
+# Default features off: `image-data` pulls in an image codec for copying
+# pictures, and sefy only ever copies text.
+arboard = { version = "3.7", default-features = false }
 clap = { version = "4", features = ["derive", "env"] }
 # The line's interactive prompt crate (kasl, turnout). Default features off:
 # `editor` and `password` are dialoguer's own takes on two things sefy already

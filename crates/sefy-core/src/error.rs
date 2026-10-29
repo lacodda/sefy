@@ -219,6 +219,13 @@ pub enum Error {
     )]
     UnreadableExpiry(String),
 
+    /// The clipboard could not be reached or written.
+    ///
+    /// The message is the platform's, which describes the clipboard and
+    /// never what was being put on it.
+    #[error("{0}")]
+    Clipboard(String),
+
     /// A filesystem operation failed.
     #[error("{context}: {source}")]
     Io {
