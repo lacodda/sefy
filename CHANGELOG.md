@@ -19,6 +19,64 @@ Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
 
+## [0.19.0] - 2026-11-03
+
+Asked once, for as long as you say: the master password in the memory of one
+process, and commands that stop asking.
+
+**`sefy agent`** asks for the password, checks it against the vault and leaves a
+process holding it. Commands get what they need from that process until it locks:
+after 15 minutes of nobody using the vault (`--ttl`), after 12 hours however busy
+it has been, or at **`sefy lock`**. Locking wipes the password and ends the process,
+with nobody having to ask, and a machine that sleeps through the time is locked
+when it wakes. `--password-env` still means the password it names; `change-password`
+and `wipe` always want it typed, and lock whatever was holding it.
+
+**The password never crosses the socket.** What does is keys, one version of the
+file at a time, since every write has a salt of its own: the file format is
+untouched, and what the agent seals is a file the password alone opens. A command
+sends nothing but a salt and checks the answer against the file, so there is nothing
+to gain by posing as an agent, and a key from an agent that has since changed its
+password does not get to seal the vault (ADR-0012).
+
+**The window does the same while a vault is unlocked in it.** The command line stops
+asking, with the same limits, and the window now locks by itself: pressing, typing
+and scrolling count as someone being there, a one-time code running on a card does
+not. `sefy lock` reaches it too. There is one window now: a second launch hands its
+file over, and another file locks the vault that is open.
+
+**`sefy status` says whether the vault is locked**, which one holds it and for how
+much longer, and it no longer asks for the password to say so. `sefy doctor` says
+who holds it.
+
+The installers lock the vault before replacing the program. On Windows, before
+updating through npm or cargo, run `sefy lock` yourself: a running program cannot be
+replaced.
+
+### Breaking Changes
+
+**Vault files: none.** The file format is still version 1 and the database
+schema is unchanged at 5.
+
+**`sefy status` on a locked vault no longer asks for the password.** It prints the
+file, its size and `lock locked`, and exits zero. A script after the counts passes
+`--password-env`, as it had to, or runs `sefy agent` first.
+
+**`sefy-core` library:** a new `agent` feature (`agent::Keeper`, `agent::Client`,
+`agent::serve`) and a `keys` module (`KeySource`, `FreshKey`, `Opener`), with
+`Vault::open_through` and `Opener::opens`. `pull`, `sync`, `preview_pull`,
+`preview_sync` and `Fetched::open` take `impl Into<Opener>`, which a password in a
+byte slice still is. `Error` gained `KeysGone`, `KeysChanged` and `PasswordNeeded` -
+a match over `Error` without a wildcard arm needs them.
+
+### Build
+- Lock the vault before an installer replaces the program
+
+### Features
+- Hold the master password in an agent, and give out keys
+- Add sefy agent and sefy lock, and the lock state in status
+- Answer the command line from the window, and lock when idle
+
 ## [0.18.0] - 2026-10-28
 
 The window becomes something to use, and this is the first release that
