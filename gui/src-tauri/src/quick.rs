@@ -64,6 +64,8 @@ pub fn summon(app: &AppHandle) {
         bring_forward(app);
         return;
     }
+    // A person pressed the keys, and no page has seen them yet.
+    app.state::<Session>().touch();
     let Some(quick) = app.get_webview_window(LABEL) else {
         bring_forward(app);
         return;

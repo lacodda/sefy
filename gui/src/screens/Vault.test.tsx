@@ -129,7 +129,7 @@ function bridge(): Bridge {
           { tag: 'work', count: 1 },
         ]
       case 'policy':
-        return { clipboardSeconds: 45, quick: { keys: 'Ctrl+Alt+Space', active: true } }
+        return { clipboardSeconds: 45, lockAfterSeconds: 900, quick: { keys: 'Ctrl+Alt+Space', active: true } }
       case 'item':
         return CARDS[given!.id as number]
       case 'reveal':

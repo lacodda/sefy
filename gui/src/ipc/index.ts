@@ -26,6 +26,12 @@ export type { FailureKind } from './generated/FailureKind'
 /** The file the window was started on. */
 export const opening = () => invoke<Opening>('opening')
 
+/** The file a second launch handed over, once. */
+export const takeHandover = () => invoke<string | null>('take_handover')
+
+/** Someone is using the window: the idle time starts over. */
+export const touch = () => invoke<void>('touch')
+
 /** The system's file dialog, opening beside `near`; `null` when cancelled. */
 export const chooseFile = (near: string | null) => invoke<string | null>('choose_file', { near })
 
@@ -56,7 +62,8 @@ export const reveal = (id: number, field: string) => invoke<Revealed>('reveal', 
  * no field, what `sefy get` would take. */
 export const copy = (id: number, field: string | null) => invoke<Copied>('copy', { id, field })
 
-/** How long a copy stays on the clipboard, and the quick search shortcut. */
+/** How long a copy stays on the clipboard, how long the vault stays unlocked
+ * with nobody using it, and the quick search shortcut. */
 export const policy = () => invoke<Policy>('policy')
 
 /** Puts the quick search window away. */

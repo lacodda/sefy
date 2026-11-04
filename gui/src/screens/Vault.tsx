@@ -327,6 +327,8 @@ export function Vault({ status, onLock }: Props) {
               <span aria-hidden>·</span>
               <span>{text.status.clears(policy.clipboardSeconds)}</span>
               <span aria-hidden>·</span>
+              <span>{text.status.locks(policy.lockAfterSeconds)}</span>
+              <span aria-hidden>·</span>
               <span className={policy.quick.active ? undefined : 'text-warn'}>
                 {policy.quick.active ? text.status.quick(policy.quick.keys) : text.status.quickTaken(policy.quick.keys)}
               </span>

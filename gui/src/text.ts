@@ -81,6 +81,7 @@ export const text = {
   },
   status: {
     clears: (seconds: number) => `the clipboard clears ${seconds} s after a copy`,
+    locks: (seconds: number) => `locks after ${Math.round(seconds / 60)} min idle`,
     quick: (keys: string) => `quick search: ${keys}`,
     quickTaken: (keys: string) => `quick search is off: another program holds ${keys}`,
   },
@@ -110,6 +111,7 @@ export const text = {
     format: 'format',
     schema: 'schema',
     writtenByNewer: 'written by a newer sefy',
+    agent: 'While it is unlocked here, the command line does not ask for the password: sefy lock locks both.',
     plaintext: 'plaintext never touches the disk',
     travel: 'Copies and sync',
     synced: 'synced',

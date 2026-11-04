@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { ResizeEdges } from '@/components/ui/window-frame'
 import * as ipc from '@/ipc'
 import type { Failure, VaultStatus } from '@/ipc'
 import { Unlock } from '@/screens/Unlock'
 import { Vault } from '@/screens/Vault'
+import { reportActivity } from '@/shell/activity'
 import { Splash } from '@/shell/Splash'
 import { Titlebar } from '@/shell/Titlebar'
 import { text } from '@/text'
@@ -38,6 +40,14 @@ type Stage =
 export const SHOW_AFTER = 250
 export const SHOW_FOR = 600
 
+/** The event the process sends when the vault locked without the page asking:
+ * the time ran out, or `sefy lock` came from outside (`session::LOCKED`). */
+export const LOCKED_EVENT = 'vault-locked'
+
+/** The event the process sends when a second launch handed over a file
+ * (`session::HANDED_OVER`). */
+export const HANDED_OVER_EVENT = 'file-handed-over'
+
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /** A rejection the bridge produced rather than the vault. */
@@ -47,9 +57,37 @@ function unexpected(cause: unknown): Failure {
 
 export default function App() {
   const [stage, setStage] = useState<Stage>({ at: 'starting' })
+  // How many files were handed over: the Unlock screen keeps a file it was
+  // given in its own state, and starts over on the one handed over.
+  const [handovers, setHandovers] = useState(0)
+
+  const unlocked = stage.at === 'open'
+  useEffect(() => (unlocked ? reportActivity() : undefined), [unlocked])
 
   useEffect(() => {
     let current = true
+
+    // What a second launch left, which the screen takes if it is the one
+    // asking for a file. With a vault open the process has already seen to
+    // whether that vault gives way.
+    const takeHandover = () =>
+      ipc
+        .takeHandover()
+        .then((file) => {
+          if (!current || file === null) return
+          setStage((now) => (now.at === 'locked' ? { at: 'locked', file, failure: null } : now))
+          setHandovers((count) => count + 1)
+        })
+        .catch(() => undefined)
+
+    const page = getCurrentWebviewWindow()
+    // The vault going without this page asking leaves the screen to catch up.
+    // The file stays offered, as it does after the Lock button.
+    const stopLocked = page.listen(LOCKED_EVENT, () => {
+      setStage((now) => (now.at === 'open' ? { at: 'locked', file: now.status.path, failure: null } : now))
+    })
+    const stopHanded = page.listen(HANDED_OVER_EVENT, () => void takeHandover())
+
     // A page that starts is a page that knows of no open vault, so there is
     // none: after a reload the vault the last page unlocked is locked, rather
     // than left open behind a screen that asks for its password.
@@ -57,8 +95,16 @@ export default function App() {
       .then(([opening]) => opening)
       .then((opening) => current && setStage({ at: 'locked', file: opening.file, failure: null }))
       .catch(() => current && setStage({ at: 'locked', file: null, failure: null }))
+      // Once it is listening and on its feet: a launch that came sooner sent
+      // its event to nobody, and left the file all the same.
+      .then(() => Promise.all([stopLocked, stopHanded]))
+      .then(() => takeHandover())
+      .catch(() => undefined)
+
     return () => {
       current = false
+      void stopLocked.then((stop) => stop())
+      void stopHanded.then((stop) => stop())
     }
   }, [])
 
@@ -104,6 +150,7 @@ export default function App() {
         <Vault status={stage.status} onLock={() => void lock()} />
       ) : (
         <Unlock
+          key={handovers}
           file={stage.file}
           failure={stage.at === 'locked' ? stage.failure : null}
           busy={stage.at === 'unsealing'}

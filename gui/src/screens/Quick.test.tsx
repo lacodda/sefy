@@ -37,6 +37,15 @@ function bridge() {
 }
 
 describe('quick search', () => {
+  it('counts someone typing here as someone using the vault', async () => {
+    const bridged = bridge()
+    render(<Quick />)
+    expect(bridged.named('touch')).toHaveLength(0)
+
+    await userEvent.type(screen.getByRole('searchbox'), 'm')
+    expect(bridged.named('touch')).toHaveLength(1)
+  })
+
   it('shows nothing until something is typed', async () => {
     const bridged = bridge()
     render(<Quick />)

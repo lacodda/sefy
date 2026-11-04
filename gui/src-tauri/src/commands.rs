@@ -6,20 +6,26 @@
 //! `wire` value.
 
 use crate::clip::Clip;
-use crate::session::{self, Session};
+use crate::session::{self, Handover, Session};
 use crate::wire::{
     Copied, Failure, FailureKind, Filter, ItemCard, ItemRow, Opening, Policy, Revealed, Shortcut,
     TagCount, VaultStatus,
 };
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use zeroize::Zeroizing;
 
 /// The file the window was started on, if it was started on one.
 #[tauri::command]
 pub fn opening(opening: State<'_, Opening>) -> Opening {
     opening.inner().clone()
+}
+
+/// The file a second launch handed over, if there is one still to take.
+#[tauri::command]
+pub fn take_handover(handover: State<'_, Handover>) -> Option<String> {
+    handover.take()
 }
 
 /// Asks the system for a file, starting in the folder of `near`.
@@ -61,16 +67,16 @@ pub async fn unlock(
     path: String,
     password: String,
 ) -> Result<VaultStatus, Failure> {
-    let password = Zeroizing::new(password);
-    let vault = tauri::async_runtime::spawn_blocking(move || {
-        session::open(&PathBuf::from(path), password.as_bytes())
+    let password = Zeroizing::new(password.into_bytes());
+    let (vault, password) = tauri::async_runtime::spawn_blocking(move || {
+        session::open(&PathBuf::from(path), &password).map(|vault| (vault, password))
     })
     .await
     .map_err(|_| Failure {
         kind: FailureKind::Other,
         message: "unlocking stopped before it finished".to_owned(),
     })??;
-    let status = app.state::<Session>().hold(vault)?;
+    let status = app.state::<Session>().hold(vault, password)?;
     crate::quick::make(&app);
     Ok(status)
 }
@@ -81,10 +87,30 @@ pub async fn unlock(
 /// clipboard is taken back, and the quick search window - which has titles
 /// in it - is destroyed rather than hidden.
 #[tauri::command]
-pub fn lock(app: AppHandle, session: State<'_, Session>, clip: State<'_, Clip>) {
-    session.lock();
-    clip.take_back();
-    crate::quick::unmake(&app);
+pub fn lock(app: AppHandle) {
+    lock_everything(&app);
+}
+
+/// Locks the vault and everything it let out, and tells the page.
+///
+/// The one way it happens, whoever asks: the page's Lock button, the time
+/// running out with nobody using it, `sefy lock`, a launch on another file. The
+/// page asking is told as well, and is already there.
+pub fn lock_everything(app: &AppHandle) {
+    app.state::<Session>().lock();
+    app.state::<Clip>().take_back();
+    crate::quick::unmake(app);
+    let _ = app.emit_to(crate::quick::MAIN, session::LOCKED, ());
+}
+
+/// Someone is using the window: the idle time starts over.
+///
+/// The page calls this when a person does something, not when it asks for
+/// anything. What it asks for on its own, a card's one-time code running on,
+/// says nothing about anyone being there.
+#[tauri::command]
+pub fn touch(session: State<'_, Session>) {
+    session.touch();
 }
 
 /// What and where the open vault is.
@@ -142,11 +168,13 @@ pub async fn copy(app: AppHandle, id: i64, field: Option<String>) -> Result<Copi
     })
 }
 
-/// How long a copy stays on the clipboard, and the quick search shortcut.
+/// How long a copy stays on the clipboard, how long the vault stays unlocked
+/// with nobody using it, and the quick search shortcut.
 #[tauri::command]
 pub fn policy(shortcut: State<'_, Shortcut>) -> Policy {
     Policy {
         clipboard_seconds: sefy_core::clipboard::HOLD_SECONDS,
+        lock_after_seconds: sefy_core::agent::IDLE.as_secs(),
         quick: shortcut.inner().clone(),
     }
 }

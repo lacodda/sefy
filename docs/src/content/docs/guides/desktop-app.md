@@ -24,6 +24,11 @@ The program is `sefy-gui`, so it never takes the command line's `sefy` on
 `PATH`. Run the installer again to update; a window that is open is left
 alone, and the installer says to close it first.
 
+There is one window. Starting the program again brings it forward, and starting
+it on a file hands the file over: another file locks the vault that is open and
+offers the new one, since you asked for another vault and the first should not
+stay unlocked behind it.
+
 ## Opening a vault
 
 There is no list of recent vaults, by design: a list of the files sefy opened,
@@ -100,6 +105,29 @@ elsewhere puts it away without copying.
 **Lock** closes the vault in the window's process, takes back whatever sefy
 put on the clipboard, and closes quick search - which has titles in it, so it
 is destroyed rather than hidden. Closing the window does the same.
+
+The window also does this by itself after 15 minutes of nobody using it, and
+after 12 hours however busy it has been. Pressing, typing and scrolling count as
+using it; a one-time code running on a card does not. The file stays offered on
+the Unlock screen.
+
+[`sefy lock`](/sefy/reference/lock/) in a terminal locks the window too.
+
+## The command line while it is unlocked
+
+While a vault is unlocked here, `sefy` commands on the same vault do not ask for
+the password: the window is an [agent](/sefy/reference/agent/) for as long as it
+holds it. Using the vault from the command line counts as using it.
+
+```console
+$ sefy status
+vault    /home/you/backups/notes.bak
+size     84.1 KB
+lock     unlocked by the window, locks in 14m
+```
+
+The window does not notice a change the command line made until it is unlocked
+again.
 
 ## What the window does not protect against
 

@@ -96,7 +96,9 @@ export function About({ status }: Props) {
         </KeyValue>
       </Panel>
 
-      <p className="self-center text-sm text-dim lg:col-span-2">{text.vault.honest}</p>
+      <p className="self-center text-sm text-dim lg:col-span-2">
+        {text.vault.agent} {text.vault.honest}
+      </p>
     </div>
   )
 }

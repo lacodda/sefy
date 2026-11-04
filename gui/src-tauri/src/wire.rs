@@ -411,6 +411,10 @@ pub struct Policy {
     /// command line.
     #[ts(type = "number")]
     pub clipboard_seconds: u64,
+    /// Seconds the vault stays unlocked with nobody using it: the core's, the
+    /// same as `sefy agent` by default.
+    #[ts(type = "number")]
+    pub lock_after_seconds: u64,
     /// The quick search shortcut.
     pub quick: Shortcut,
 }

@@ -11,6 +11,11 @@ export type Policy = {
  */
 clipboardSeconds: number, 
 /**
+ * Seconds the vault stays unlocked with nobody using it: the core's, the
+ * same as `sefy agent` by default.
+ */
+lockAfterSeconds: number, 
+/**
  * The quick search shortcut.
  */
 quick: Shortcut, };

@@ -4,27 +4,52 @@
 //! page is told what it is (`VaultStatus`), never handed the database. Locking
 //! drops it, which wipes the password the core holds and lets the in-memory
 //! database go.
+//!
+//! While it is unlocked the window is also an agent: the [`Keeper`] here holds
+//! the password for the command line to ask keys of, and runs the clock that
+//! locks the vault when nobody has used it for a while.
 
 use crate::wire::{
     Failure, FailureKind, Filter, ItemCard, ItemRow, Opening, TagCount, VaultStatus,
 };
+use sefy_core::agent::{IDLE, Keeper};
 use sefy_core::{ItemKind, Payload, Query, Totp, Vault};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use zeroize::Zeroizing;
 
+/// The event the page is sent when the vault locked: by itself, or because
+/// something outside the window said so.
+pub const LOCKED: &str = "vault-locked";
+
+/// The event the page is sent when a second launch handed over a file.
+pub const HANDED_OVER: &str = "file-handed-over";
+
 /// The vault the window has open, if any.
-#[derive(Default)]
 pub struct Session {
     vault: Mutex<Option<Vault>>,
+    keeper: Arc<Keeper>,
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Self {
+            vault: Mutex::new(None),
+            keeper: Keeper::new(),
+        }
+    }
 }
 
 impl Session {
     /// Puts an opened vault in the window, in place of whatever was open.
-    pub fn hold(&self, vault: Vault) -> Result<VaultStatus, Failure> {
+    ///
+    /// The keeper gets its own copy of the password. The vault keeps one to
+    /// seal with, and neither outlasts [`Session::lock`].
+    pub fn hold(&self, vault: Vault, password: Zeroizing<Vec<u8>>) -> Result<VaultStatus, Failure> {
         let status = VaultStatus::of(&vault.status()?);
         *self.slot() = Some(vault);
+        self.keeper.give(password, IDLE);
         Ok(status)
     }
 
@@ -34,6 +59,32 @@ impl Session {
         // the password and the database are gone the moment the window says
         // the vault is locked.
         drop(self.slot().take());
+        self.keeper.wipe();
+    }
+
+    /// What holds the password for the command line and runs the clock.
+    pub fn keeper(&self) -> Arc<Keeper> {
+        self.keeper.clone()
+    }
+
+    /// Someone is using the vault here: the idle time starts over.
+    pub fn touch(&self) {
+        self.keeper.touch();
+    }
+
+    /// Whether a vault other than the one at `path` is what is open.
+    pub fn holds_other_than(&self, path: &Path) -> bool {
+        let slot = self.slot();
+        let Some(vault) = slot.as_ref() else {
+            return false;
+        };
+        // Compared as the system sees them: a launch passes the path as it was
+        // typed, and the case or the separators may differ from what opened
+        // this. A file that cannot be resolved is not this one.
+        match (vault.path().canonicalize(), path.canonicalize()) {
+            (Ok(open), Ok(other)) => open != other,
+            _ => true,
+        }
     }
 
     /// What and where the open vault is.
@@ -199,6 +250,36 @@ fn refused(message: String) -> Failure {
     }
 }
 
+/// The file a second launch was started on, for the window that is already
+/// there: as [`opening`] reads one, relative to where that launch stood.
+pub fn handed_over(args: &[String], launched_in: &Path) -> Option<String> {
+    let file = args.iter().skip(1).find(|arg| !arg.starts_with('-'))?;
+    if file.is_empty() {
+        return None;
+    }
+    Some(launched_in.join(file).display().to_string())
+}
+
+/// The file a second launch handed over, until the page takes it.
+///
+/// Kept rather than only sent: a launch can come before the page is listening,
+/// and an event sent to nobody is gone. The page takes what is here once it
+/// listens, and again each time the event wakes it.
+#[derive(Default)]
+pub struct Handover(Mutex<Option<String>>);
+
+impl Handover {
+    /// Leaves `file` for the page, in place of any it did not take.
+    pub fn offer(&self, file: String) {
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = Some(file);
+    }
+
+    /// The file left for the page, once.
+    pub fn take(&self) -> Option<String> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).take()
+    }
+}
+
 /// Opens the vault at `path` — the slow part of unlocking, which stretches
 /// the password on purpose and so belongs off the window's thread.
 pub fn open(path: &Path, password: &[u8]) -> Result<Vault, Failure> {
@@ -236,6 +317,10 @@ mod tests {
 
     const PASSWORD: &[u8] = b"correct horse battery staple";
 
+    fn password() -> Zeroizing<Vec<u8>> {
+        Zeroizing::new(PASSWORD.to_vec())
+    }
+
     fn vault_in(directory: &tempfile::TempDir) -> PathBuf {
         let path = directory.path().join("notes.bak");
         let mut vault = Vault::create(&path, PASSWORD).unwrap();
@@ -257,7 +342,9 @@ mod tests {
         let path = vault_in(&directory);
         let session = Session::default();
 
-        let status = session.hold(open(&path, PASSWORD).unwrap()).unwrap();
+        let status = session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
         assert_eq!(status.name, "notes.bak");
         assert_eq!(status.items, 1);
         assert!(session.is_open());
@@ -266,6 +353,87 @@ mod tests {
         session.lock();
         assert!(!session.is_open());
         assert_eq!(session.status().unwrap_err().kind, FailureKind::Locked);
+    }
+
+    #[test]
+    fn while_unlocked_the_window_answers_for_the_password_and_after_it_does_not() {
+        use sefy_core::agent::LockState;
+        use sefy_core::{Error, KeySource};
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        let keeper = session.keeper();
+        assert_eq!(keeper.state(), LockState::Locked);
+
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+        // What the command line would do: open the file with the keeper's key.
+        let opened = Vault::open_through(&path, keeper.clone()).unwrap();
+        assert_eq!(opened.list().unwrap().len(), 1);
+        let LockState::Unlocked { idle, .. } = keeper.state() else {
+            panic!("an unlocked window holds the password");
+        };
+        assert_eq!(idle, IDLE);
+
+        session.lock();
+        assert_eq!(keeper.state(), LockState::Locked);
+        assert!(matches!(
+            keeper.key_for(&[1; sefy_core::crypto::SALT_LEN]),
+            Err(Error::KeysGone)
+        ));
+    }
+
+    #[test]
+    fn a_launch_on_the_open_file_is_not_a_launch_on_another() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        // Nothing open: nothing to give way.
+        assert!(!session.holds_other_than(&path));
+
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+        assert!(!session.holds_other_than(&path));
+        // The same file, spelled through its folder.
+        let spelled = directory.path().join(".").join("notes.bak");
+        assert!(!session.holds_other_than(&spelled));
+
+        let other = directory.path().join("other.bak");
+        Vault::create(&other, PASSWORD).unwrap();
+        assert!(session.holds_other_than(&other));
+    }
+
+    #[test]
+    fn a_second_launch_names_its_file_from_where_it_stood() {
+        let stood_in = Path::new("somewhere");
+        let args = |list: &[&str]| list.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            handed_over(&args(&["sefy-gui", "--flag", "notes.bak"]), stood_in),
+            Some(stood_in.join("notes.bak").display().to_string())
+        );
+        assert_eq!(handed_over(&args(&["sefy-gui"]), stood_in), None);
+        assert_eq!(handed_over(&args(&["sefy-gui", ""]), stood_in), None);
+
+        // An absolute path stays what it is.
+        let absolute = std::env::current_dir().unwrap().join("notes.bak");
+        let spelled = absolute.display().to_string();
+        assert_eq!(
+            handed_over(&args(&["sefy-gui", &spelled]), stood_in),
+            Some(spelled)
+        );
+    }
+
+    #[test]
+    fn what_was_handed_over_is_taken_once_and_the_latest_wins() {
+        let handover = Handover::default();
+        assert_eq!(handover.take(), None);
+        handover.offer("first".into());
+        handover.offer("second".into());
+        assert_eq!(handover.take().as_deref(), Some("second"));
+        assert_eq!(handover.take(), None);
     }
 
     #[test]
@@ -313,11 +481,13 @@ mod tests {
         let session = Session::default();
 
         session
-            .hold(open(&vault_in(&first), PASSWORD).unwrap())
+            .hold(open(&vault_in(&first), PASSWORD).unwrap(), password())
             .unwrap();
         let other = second.path().join("archive.dat");
         Vault::create(&other, PASSWORD).unwrap();
-        session.hold(open(&other, PASSWORD).unwrap()).unwrap();
+        session
+            .hold(open(&other, PASSWORD).unwrap(), password())
+            .unwrap();
 
         let status = session.status().unwrap();
         assert_eq!(status.name, "archive.dat");
@@ -377,7 +547,9 @@ mod tests {
             .unwrap();
         vault.save().unwrap();
         let session = Session::default();
-        session.hold(open(&path, PASSWORD).unwrap()).unwrap();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
         session
     }
 

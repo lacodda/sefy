@@ -79,7 +79,8 @@ forward, so the master password is typed in one place only.
   person to need one.
 - **It lives as long as the window.** Closing the main window exits the
   program (the hidden quick window would otherwise keep it running), and the
-  shortcut goes with it. A resident mode belongs with the agent of 0.19.
+  shortcut goes with it. A resident mode is a question of its own; ADR-0012
+  says why it did not come with the agent.
 
 ### Search order
 

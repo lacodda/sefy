@@ -1,8 +1,9 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { emit } from '@tauri-apps/api/event'
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 import { beforeEach, describe, expect, it } from 'vitest'
-import App from '@/App'
+import App, { HANDED_OVER_EVENT, LOCKED_EVENT } from '@/App'
 import type { Failure, VaultStatus } from '@/ipc'
 
 const STATUS: VaultStatus = {
@@ -42,17 +43,25 @@ interface Backend {
   calls: [string, Record<string, unknown> | undefined][]
   /** Held until the test lets go, so the screen can be read mid-unlock. */
   release?: () => void
+  /** A file a second launch left, until the page takes it. */
+  handover: string | null
 }
 
 /** A bridge that opens `notes.bak` with the password `right` and nothing else. */
 function backend(file: string | null = STATUS.path, hold = true): Backend {
-  const state: Backend = { file, hold, calls: [] }
+  const state: Backend = { file, hold, calls: [], handover: null }
   mockWindows('main')
-  mockIPC(async (cmd, args) => {
+  mockIPC(
+    async (cmd, args) => {
     state.calls.push([cmd, args as Record<string, unknown> | undefined])
     switch (cmd) {
       case 'opening':
         return { file: state.file }
+      case 'take_handover': {
+        const file = state.handover
+        state.handover = null
+        return file
+      }
       case 'unlock': {
         if (state.hold) await new Promise<void>((resolve) => (state.release = resolve))
         if ((args as { password: string }).password !== 'right') throw REFUSED
@@ -65,11 +74,13 @@ function backend(file: string | null = STATUS.path, hold = true): Backend {
       case 'tags':
         return []
       case 'policy':
-        return { clipboardSeconds: 45, quick: { keys: 'Ctrl+Alt+Space', active: true } }
+        return { clipboardSeconds: 45, lockAfterSeconds: 900, quick: { keys: 'Ctrl+Alt+Space', active: true } }
       default:
         return null
     }
-  })
+    },
+    { shouldMockEvents: true },
+  )
   return state
 }
 
@@ -119,6 +130,91 @@ describe('the window', () => {
     const file = await screen.findByRole('group', { name: 'Vault file' })
     expect(file).toHaveTextContent('C:\\Backups\\notes.bak')
     await waitFor(() => expect(screen.getByLabelText('Master password')).toHaveFocus())
+  })
+
+  it('goes back to the Unlock screen on the same file when the vault locks without it', async () => {
+    // The time ran out, or `sefy lock` came from a terminal.
+    backend(STATUS.path, false)
+    render(<App />)
+    await typePassword('right')
+    await screen.findByRole('heading', { name: 'notes.bak' })
+
+    await act(async () => emit(LOCKED_EVENT))
+
+    expect(await screen.findByRole('heading', { name: 'Open a vault' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'notes.bak' })).toBeNull()
+    expect(screen.getByRole('group', { name: 'Vault file' })).toHaveTextContent('C:\\Backups\\notes.bak')
+    expect(screen.getByLabelText('Master password')).toHaveValue('')
+  })
+
+  it('stays where it is if a lock it did not ask for finds nothing open', async () => {
+    backend(null)
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Open a vault' })
+    await act(async () => emit(LOCKED_EVENT))
+    expect(screen.getByRole('heading', { name: 'Open a vault' })).toBeInTheDocument()
+    expect(screen.getByText('No file chosen')).toBeInTheDocument()
+  })
+
+  it('offers a file a second launch handed over', async () => {
+    const bridge = backend(null)
+    render(<App />)
+    await screen.findByText('No file chosen')
+
+    bridge.handover = 'D:\\Elsewhere\\archive.dat'
+    await act(async () => emit(HANDED_OVER_EVENT))
+
+    const file = await screen.findByRole('group', { name: 'Vault file' })
+    await waitFor(() => expect(file).toHaveTextContent('archive.dat'))
+    await waitFor(() => expect(screen.getByLabelText('Master password')).toHaveFocus())
+  })
+
+  it('takes a file handed over before it was listening', async () => {
+    // The event went to nobody; the file is still there to be taken.
+    const bridge = backend(STATUS.path)
+    bridge.handover = 'D:\\Elsewhere\\archive.dat'
+    render(<App />)
+
+    const file = await screen.findByRole('group', { name: 'Vault file' })
+    await waitFor(() => expect(file).toHaveTextContent('archive.dat'))
+    expect(bridge.handover).toBeNull()
+  })
+
+  it('leaves an open vault on the screen when a launch hands over its own file', async () => {
+    // Whether the vault gives way for another file is the process's to decide,
+    // and it would have locked it, and said so, first.
+    const bridge = backend(STATUS.path, false)
+    render(<App />)
+    await typePassword('right')
+    await screen.findByRole('heading', { name: 'notes.bak' })
+
+    bridge.handover = STATUS.path
+    await act(async () => emit(HANDED_OVER_EVENT))
+
+    await waitFor(() => expect(bridge.handover).toBeNull())
+    expect(screen.getByRole('heading', { name: 'notes.bak' })).toBeInTheDocument()
+  })
+
+  it('tells the process someone is there only while a vault is open', async () => {
+    const bridge = backend(STATUS.path, false)
+    const touches = () => bridge.calls.filter(([cmd]) => cmd === 'touch').length
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Open a vault' })
+
+    window.dispatchEvent(new Event('pointerdown'))
+    expect(touches()).toBe(0)
+
+    await typePassword('right')
+    await screen.findByRole('heading', { name: 'notes.bak' })
+    window.dispatchEvent(new Event('pointerdown'))
+    expect(touches()).toBe(1)
+  })
+
+  it('says when the vault will lock', async () => {
+    backend(STATUS.path, false)
+    render(<App />)
+    await typePassword('right')
+    expect(await screen.findByText('locks after 15 min idle')).toBeInTheDocument()
   })
 
   it('cannot be unlocked without a file and a password', async () => {

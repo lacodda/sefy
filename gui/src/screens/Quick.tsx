@@ -6,6 +6,7 @@ import { SearchField } from '@/components/ui/search-field'
 import * as ipc from '@/ipc'
 import type { Failure, ItemRow } from '@/ipc'
 import { unexpected } from '@/lib/copies'
+import { reportActivity } from '@/shell/activity'
 import { text } from '@/text'
 
 /** The most a quick search shows: a line to pick from, not a list to read. */
@@ -41,6 +42,8 @@ export function Quick() {
     setFailure(null)
     searchRef.current?.focus()
   }, [])
+
+  useEffect(reportActivity, [])
 
   useEffect(() => {
     if (!('__TAURI_INTERNALS__' in window)) return
