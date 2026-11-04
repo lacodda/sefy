@@ -55,6 +55,11 @@ mkdir -p "$BIN_DIR"
 # wherever it landed rather than assuming a layout.
 BIN=$(find "$TMP" -type f -name sefy -perm -u+x | head -n 1)
 [ -n "$BIN" ] || { echo "The archive did not contain a sefy binary" >&2; exit 1; }
+# An update locks the vault: an agent left running is the old program, holding
+# a password.
+if [ -x "$BIN_DIR/sefy" ]; then
+    "$BIN_DIR/sefy" lock >/dev/null 2>&1 || true
+fi
 install -m 755 "$BIN" "$BIN_DIR/sefy"
 echo "Installed sefy $TAG to $BIN_DIR/sefy"
 

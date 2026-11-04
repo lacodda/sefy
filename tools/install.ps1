@@ -38,7 +38,25 @@ try {
     $binary = Get-ChildItem -Path $tmp -Filter "sefy.exe" -Recurse | Select-Object -First 1
     if (-not $binary) { throw "The archive did not contain sefy.exe" }
     New-Item -ItemType Directory -Force $dir | Out-Null
-    Copy-Item $binary.FullName $dir -Force
+
+    # An agent left running is this very program, holding a password, and
+    # Windows will not replace a program that is running. An update locks the
+    # vault. If one is still running after that - it stopped answering - it is
+    # moved aside, which Windows does allow, and removed by the next update.
+    $installed = Join-Path $dir "sefy.exe"
+    Get-ChildItem -Path $dir -Filter "sefy.exe.old-*" -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+    if (Test-Path $installed) {
+        try { & $installed lock *> $null } catch { }
+        try {
+            Copy-Item $binary.FullName $installed -Force -ErrorAction Stop
+        } catch {
+            Move-Item $installed "$installed.old-$([guid]::NewGuid())" -Force
+            Copy-Item $binary.FullName $installed -Force
+        }
+    } else {
+        Copy-Item $binary.FullName $installed -Force
+    }
 
     # Transports go where sefy looks for them, which is its data directory -
     # not beside the binary, and not beside the vault, where a plugins folder
