@@ -37,7 +37,13 @@ fn socket_in(directory: &Path) -> String {
     if cfg!(windows) {
         format!("sefy-test-cli-{}-{number}", std::process::id())
     } else {
-        directory.join(format!("s{number}")).display().to_string()
+        // A level down, for the agent to make. A temporary directory is one
+        // others may enter, and an agent refuses to listen in those.
+        directory
+            .join("sockets")
+            .join(format!("s{number}"))
+            .display()
+            .to_string()
     }
 }
 

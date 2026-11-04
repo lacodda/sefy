@@ -31,7 +31,13 @@ fn socket_base(_: &std::path::Path) -> String {
 
 #[cfg(unix)]
 fn socket_base(directory: &std::path::Path) -> String {
-    directory.join("socket").display().to_string()
+    // A level down, for the agent to make. A temporary directory is one others
+    // may enter, and an agent refuses to listen in those.
+    directory
+        .join("sockets")
+        .join("socket")
+        .display()
+        .to_string()
 }
 
 #[test]

@@ -24,7 +24,13 @@ fn socket_base(directory: &Path) -> String {
     if cfg!(windows) {
         format!("sefy-test-window-{}", std::process::id())
     } else {
-        directory.join("socket").display().to_string()
+        // A level down, for the agent to make. A temporary directory is one
+        // others may enter, and an agent refuses to listen in those.
+        directory
+            .join("sockets")
+            .join("socket")
+            .display()
+            .to_string()
     }
 }
 
