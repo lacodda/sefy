@@ -35,6 +35,17 @@ everything below is an expansion of it.
   Windows clipboard history, the cloud clipboard and the clipboard managers
   that honour the mark do not keep it. Anything that reads the clipboard
   during those seconds and ignores the mark still gets the secret.
+- **An unlocked vault, against your own programs.** While the
+  [agent](/sefy/reference/agent/) runs, or a vault is unlocked in the desktop
+  app, the password is in that process's memory, where the system may page it
+  like anything else. The socket keeps other users out, and it cannot tell one
+  of your programs from another: anything running as you can ask for a key and
+  read the vault until it locks. It locks by itself after 15 minutes of nobody
+  using it and at 12 hours, wiping the password rather than only refusing to
+  use it; without an agent, none of this applies. On Linux the agent makes
+  itself undumpable, as ssh-agent does. The pipe or the socket says that sefy
+  is running, not which file: `sefy agent` is never told the path, and nothing
+  that crosses the socket names one.
 - **A screen someone else can see.** The [desktop app](/sefy/guides/desktop-app/)
   shows titles, tags and public fields while the vault is open. It shows a
   secret only when you press **Show**, and from then until the window's page

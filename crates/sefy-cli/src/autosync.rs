@@ -17,39 +17,39 @@
 
 use crate::cli::{DEFAULT_REMOTE_NAME, REMOTE_NAME_ENV, Switch, TRANSPORT_ENV};
 use crate::commands;
+use crate::session::Master;
 use sefy_core::Vault;
 use zeroize::Zeroizing;
 
 /// Whether to sync after a write, and what has been synced already.
 pub struct AutoSync {
     on: bool,
-    /// The password the remote copy is opened with: the one this vault was
-    /// opened with. After `change-password` that is the *old* one, which is
-    /// exactly what the remote copy is still sealed under until this sync
-    /// replaces it.
-    remote_password: Zeroizing<String>,
+    /// What opens the remote copy: what opened this vault. After
+    /// `change-password` that is the *old* password, which is exactly what the
+    /// remote copy is still sealed under until this sync replaces it.
+    master: Master,
     /// The vault's write count when it was last synced, or when it was opened.
     synced_at: u64,
 }
 
 impl AutoSync {
     /// Syncing after writes as the command line or the environment asked.
-    pub fn new(switch: Option<Switch>, password: &str) -> Self {
+    pub fn new(switch: Option<Switch>, master: &Master) -> Self {
         Self {
-            on: switch == Some(Switch::On),
-            remote_password: Zeroizing::new(password.to_owned()),
+            on: Self::is_wanted(switch),
+            master: master.clone(),
             synced_at: 0,
         }
     }
 
     /// Syncing after writes, off: for transfers, which are syncs already.
     pub fn off() -> Self {
-        Self::new(Some(Switch::Off), "")
+        Self::new(Some(Switch::Off), &Master::Typed(Zeroizing::default()))
     }
 
-    /// Whether syncing after writes was asked for.
-    pub fn is_on(&self) -> bool {
-        self.on
+    /// Whether this switch asks for syncing after writes.
+    pub fn is_wanted(switch: Option<Switch>) -> bool {
+        switch == Some(Switch::On)
     }
 
     /// Syncs the vault if it has been written since it was opened or last
@@ -83,7 +83,7 @@ impl AutoSync {
         let plugin = commands::transport(remote_setting(TRANSPORT_ENV).as_deref())?;
         let name = remote_setting(REMOTE_NAME_ENV).unwrap_or_else(|| DEFAULT_REMOTE_NAME.into());
 
-        let report = match sefy_core::sync(vault, &plugin, &name, self.remote_password.as_bytes()) {
+        let report = match sefy_core::sync(vault, &plugin, &name, self.master.opener()) {
             Ok(report) => report,
             Err(sefy_core::Error::WrongPasswordOrNotAVault) => anyhow::bail!(
                 "the remote copy does not open under this vault's password\n\

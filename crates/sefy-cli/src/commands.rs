@@ -6,11 +6,11 @@ use crate::cli::{
     OpenArgs, OtpArgs, PullArgs, RecordArgs, RemoteArgs, RestoreArgs, RunArgs,
 };
 use crate::output;
-use crate::session;
+use crate::session::{self, Master};
 use anyhow::{Context, Result, bail};
 use sefy_core::{
-    Change, ChangeKind, Classes, Field, Item, ItemKind, ItemSummary, NewItem, Outcome, Payload,
-    Query, Recipe, Strength, Target, Totp, Vault, Version,
+    Change, ChangeKind, Classes, Field, Item, ItemKind, ItemSummary, NewItem, Opener, Outcome,
+    Payload, Query, Recipe, Strength, Target, Totp, Vault, Version,
 };
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -1455,6 +1455,15 @@ pub fn change_password(vault: &mut Vault, password_env: Option<&str>) -> Result<
             left.display()
         );
     }
+    // Whoever holds the old password is holding a password that opens nothing
+    // here any more, and whose retiring was presumably the point.
+    let locked = session::lock_everywhere();
+    if !locked.is_empty() {
+        println!(
+            "locked the {}: it held the old password",
+            locked.join(" and the ")
+        );
+    }
     Ok(())
 }
 
@@ -1866,7 +1875,27 @@ const URL_FIELD: &str = "url";
 /// last transfer — and never about contents: a status that named an item would
 /// put a secret's title on a screen that was asked only whether the vault is
 /// there.
-pub fn status(vault: &Vault) -> Result<()> {
+///
+/// It never asks for the password. With the vault locked and no password given
+/// it says what can be said without one: that is the answer to "is it locked",
+/// and a command that held that answer back behind a prompt would be asking for
+/// the master password of someone who might have asked because they were about
+/// to walk away.
+pub fn status(path: &Path, password_env: Option<&str>) -> Result<()> {
+    let opened = match password_env {
+        Some(_) => Some(session::typed(path, password_env)?),
+        None => session::looking_through_agent(path)?,
+    };
+    let Some((vault, master)) = opened else {
+        let file =
+            std::fs::metadata(path).with_context(|| format!("cannot read {}", path.display()))?;
+        println!("vault    {}", path.display());
+        println!("size     {}", size(file.len()));
+        println!("lock     {}", session::lock_line(path, None)?);
+        println!("the rest takes the password: `sefy agent` unlocks the vault for a while");
+        return Ok(());
+    };
+
     let status = vault.status()?;
     let stats = &status.stats;
 
@@ -1874,6 +1903,7 @@ pub fn status(vault: &Vault) -> Result<()> {
     if let Some(bytes) = status.size {
         println!("size     {}", size(bytes));
     }
+    println!("lock     {}", session::lock_line(path, Some(&master))?);
     println!(
         "items    {}{}",
         output::count(stats.items, "item"),
@@ -2002,21 +2032,21 @@ pub fn push(vault: &mut Vault, args: RemoteArgs) -> Result<()> {
 }
 
 /// Fetches the remote copy and folds it in, or says what that would change.
-pub fn pull(vault: &mut Vault, args: PullArgs, master: &str) -> Result<()> {
+pub fn pull(vault: &mut Vault, args: PullArgs, master: &Master) -> Result<()> {
     let plugin = transport(args.remote.transport.as_deref())?;
-    let remote_password = remote_password(&args, master)?;
+    let remote_password = remote_password(&args)?;
+    let opener = opener_of_remote(remote_password.as_ref(), master);
     let name = &args.remote.name;
 
     if args.dry_run {
-        let report =
-            sefy_core::sync::preview_pull(vault, &plugin, name, remote_password.as_bytes())?;
+        let report = sefy_core::sync::preview_pull(vault, &plugin, name, opener)?;
         println!("here, from {name:?} through {}:", plugin.name());
         print_lines(&preview_lines(&report.merged, true));
         println!("{NOTHING_DONE}");
         return Ok(());
     }
 
-    let report = sefy_core::pull(vault, &plugin, name, remote_password.as_bytes())?;
+    let report = sefy_core::pull(vault, &plugin, name, opener)?;
 
     println!("pulled {name:?} through {}", plugin.name());
     if let Some(message) = &report.transport.message {
@@ -2027,14 +2057,14 @@ pub fn pull(vault: &mut Vault, args: PullArgs, master: &str) -> Result<()> {
 }
 
 /// Pulls, then pushes the result back; or says what each leg would change.
-pub fn sync(vault: &mut Vault, args: PullArgs, master: &str) -> Result<()> {
+pub fn sync(vault: &mut Vault, args: PullArgs, master: &Master) -> Result<()> {
     let plugin = transport(args.remote.transport.as_deref())?;
-    let remote_password = remote_password(&args, master)?;
+    let remote_password = remote_password(&args)?;
+    let opener = opener_of_remote(remote_password.as_ref(), master);
     let name = &args.remote.name;
 
     if args.dry_run {
-        let preview =
-            sefy_core::sync::preview_sync(vault, &plugin, name, remote_password.as_bytes())?;
+        let preview = sefy_core::sync::preview_sync(vault, &plugin, name, opener)?;
         println!("here, from {name:?} through {}:", plugin.name());
         print_lines(&preview_lines(&preview.coming, true));
         println!("there, once the result is pushed:");
@@ -2043,7 +2073,7 @@ pub fn sync(vault: &mut Vault, args: PullArgs, master: &str) -> Result<()> {
         return Ok(());
     }
 
-    let report = sefy_core::sync(vault, &plugin, name, remote_password.as_bytes())?;
+    let report = sefy_core::sync(vault, &plugin, name, opener)?;
 
     println!("synced {name:?} through {}", plugin.name());
     for message in [
@@ -2065,18 +2095,31 @@ pub(crate) const NOTHING_CAME_BACK: &str = "nothing came back that this vault di
 /// The last line of every dry run.
 const NOTHING_DONE: &str = "dry run: nothing was written here or sent anywhere";
 
-/// The master password of the copy on the other side.
+/// The master password of the copy on the other side, if it was given.
 ///
 /// A pull brings back a copy of *this* vault, so the same password is the
 /// ordinary case and the default. Both ways of saying otherwise are honoured.
-fn remote_password(args: &PullArgs, master: &str) -> Result<String> {
+fn remote_password(args: &PullArgs) -> Result<Option<Zeroizing<String>>> {
     if let Some(variable) = args.remote_password_env.as_deref() {
-        return session::secret("", Some(variable));
+        return session::secret("", Some(variable))
+            .map(Zeroizing::new)
+            .map(Some);
     }
     if args.ask_remote_password {
-        return session::secret("Password of the remote copy: ", None);
+        return session::secret("Password of the remote copy: ", None)
+            .map(Zeroizing::new)
+            .map(Some);
     }
-    Ok(master.to_owned())
+    Ok(None)
+}
+
+/// What opens the copy on the other side: the password given for it, or what
+/// opened this vault.
+fn opener_of_remote<'a>(given: Option<&'a Zeroizing<String>>, master: &'a Master) -> Opener<'a> {
+    match given {
+        Some(password) => Opener::Password(password.as_bytes()),
+        None => master.opener(),
+    }
 }
 
 /// Picks the transport to use.

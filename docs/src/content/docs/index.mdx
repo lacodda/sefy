@@ -92,6 +92,9 @@ content share no prefix, because the salt and nonce are fresh every time.
 	<Card title="A window, and a line over every window" icon="laptop">
 		The desktop app opens the same vault: search, open an item, copy a field without it touching the screen - every secret stays hidden until you ask to see it. Ctrl+Alt+Space brings up a search line over whatever you are doing; Enter copies the password.
 	</Card>
+	<Card title="Asked once, for as long as you say" icon="seti:lock">
+		`sefy agent` keeps the password in the memory of one process, and commands stop asking. Fifteen minutes with nobody using it and it wipes the password and exits; `sefy lock` does that at once. The desktop app does the same while a vault is unlocked in it.
+	</Card>
 	<Card title="You do not have to remember the title" icon="magnifier">
 		`sefy` on its own opens a picker: type a few letters, press Enter. `sefy open` goes further and loads the site while the password waits on the clipboard.
 	</Card>

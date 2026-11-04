@@ -3,6 +3,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// The variable naming the transport to use when there are several.
 pub const TRANSPORT_ENV: &str = "SEFY_TRANSPORT";
@@ -285,6 +286,25 @@ pub enum Command {
     /// which still needs the password - but a wipe cannot promise it is gone.
     Wipe,
 
+    /// Keep the vault unlocked for a while, so that commands stop asking.
+    ///
+    /// Asks for the master password once and leaves a process holding it, in
+    /// memory only, that other commands ask for keys over a local socket. It
+    /// locks by itself after a stretch of nobody using it and at 12 hours in
+    /// any case, wiping the password and exiting; `sefy lock` does the same at
+    /// once. The next command then asks for the password as usual.
+    ///
+    /// `--password-env` still takes the password from the environment, and
+    /// `change-password` and `wipe` always ask: they take knowing the
+    /// password, not having found the vault unlocked. The socket keeps other
+    /// users out; it cannot tell one of your own programs from another.
+    Agent(AgentArgs),
+
+    /// Lock the vault now: wipe what the agent and the desktop app hold.
+    ///
+    /// The agent exits, and the desktop app goes back to its Unlock screen.
+    Lock,
+
     /// Send this vault to the remote, replacing the copy there.
     ///
     /// The file that travels is the sealed one; the transport carrying it never
@@ -325,6 +345,57 @@ pub enum Command {
         /// Shell to generate for.
         shell: clap_complete::Shell,
     },
+}
+
+/// How long `sefy agent` holds the password.
+#[derive(Debug, Args)]
+pub struct AgentArgs {
+    /// How long the vault stays unlocked with nobody using it: 90s, 15m, 2h.
+    ///
+    /// However busy it is, it locks 12 hours after the password was given.
+    #[arg(long, value_name = "TIME", default_value = "15m", value_parser = parse_time)]
+    pub ttl: Duration,
+
+    /// Be the process that holds it: read the password from standard input
+    /// and answer until locked. What `sefy agent` starts; not for typing.
+    #[arg(long, hide = true)]
+    pub serve: bool,
+}
+
+/// Reads `90s`, `15m` or `2h`; bare digits are seconds.
+fn parse_time(text: &str) -> Result<Duration, String> {
+    let text = text.trim();
+    let (digits, unit) = match text.char_indices().find(|(_, c)| !c.is_ascii_digit()) {
+        Some((at, _)) => text.split_at(at),
+        None => (text, "s"),
+    };
+    let unit = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 60 * 60,
+        _ => {
+            return Err(format!(
+                "{text:?} is not a time; write it as 90s, 15m or 2h"
+            ));
+        }
+    };
+    let number: u64 = digits
+        .parse()
+        .map_err(|_| format!("{text:?} is not a time; write it as 90s, 15m or 2h"))?;
+    let time = number
+        .checked_mul(unit)
+        .map(Duration::from_secs)
+        .ok_or_else(|| format!("{text:?} is more than can be held"))?;
+    if time.is_zero() {
+        return Err("a vault unlocked for no time at all is a locked vault".to_owned());
+    }
+    if time > sefy_core::agent::CAP {
+        return Err(format!(
+            "at most {} hours: an agent locks then however it is used",
+            sefy_core::agent::CAP.as_secs() / 3600
+        ));
+    }
+    Ok(time)
 }
 
 /// Which transport to use, and what the remote copy is called.

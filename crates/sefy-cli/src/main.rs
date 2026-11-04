@@ -4,6 +4,7 @@
 //! read the master password, open the vault in memory, act, and — for anything
 //! that changed something — seal it back to disk.
 
+mod agent;
 mod audit;
 mod autosync;
 mod browser;
@@ -60,8 +61,7 @@ fn run(arguments: Cli) -> Result<()> {
     // handled here with the commands that need neither.
     let Some(command) = arguments.command else {
         let path = session::vault_path(arguments.vault)?;
-        let password = session::password(password_env)?;
-        let vault = session::open(&path, &password)?;
+        let (vault, _) = session::unlock(&path, password_env)?;
         return commands::browse(&vault);
     };
 
@@ -71,6 +71,16 @@ fn run(arguments: Cli) -> Result<()> {
             return match action {
                 PluginAction::List { paths } => commands::plugin_list(paths),
             };
+        }
+        Command::Agent(args) => {
+            return agent::run(args, arguments.vault, password_env);
+        }
+        Command::Lock => return agent::lock(),
+        // Whether a vault is locked is not a question to answer only for
+        // whoever has the password, so it opens the vault itself or not at all.
+        Command::Status => {
+            let path = session::vault_path(arguments.vault)?;
+            return commands::status(&path, password_env);
         }
         Command::Completions { shell } => {
             let mut command = Cli::command();
@@ -101,8 +111,13 @@ fn run(arguments: Cli) -> Result<()> {
     }
 
     let path = session::vault_path(arguments.vault)?;
-    let password = session::password(password_env)?;
-    let mut vault = session::open(&path, &password)?;
+    // Retiring a password takes knowing it, not having found the vault
+    // unlocked.
+    let (mut vault, master) = if matches!(command, Command::ChangePassword { .. }) {
+        session::typed(&path, password_env)?
+    } else {
+        session::unlock(&path, password_env)?
+    };
 
     // Comes back only when the command could not be started; it takes the
     // vault with it, and changes nothing that could need syncing.
@@ -119,7 +134,7 @@ fn run(arguments: Cli) -> Result<()> {
     let mut auto = if transfers {
         AutoSync::off()
     } else {
-        AutoSync::new(arguments.auto_sync, &password)
+        AutoSync::new(arguments.auto_sync, &master)
     };
 
     let outcome = match command {
@@ -143,7 +158,6 @@ fn run(arguments: Cli) -> Result<()> {
         Command::Otp(args) => commands::otp(&mut vault, args, &mut auto),
         Command::Fill(args) => commands::fill(&vault, args),
         Command::Audit => audit::run(&vault),
-        Command::Status => commands::status(&vault),
         Command::Export {
             output,
             format,
@@ -168,8 +182,8 @@ fn run(arguments: Cli) -> Result<()> {
             commands::change_password(&mut vault, new_password_env.as_deref())
         }
         Command::Push(args) => commands::push(&mut vault, args),
-        Command::Pull(args) => commands::pull(&mut vault, args, &password),
-        Command::Sync(args) => commands::sync(&mut vault, args, &password),
+        Command::Pull(args) => commands::pull(&mut vault, args, &master),
+        Command::Sync(args) => commands::sync(&mut vault, args, &master),
         // Handled above: these before the vault is opened, `run` just after.
         // A wipe opens the vault itself, once it knows there is a terminal
         // to ask on.
@@ -178,6 +192,9 @@ fn run(arguments: Cli) -> Result<()> {
         | Command::Completions { .. }
         | Command::Doctor(_)
         | Command::Wipe
+        | Command::Agent(_)
+        | Command::Lock
+        | Command::Status
         | Command::Run(_) => unreachable!(),
     };
 

@@ -27,6 +27,15 @@ The global `--password-env` supplies the current password, `--new-password-env`
 the replacement — two variables, because one would make "old" and "new"
 indistinguishable.
 
+It always wants the current password: with the vault unlocked by an
+[agent](/sefy/reference/agent/) it asks all the same, since retiring a password
+takes knowing it. Whatever was holding the old one is locked afterwards:
+
+```console
+password changed
+locked the agent: it held the old password
+```
+
 ## What actually changes
 
 The file is rewritten with a **fresh salt and nonce**, so the new vault shares

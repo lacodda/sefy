@@ -46,6 +46,9 @@ impl Fixture {
             .env("SEFY_VAULT", &self.path)
             .env("SEFY_TEST_PASSWORD", MASTER)
             .env_remove("SEFY_AUTO_SYNC")
+            // Where no agent is: these tests must not reach one holding a real
+            // password on a machine that has one running.
+            .env("SEFY_AGENT_SOCKET", self.directory().join("no-agent"))
             .arg("--password-env")
             .arg("SEFY_TEST_PASSWORD");
         command
@@ -929,7 +932,8 @@ fn sefy_seeing_only(directory: &Path) -> Command {
         .env("PATH", directory)
         .env("APPDATA", directory)
         .env("XDG_DATA_HOME", directory)
-        .env("HOME", directory);
+        .env("HOME", directory)
+        .env("SEFY_AGENT_SOCKET", directory.join("no-agent"));
     command
 }
 

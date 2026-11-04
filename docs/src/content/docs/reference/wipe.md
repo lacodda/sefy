@@ -7,6 +7,11 @@ Destroys the vault: the file, the copies kept beside it and any save a crash
 left unfinished. Each is overwritten in place with random bytes, synced to the
 disk and deleted.
 
+It always asks for the password, however unlocked the vault is, and it locks
+whatever is holding it: the [agent](/sefy/reference/agent/) and the
+[desktop app](/sefy/guides/desktop-app/#locking), first, before any file is
+touched.
+
 ## Usage
 
 ```sh

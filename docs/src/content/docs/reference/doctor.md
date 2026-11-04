@@ -26,6 +26,7 @@ $ sefy doctor
 Master password:
 ok    vault      /home/you/Documents/.notes.db opens: 42 items, schema 5
 ok    copies     2 copies beside the vault, newest 2026-10-09 07:49 UTC (3 hours ago)
+skip  agent      nothing is holding the password; `sefy agent` would
 ok    device     versions written here are marked "laptop"
 ok    plugins    github 0.18.0, sftp 0.18.0
 ok    transport  github fetched "vault" (84.1 KB); it opens, and a sync would change 2 items here and 1 item there

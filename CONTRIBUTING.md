@@ -19,6 +19,11 @@ cargo test -p sefy-core --features clipboard --test clipboard -- --ignored --tes
 cargo test -p sefy-gui --test clip -- --ignored --test-threads=1
 ```
 
+The tests of `sefy agent` start real agent processes. Each has a socket of its
+own (`SEFY_AGENT_SOCKET`), so none of them can reach an agent holding a real
+password; when you run the program by hand against a scratch vault, set that
+variable as well.
+
 The library is published separately as [`sefy-core`](https://crates.io/crates/sefy-core)
 if you want vaults from your own code.
 

@@ -4,7 +4,10 @@ description: Show what and where this vault is, without revealing any of it.
 ---
 
 The question asked after a new machine, a restore, or a week away: is this the
-right file, is everything in it, and has it reached the other side lately.
+right file, is everything in it, has it reached the other side lately, and is
+it locked.
+
+It never asks for the password.
 
 ## Usage
 
@@ -12,6 +15,7 @@ right file, is everything in it, and has it reached the other side lately.
 $ sefy status
 vault    /home/you/Documents/.notes.db
 size     72.1 KB
+lock     unlocked by the agent, locks in 14m
 items    5 items  (4 login, 1 note)
 tags     3 tags
 schema   5
@@ -25,6 +29,7 @@ plugins  github, sftp
 | --- | --- |
 | `vault` | The file being worked on, after `--vault` and `$SEFY_VAULT` are resolved. |
 | `size` | The sealed file on disk. |
+| `lock` | Whether something holds the password for this vault, which one, and how long until it locks if nobody uses it: the [agent](/sefy/reference/agent/) or the [desktop app](/sefy/guides/desktop-app/#the-command-line-while-it-is-unlocked). Otherwise `locked`. |
 | `items` | How many, and how many of each kind. |
 | `tags` | How many distinct tags are in use. |
 | `schema` | Version of the database inside the blob — see [Versions](/sefy/concepts/versions/). |
@@ -32,6 +37,24 @@ plugins  github, sftp
 | `synced` | When this vault last reached a remote, through which transport, and by which command. |
 | `copies` | The [copies kept beside the vault](/sefy/guides/syncing/#a-copy-before-every-merge) before a merge or an import changed it, and when the newest was taken. |
 | `plugins` | Transports installed on this machine, with any unusable one marked. |
+
+## On a locked vault
+
+With nothing holding the password and no `--password-env`, it says what can be
+said without one, and exits zero:
+
+```console
+$ sefy status
+vault    /home/you/Documents/.notes.db
+size     72.1 KB
+lock     locked
+the rest takes the password: `sefy agent` unlocks the vault for a while
+```
+
+Whether a vault is locked is often asked on the way to walking away, and an
+answer should not take the master password. Asking does not keep the vault
+unlocked either: a prompt that shows this line does not start the agent's idle
+time over.
 
 ## It never prints contents
 
@@ -74,3 +97,4 @@ at all — see [Versions](/sefy/concepts/versions/).
 - [`plugin`](/sefy/reference/plugin/) — transports in full, with why one is unusable
 - [`sync`](/sefy/reference/sync/) — what updates the `synced` line
 - [`doctor`](/sefy/reference/doctor/) — check that all of it actually works
+- [`agent`](/sefy/reference/agent/) — what the `lock` line is about

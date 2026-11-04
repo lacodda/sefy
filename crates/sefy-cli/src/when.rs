@@ -22,6 +22,21 @@ pub fn moment(at: i64, now: i64) -> String {
     format!("{} ({})", date_time(at), ago(now - at))
 }
 
+/// A stretch of time as a person says it: `45s`, `14m`, `1h 5m`, `12h`.
+///
+/// To the minute once it is that long: "locks in 14m" is what anyone wants to
+/// know, and the seconds would be out of date before they were read.
+pub fn span(time: std::time::Duration) -> String {
+    let seconds = time.as_secs();
+    let (hours, minutes) = (seconds / 3600, seconds % 3600 / 60);
+    match (hours, minutes) {
+        (0, 0) => format!("{seconds}s"),
+        (0, minutes) => format!("{minutes}m"),
+        (hours, 0) => format!("{hours}h"),
+        (hours, minutes) => format!("{hours}h {minutes}m"),
+    }
+}
+
 /// `YYYY-MM-DD HH:MM UTC` for a Unix timestamp.
 pub fn date_time(at: i64) -> String {
     // Floor division, so times before 1970 land on the right day rather than

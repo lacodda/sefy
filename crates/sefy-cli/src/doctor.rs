@@ -9,6 +9,7 @@
 use crate::autosync::AutoSync;
 use crate::cli::{RemoteArgs, Switch};
 use crate::commands::{self, copies_line, size};
+use crate::session::Master;
 use crate::{device, output, session};
 use anyhow::{Result, bail};
 use sefy_core::{Plugin, Vault};
@@ -76,13 +77,14 @@ pub fn run(
         }
     };
     if let Some(path) = vault_path.as_deref() {
-        checks.push(copies(path, password.as_deref()));
+        checks.push(copies(path, password.as_ref()));
     }
+    checks.push(agent());
     checks.push(device());
 
     let installed = sefy_core::plugin::discover();
     checks.push(plugins(&installed));
-    let transport = transport(&installed, &remote, vault.as_ref(), password.as_deref());
+    let transport = transport(&installed, &remote, vault.as_ref(), password.as_ref());
     let reachable = transport.verdict == Verdict::Ok || transport.verdict == Verdict::Warn;
     checks.push(transport);
     checks.push(auto_sync_check(auto_sync, &remote, reachable));
@@ -126,7 +128,7 @@ fn open_vault(
     path: &Path,
     password_env: Option<&str>,
     checks: &mut Vec<Check>,
-) -> (Option<Vault>, Option<String>) {
+) -> (Option<Vault>, Option<Master>) {
     if !path.is_file() {
         checks.push(Check::new(
             "vault",
@@ -136,16 +138,8 @@ fn open_vault(
         return (None, None);
     }
 
-    let password = match session::password(password_env) {
-        Ok(password) => password,
-        Err(error) => {
-            checks.push(Check::new("vault", Verdict::Fail, format!("{error:#}")));
-            return (None, None);
-        }
-    };
-
-    let vault = match session::open(path, &password) {
-        Ok(vault) => vault,
+    let (vault, password) = match session::unlock(path, password_env) {
+        Ok(opened) => opened,
         Err(error) => {
             checks.push(Check::new("vault", Verdict::Fail, format!("{error:#}")));
             return (None, None);
@@ -203,7 +197,7 @@ fn open_vault(
 /// A copy that does not open under the vault's password is a safety net with
 /// a hole in it, and this is the moment to find out — not the day it is
 /// needed.
-fn copies(vault: &Path, password: Option<&str>) -> Check {
+fn copies(vault: &Path, password: Option<&Master>) -> Check {
     let copies = sefy_core::copies::list(vault);
     let summary = copies_line(&copies);
     let Some(password) = password else {
@@ -212,7 +206,7 @@ fn copies(vault: &Path, password: Option<&str>) -> Check {
 
     let unopened: Vec<String> = copies
         .iter()
-        .filter(|copy| Vault::open(&copy.path, password.as_bytes()).is_err())
+        .filter(|copy| !password.opener().opens(&copy.path))
         .map(|copy| copy.path.display().to_string())
         .collect();
     if unopened.is_empty() {
@@ -227,6 +221,29 @@ fn copies(vault: &Path, password: Option<&str>) -> Check {
             unopened.join(", ")
         ),
     )
+}
+
+/// Who is holding the password on this machine, and for how much longer.
+fn agent() -> Check {
+    let holders = session::holders();
+    if holders.is_empty() {
+        return Check::new(
+            "agent",
+            Verdict::Skip,
+            "nothing is holding the password; `sefy agent` would",
+        );
+    }
+    let lines: Vec<String> = holders
+        .iter()
+        .map(|(seat, left)| {
+            format!(
+                "the {} is holding the password, locks in {}",
+                seat.name(),
+                crate::when::span(*left)
+            )
+        })
+        .collect();
+    Check::new("agent", Verdict::Ok, lines.join("\n"))
 }
 
 fn device() -> Check {
@@ -290,7 +307,7 @@ fn transport(
     installed: &[Plugin],
     remote: &RemoteArgs,
     vault: Option<&Vault>,
-    password: Option<&str>,
+    password: Option<&Master>,
 ) -> Check {
     if installed.is_empty() {
         return Check::new("transport", Verdict::Skip, "no transport to check");
@@ -325,7 +342,7 @@ fn transport(
     let (Some(vault), Some(password)) = (vault, password) else {
         return Check::new("transport", Verdict::Ok, reached);
     };
-    let theirs = match fetched.open(password.as_bytes()) {
+    let theirs = match fetched.open(password.opener()) {
         Ok(theirs) => theirs,
         Err(sefy_core::Error::WrongPasswordOrNotAVault) => {
             return Check::new(
@@ -372,7 +389,7 @@ fn changes(report: &sefy_core::MergeReport) -> usize {
 }
 
 fn auto_sync_check(switch: Option<Switch>, remote: &RemoteArgs, reachable: bool) -> Check {
-    if !AutoSync::new(switch, "").is_on() {
+    if !AutoSync::is_wanted(switch) {
         return Check::new(
             "auto-sync",
             Verdict::Skip,

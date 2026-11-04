@@ -145,6 +145,10 @@ Every command, with its flags: **[the reference](https://lacodda.github.io/sefy/
   screen - every secret stays hidden until you ask to see it. Ctrl+Alt+Space
   brings up a search line over whatever you are doing, and Enter copies the
   password.
+- **Asked once, for as long as you say.** `sefy agent` keeps the password in
+  the memory of one process, and commands stop asking. Fifteen minutes with
+  nobody using it, twelve hours at most, or `sefy lock`: it wipes the password
+  and exits. The password never crosses its socket, and nothing lands on disk.
 - **An end, when one is needed.** `sefy wipe` overwrites the vault, the copies
   beside it and any unfinished save with random bytes and deletes them, once
   you type the vault's name back - there is no `--yes`.

@@ -23,7 +23,7 @@ path = "src/main.rs"
 winresource = "0.1"
 
 [dependencies]
-sefy-core = { workspace = true, features = ["clipboard"] }
+sefy-core = { workspace = true, features = ["agent", "clipboard"] }
 
 anyhow.workspace = true
 clap.workspace = true

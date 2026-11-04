@@ -172,6 +172,21 @@ error: 2 items match "ma":
 narrow the text, or use an id
 ```
 
+## Not typing it every time
+
+[`sefy agent`](/sefy/reference/agent/) asks for the password once and keeps it in
+memory. Commands stop asking until nobody has used the vault for 15 minutes, or
+until [`sefy lock`](/sefy/reference/lock/):
+
+```console
+$ sefy agent
+Master password:
+unlocked for 15m of nobody using it, 12h at most (agent pid 18792)
+`sefy lock` locks it now
+$ sefy get mail
+copied password of "mail" to the clipboard; clearing in 45s
+```
+
 ## In scripts
 
 Passwords come from environment variables you name yourself:

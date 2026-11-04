@@ -49,8 +49,7 @@ pub fn run(path: &Path, password_env: Option<&str>) -> Result<()> {
         );
     }
 
-    let password = session::password(password_env)?;
-    let vault = session::open(path, &password)?;
+    let (vault, _) = session::typed(path, password_env)?;
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -87,7 +86,13 @@ pub fn run(path: &Path, password_env: Option<&str>) -> Result<()> {
         Answer::Confirmed => {}
     }
 
+    // First: whatever happens to the files, a wipe is the wrong moment to leave
+    // the password in a process that outlives this one.
+    let locked = session::lock_everywhere();
     let wiped = vault.wipe();
+    if !locked.is_empty() {
+        println!("locked the {}", locked.join(" and the "));
+    }
     for part in &wiped.destroyed {
         println!("wiped  {}", file_name(part));
     }

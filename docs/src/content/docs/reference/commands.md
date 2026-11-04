@@ -9,6 +9,8 @@ password, and does one thing to the items inside it.
 [`completions`](/sefy/reference/completions/) are the exceptions: they report on
 the installation itself and need neither a vault nor a password. So is
 [`gen`](/sefy/reference/gen/), until it is asked to keep what it made, and
+[`lock`](/sefy/reference/lock/). [`status`](/sefy/reference/status/) never asks,
+and says what it can on a locked vault;
 [`doctor`](/sefy/reference/doctor/) checks a vault when it is given one and the
 rest of the machine either way.
 
@@ -85,6 +87,8 @@ get the same command.
 
 ### The vault itself
 
+- [`agent`](/sefy/reference/agent/) — keep the vault unlocked for a while, so that commands stop asking
+- [`lock`](/sefy/reference/lock/) — lock it now
 - [`change-password`](/sefy/reference/change-password/) — replace the master password
 - [`wipe`](/sefy/reference/wipe/) — overwrite and delete the vault and the copies beside it
 - [`plugin`](/sefy/reference/plugin/) — inspect the installed transports
@@ -118,6 +122,15 @@ The prompt talks to the terminal itself rather than to stdin, so a command
 whose input comes from a pipe can still ask — `cat notes.txt | sefy add note
 draft` works. With no terminal at all — a script, CI, a service — sefy refuses
 to prompt rather than hanging.
+
+With an [agent](/sefy/reference/agent/) running, or the vault unlocked in the
+[desktop app](/sefy/guides/desktop-app/#the-command-line-while-it-is-unlocked),
+commands do not ask at all, terminal or not. `--password-env` still means that
+password when it is given, and `change-password` and `wipe` always want it.
+
+| Variable | Meaning |
+| --- | --- |
+| `SEFY_AGENT_SOCKET` | Where agents listen, in place of the usual place: see [`agent`](/sefy/reference/agent/#environment). |
 
 ## Syncing after a change
 
