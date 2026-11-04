@@ -18,7 +18,7 @@ pub const NONCE_LEN: usize = 24;
 /// Length of the Poly1305 authentication tag appended to the ciphertext.
 pub const TAG_LEN: usize = 16;
 /// Length of the derived symmetric key.
-const KEY_LEN: usize = 32;
+pub const KEY_LEN: usize = 32;
 
 /// Argon2id cost parameters for format version 1.
 ///
@@ -54,6 +54,30 @@ impl DerivedKey {
             .hash_password_into(password, salt, key.as_mut())
             .map_err(|_| Error::KeyDerivation)?;
         Ok(Self(key))
+    }
+
+    /// A key that arrived whole from whoever derived it: an agent, over its
+    /// socket. The bytes are taken over, not copied.
+    pub fn from_bytes(bytes: Zeroizing<[u8; KEY_LEN]>) -> Self {
+        Self(bytes)
+    }
+
+    /// The key's bytes, to hand to a client of an agent.
+    pub fn as_bytes(&self) -> &[u8; KEY_LEN] {
+        &self.0
+    }
+
+    /// A second copy, wiped on its own when dropped.
+    pub fn duplicate(&self) -> Self {
+        Self(Zeroizing::new(*self.0))
+    }
+
+    /// Whether this is the same key.
+    ///
+    /// Compares two keys this process already holds, so nothing about the
+    /// timing is worth anything to anyone able to measure it.
+    pub fn same_as(&self, other: &Self) -> bool {
+        self.0.as_ref() == other.0.as_ref()
     }
 
     fn cipher(&self) -> Result<XChaCha20Poly1305> {

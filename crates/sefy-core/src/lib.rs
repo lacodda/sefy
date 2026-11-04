@@ -37,6 +37,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+#[cfg(feature = "agent")]
+pub mod agent;
 pub mod audit;
 pub mod clipboard;
 pub mod copies;
@@ -48,6 +50,7 @@ pub mod expiry;
 pub mod format;
 pub mod generate;
 pub mod history;
+pub mod keys;
 pub mod merge;
 pub mod model;
 pub mod otp;
@@ -68,6 +71,7 @@ pub use expiry::Expiry;
 pub use format::{FORMAT_VERSION, SEALING, Sealing};
 pub use generate::{Classes, Generated, Language, Recipe, generate};
 pub use history::{Change, ChangeKind, Line, Version};
+pub use keys::{FreshKey, KeySource, Opener};
 pub use merge::{Conflict, MergeReport, MergedItem, Side, merge};
 pub use model::{
     AuditAs, Field, FieldSpec, Item, ItemKind, ItemSummary, LEGACY_LOGIN_NAME, NewItem, Payload,

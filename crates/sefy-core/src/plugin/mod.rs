@@ -66,7 +66,7 @@ pub fn plugin_directory() -> Option<PathBuf> {
 }
 
 /// Base directory for per-user application data.
-fn data_directory() -> Option<PathBuf> {
+pub(crate) fn data_directory() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         std::env::var_os("APPDATA")

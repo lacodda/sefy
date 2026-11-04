@@ -32,6 +32,7 @@
 //! it was, and the report is the one the real operation would give.
 
 use crate::error::{Error, Result};
+use crate::keys::Opener;
 use crate::merge::{self, MergeReport, merge};
 use crate::plugin::{Operation, Plugin, Report, Request, invoke};
 use crate::vault::Vault;
@@ -59,8 +60,8 @@ impl Fetched {
     /// Opens the fetched copy, for reading only.
     ///
     /// It has no file of its own: it is folded from, compared, and dropped.
-    pub fn open(&self, password: &[u8]) -> Result<Vault> {
-        Vault::from_sealed(&self.sealed, password)
+    pub fn open<'a>(&self, opener: impl Into<Opener<'a>>) -> Result<Vault> {
+        Vault::from_sealed(&self.sealed, opener.into())
     }
 }
 
@@ -131,11 +132,11 @@ fn stamp(vault: &mut Vault, plugin: &Plugin, operation: &str) -> Result<()> {
 /// other side may well be under a different one — the same reason `merge` asks
 /// for it separately. The merge writes the vault back itself, so a pull that
 /// brought something across is on disk by the time it returns.
-pub fn pull(
+pub fn pull<'a>(
     vault: &mut Vault,
     plugin: &Plugin,
     name: &str,
-    remote_password: &[u8],
+    remote_password: impl Into<Opener<'a>>,
 ) -> Result<PullReport> {
     let fetched = fetch(plugin, name)?;
     let remote = fetched.open(remote_password)?;
@@ -192,11 +193,11 @@ pub fn fetch(plugin: &Plugin, name: &str) -> Result<Fetched> {
 /// The remote copy is fetched for real — there is no other way to know what
 /// it holds — but this vault is left exactly as it was, and no transfer is
 /// recorded.
-pub fn preview_pull(
+pub fn preview_pull<'a>(
     vault: &Vault,
     plugin: &Plugin,
     name: &str,
-    remote_password: &[u8],
+    remote_password: impl Into<Opener<'a>>,
 ) -> Result<PullReport> {
     let fetched = fetch(plugin, name)?;
     let remote = fetched.open(remote_password)?;
@@ -207,11 +208,11 @@ pub fn preview_pull(
 }
 
 /// What [`sync`] would do in each direction, with nothing written or sent.
-pub fn preview_sync(
+pub fn preview_sync<'a>(
     vault: &Vault,
     plugin: &Plugin,
     name: &str,
-    remote_password: &[u8],
+    remote_password: impl Into<Opener<'a>>,
 ) -> Result<SyncPreview> {
     let fetched = fetch(plugin, name)?;
     let remote = fetched.open(remote_password)?;
@@ -247,11 +248,11 @@ pub fn both_ways(vault: &Vault, mut remote: Vault) -> Result<(MergeReport, Merge
 /// not knowable from here — the format carries no counter in the clear, by
 /// design — so a sync that changed nothing costs one upload rather than a
 /// guess about whether it was needed.
-pub fn sync(
+pub fn sync<'a>(
     vault: &mut Vault,
     plugin: &Plugin,
     name: &str,
-    remote_password: &[u8],
+    remote_password: impl Into<Opener<'a>>,
 ) -> Result<SyncReport> {
     let pulled = pull(vault, plugin, name, remote_password)?;
     // Stamped as a sync, overwriting the "pull" the first leg left: one

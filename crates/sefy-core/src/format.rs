@@ -67,7 +67,16 @@ const MIN_FILE_LEN: usize = SALT_LEN + NONCE_LEN + TAG_LEN + 1;
 pub fn encode(password: &[u8], database: &[u8]) -> Result<Vec<u8>> {
     let salt = crate::crypto::random_bytes::<SALT_LEN>()?;
     let key = DerivedKey::derive(password, &salt)?;
+    seal_under(&salt, &key, database)
+}
 
+/// Encrypts a serialized database under a key already derived for `salt`.
+///
+/// For a key that came from whoever holds the password. The salt has to be a
+/// fresh one, as [`encode`] samples: a salt kept from one write to the next
+/// would be sixteen bytes every version of the file shares, in a format whose
+/// point is to share none.
+pub fn seal_under(salt: &[u8; SALT_LEN], key: &DerivedKey, database: &[u8]) -> Result<Vec<u8>> {
     let mut plaintext = Zeroizing::new(Vec::with_capacity(database.len() + 1));
     plaintext.push(FORMAT_VERSION);
     plaintext.extend_from_slice(database);
@@ -75,25 +84,42 @@ pub fn encode(password: &[u8], database: &[u8]) -> Result<Vec<u8>> {
     let (nonce, ciphertext) = key.seal(&plaintext)?;
 
     let mut file = Vec::with_capacity(SALT_LEN + NONCE_LEN + ciphertext.len());
-    file.extend_from_slice(&salt);
+    file.extend_from_slice(salt);
     file.extend_from_slice(&nonce);
     file.extend_from_slice(&ciphertext);
     Ok(file)
 }
 
+/// The salt at the front of a vault file.
+///
+/// Public by construction: it is the first thing in the file, and all a key
+/// for that file can be asked for by.
+pub fn salt_of(file: &[u8]) -> Result<[u8; SALT_LEN]> {
+    if file.len() < MIN_FILE_LEN {
+        return Err(Error::TooSmall);
+    }
+    let mut salt = [0u8; SALT_LEN];
+    salt.copy_from_slice(&file[..SALT_LEN]);
+    Ok(salt)
+}
+
 /// Decrypts the bytes of a vault file back into a serialized database.
 pub fn decode(password: &[u8], file: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+    let salt = salt_of(file)?;
+    let key = DerivedKey::derive(password, &salt)?;
+    open_under(&key, file)
+}
+
+/// Decrypts the bytes of a vault file under a key already derived for its salt.
+pub fn open_under(key: &DerivedKey, file: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
     if file.len() < MIN_FILE_LEN {
         return Err(Error::TooSmall);
     }
 
-    let mut salt = [0u8; SALT_LEN];
-    salt.copy_from_slice(&file[..SALT_LEN]);
     let mut nonce = [0u8; NONCE_LEN];
     nonce.copy_from_slice(&file[SALT_LEN..SALT_LEN + NONCE_LEN]);
     let ciphertext = &file[SALT_LEN + NONCE_LEN..];
 
-    let key = DerivedKey::derive(password, &salt)?;
     let plaintext = key.open(&nonce, ciphertext)?;
 
     match plaintext.first() {
@@ -125,6 +151,35 @@ mod tests {
         assert!(SEALING.cipher.starts_with("XChaCha20"));
         assert_eq!(SEALING.nonce_len, 24);
         assert_eq!(SEALING.format, FORMAT_VERSION);
+    }
+
+    #[test]
+    fn a_key_derived_elsewhere_makes_the_file_the_password_opens() {
+        // Sealed under a key an agent derived, the file is one the password
+        // alone opens: nothing about it says how it was written.
+        let salt = crate::crypto::random_bytes::<SALT_LEN>().unwrap();
+        let key = DerivedKey::derive(b"pw", &salt).unwrap();
+        let file = seal_under(&salt, &key, b"SQLite format 3\0rest").unwrap();
+
+        assert_eq!(salt_of(&file).unwrap(), salt);
+        assert_eq!(
+            decode(b"pw", &file).unwrap().as_slice(),
+            b"SQLite format 3\0rest"
+        );
+        assert_eq!(
+            open_under(&key, &file).unwrap().as_slice(),
+            b"SQLite format 3\0rest"
+        );
+    }
+
+    #[test]
+    fn a_key_for_another_salt_opens_nothing() {
+        let file = encode(b"pw", b"payload").unwrap();
+        let other = DerivedKey::derive(b"pw", &[1u8; SALT_LEN]).unwrap();
+        assert!(matches!(
+            open_under(&other, &file),
+            Err(Error::WrongPasswordOrNotAVault)
+        ));
     }
 
     #[test]

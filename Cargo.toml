@@ -52,6 +52,10 @@ anyhow = "1"
 # Default features off: `image-data` pulls in an image codec for copying
 # pictures, and sefy only ever copies text.
 arboard = { version = "3.7", default-features = false }
+# The agent's socket: a Unix domain socket or a named pipe behind one blocking
+# API, with no async runtime. Writing it by hand would mean unsafe FFI in the
+# one crate that forbids it.
+interprocess = "2.4"
 clap = { version = "4", features = ["derive", "env"] }
 # The line's interactive prompt crate (kasl, turnout). Default features off:
 # `editor` and `password` are dialoguer's own takes on two things sefy already

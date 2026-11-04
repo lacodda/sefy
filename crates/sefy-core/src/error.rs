@@ -226,6 +226,22 @@ pub enum Error {
     #[error("{0}")]
     Clipboard(String),
 
+    /// Whoever holds the password has locked, or is no longer there.
+    #[error("the vault was locked while this was running")]
+    KeysGone,
+
+    /// What was offered for sealing is not the password this vault was opened
+    /// with: another agent took the place of the first, or the password typed
+    /// when the first had gone was mistyped. Sealing under it would quietly
+    /// move the vault to a password its owner is not thinking of.
+    #[error("that is not the password this vault was opened with; nothing was written")]
+    KeysChanged,
+
+    /// This takes the password itself, and the vault was opened through a key
+    /// someone else derived.
+    #[error("this needs the master password typed, not an unlocked vault")]
+    PasswordNeeded,
+
     /// A filesystem operation failed.
     #[error("{context}: {source}")]
     Io {

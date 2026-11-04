@@ -2,10 +2,12 @@
 //! that move data between them.
 
 use crate::copies;
+use crate::crypto::{DerivedKey, SALT_LEN};
 use crate::db::{self, Stamp};
 use crate::error::{Error, Result};
 use crate::format;
 use crate::history::Version;
+use crate::keys::{KeySource, Opener};
 use crate::model::{Field, Item, ItemSummary, NewItem, Payload, Query};
 use crate::wipe::{self, Wiped};
 use rusqlite::Connection;
@@ -13,6 +15,7 @@ use std::cell::Cell;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
@@ -22,7 +25,7 @@ use zeroize::Zeroizing;
 /// is what puts anything on disk, and it only ever writes ciphertext.
 pub struct Vault {
     path: PathBuf,
-    password: Zeroizing<Vec<u8>>,
+    sealer: Sealer,
     connection: Connection,
     device: Option<String>,
     /// Whether this vault has a file of its own to be written to.
@@ -33,6 +36,22 @@ pub struct Vault {
     backing: Backing,
     /// How many times this value has written its file.
     writes: Cell<u64>,
+}
+
+/// How a save gets the key it seals with.
+enum Sealer {
+    /// From the password, which this value holds.
+    Password(Zeroizing<Vec<u8>>),
+    /// From a source that holds the password elsewhere. It answers for the
+    /// password this vault was opened with by giving the key for this salt
+    /// again, every time it is asked for a new one.
+    Source {
+        source: Arc<dyn KeySource>,
+        opened_salt: [u8; SALT_LEN],
+        opened_key: DerivedKey,
+    },
+    /// From nowhere: a copy with no file of its own is never sealed.
+    Nothing,
 }
 
 /// Where a vault's contents go when it is saved.
@@ -65,7 +84,7 @@ impl Vault {
 
         let vault = Self {
             path,
-            password: Zeroizing::new(password.to_vec()),
+            sealer: Sealer::Password(Zeroizing::new(password.to_vec())),
             connection: db::create()?,
             device: None,
             backing: Backing::File,
@@ -84,12 +103,48 @@ impl Vault {
 
         Ok(Self {
             path,
-            password: Zeroizing::new(password.to_vec()),
+            sealer: Sealer::Password(Zeroizing::new(password.to_vec())),
             connection: db::load(&database)?,
             device: None,
             backing: Backing::File,
             writes: Cell::new(0),
         })
+    }
+
+    /// Opens an existing vault file with a key from `source`, which keeps the
+    /// password to itself.
+    ///
+    /// A key that does not fit comes back as
+    /// [`Error::WrongPasswordOrNotAVault`], as a wrong password does; a source
+    /// with nothing to give as [`Error::KeysGone`]. Saving asks the source for
+    /// a key for a fresh salt, and refuses one from a source that is no longer
+    /// answering for the password that opened this.
+    pub fn open_through(path: impl AsRef<Path>, source: Arc<dyn KeySource>) -> Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        let file = fs::read(&path)
+            .map_err(|source| Error::io(format!("cannot read {}", path.display()), source))?;
+        let salt = format::salt_of(&file)?;
+        let key = source.key_for(&salt)?;
+        let database = format::open_under(&key, &file)?;
+
+        Ok(Self {
+            path,
+            sealer: Sealer::Source {
+                source,
+                opened_salt: salt,
+                opened_key: key,
+            },
+            connection: db::load(&database)?,
+            device: None,
+            backing: Backing::File,
+            writes: Cell::new(0),
+        })
+    }
+
+    /// Whether this value holds the master password itself, rather than a key
+    /// from a source that does.
+    pub fn holds_password(&self) -> bool {
+        matches!(self.sealer, Sealer::Password(_))
     }
 
     /// Opens a vault from the sealed bytes of its file, without a file of its
@@ -98,11 +153,11 @@ impl Vault {
     /// For the copy a transport fetched: it is read, folded from and dropped,
     /// and never written anywhere. The bytes are the same ciphertext the
     /// remote holds.
-    pub(crate) fn from_sealed(sealed: &[u8], password: &[u8]) -> Result<Self> {
-        let database = format::decode(password, sealed)?;
+    pub(crate) fn from_sealed(sealed: &[u8], opener: Opener<'_>) -> Result<Self> {
+        let database = opener.open(sealed)?;
         Ok(Self {
             path: PathBuf::new(),
-            password: Zeroizing::new(Vec::new()),
+            sealer: Sealer::Nothing,
             connection: db::load(&database)?,
             device: None,
             backing: Backing::Memory,
@@ -119,7 +174,7 @@ impl Vault {
         let database = Zeroizing::new(db::dump(&self.connection)?);
         Ok(Self {
             path: self.path.clone(),
-            password: Zeroizing::new(Vec::new()),
+            sealer: Sealer::Nothing,
             connection: db::load(&database)?,
             device: self.device.clone(),
             backing: Backing::Memory,
@@ -158,7 +213,23 @@ impl Vault {
             "a vault with no file of its own was asked to save"
         );
         let database = Zeroizing::new(db::dump(&self.connection)?);
-        let sealed = format::encode(&self.password, &database)?;
+        let sealed = match &self.sealer {
+            Sealer::Password(password) => format::encode(password, &database)?,
+            Sealer::Source {
+                source,
+                opened_salt,
+                opened_key,
+            } => {
+                let fresh = source.fresh(opened_salt)?;
+                // Before anything is sealed: whoever holds the password now
+                // has to be holding the one that opened this.
+                if !fresh.proof.same_as(opened_key) {
+                    return Err(Error::KeysChanged);
+                }
+                format::seal_under(&fresh.salt, &fresh.key, &database)?
+            }
+            Sealer::Nothing => unreachable!("only a copy without a file has no sealer"),
+        };
         write_atomically(&self.path, &sealed)?;
         self.writes.set(self.writes.get() + 1);
         Ok(())
@@ -455,8 +526,16 @@ impl Vault {
     /// the retired password still opens — and retiring it is usually the
     /// whole point of changing it. The vault goes first: it is the one that
     /// matters if anything stops halfway.
+    ///
+    /// A vault opened through a [`KeySource`] refuses with
+    /// [`Error::PasswordNeeded`]: retiring a password takes knowing it, not
+    /// having found the vault unlocked.
     pub fn change_password(&mut self, password: &[u8]) -> Result<PasswordChange> {
-        let old = std::mem::replace(&mut self.password, Zeroizing::new(password.to_vec()));
+        let Sealer::Password(old) = &self.sealer else {
+            return Err(Error::PasswordNeeded);
+        };
+        let old = old.clone();
+        self.sealer = Sealer::Password(Zeroizing::new(password.to_vec()));
         self.save()?;
         copies::reseal(&self.path, &old, password)
     }
