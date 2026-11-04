@@ -24,6 +24,20 @@ The program is `sefy-gui`, so it never takes the command line's `sefy` on
 `PATH`. Run the installer again to update; a window that is open is left
 alone, and the installer says to close it first.
 
+### If Windows refuses the installer
+
+sefy's installers are not code signed, and a security program may stop one that
+few machines have seen yet. The one-line installer then says so, without treating
+it as the end: the command line is already in place by that point and works without
+the window. Nothing about the vault format depends on the desktop app.
+
+Do not turn your protection off for it. The installer is built in the open by this
+repository's [release workflow](https://github.com/lacodda/sefy/actions/workflows/release.yml)
+from the tagged source, and the release page lists the digest of every file. You
+can also [run the window from source](https://github.com/lacodda/sefy/blob/main/CONTRIBUTING.md#the-desktop-app).
+
+### One window
+
 There is one window. Starting the program again brings it forward, and starting
 it on a file hands the file over: another file locks the vault that is open and
 offers the new one, since you asked for another vault and the first should not

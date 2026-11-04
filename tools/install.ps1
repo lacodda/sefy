@@ -142,27 +142,43 @@ if (Get-Process sefy-gui -ErrorAction SilentlyContinue) {
         }
         # Started as a process of its own and waited for: the arguments reach
         # the installer intact only this way.
-        $run = Start-Process -FilePath $setup -ArgumentList "/S", "/CURRENTUSER" -PassThru -Wait
-        if ($run.ExitCode -eq 2) {
+        #
+        # The system can refuse to start it: these installers are not code
+        # signed, and a security program may stop one few machines have seen.
+        # The command line above is installed by then and works without the
+        # window, so that is said plainly and is not the end of this script.
+        $refused = $null
+        try {
+            $run = Start-Process -FilePath $setup -ArgumentList "/S", "/CURRENTUSER" -PassThru -Wait
+        } catch {
+            $refused = $_.Exception.Message
+        }
+        if ($refused) {
+            Write-Warning "The desktop app was not installed: Windows would not start its installer."
+            Write-Warning $refused
+            Write-Warning "The command line is installed and works without it. See https://lacodda.github.io/sefy/guides/desktop-app/#if-windows-refuses-the-installer"
+        } elseif ($run.ExitCode -eq 2) {
             # An upgrade can stop at the old version's uninstaller, which the
             # installer runs first and gives up on when it does not answer 0.
             # Its update mode installs over the old files instead.
             $run = Start-Process -FilePath $setup -ArgumentList "/S", "/UPDATE", "/CURRENTUSER" -PassThru -Wait
         }
-        if ($run.ExitCode -ne 0) {
+        if (-not $refused -and $run.ExitCode -ne 0) {
             throw "The desktop app's installer stopped with code $($run.ExitCode)"
         }
     } finally {
         Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     }
-    # The file, not the exit code, says what is installed: an installer can
-    # finish cleanly and leave the old version in place.
-    if (-not (Test-Path $app)) {
-        throw "The desktop app's installer finished, but $app is not there"
+    if (-not $refused) {
+        # The file, not the exit code, says what is installed: an installer can
+        # finish cleanly and leave the old version in place.
+        if (-not (Test-Path $app)) {
+            throw "The desktop app's installer finished, but $app is not there"
+        }
+        $installed = (Get-Item $app).VersionInfo.FileVersion
+        if ($installed -ne $version) {
+            throw "The desktop app's installer finished, but $app is version $installed rather than $version"
+        }
+        Write-Host "Installed the sefy desktop app $tag to $app - start it from the Start menu."
     }
-    $installed = (Get-Item $app).VersionInfo.FileVersion
-    if ($installed -ne $version) {
-        throw "The desktop app's installer finished, but $app is version $installed rather than $version"
-    }
-    Write-Host "Installed the sefy desktop app $tag to $app - start it from the Start menu."
 }
