@@ -19,6 +19,62 @@ Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
 
+## [0.20.0] - 2026-11-06
+
+The window stops being a place to read: it syncs, it brings back an earlier version
+of an item, it sets how long the vault stays unlocked, and it wipes.
+
+**Sync** lists every transport on the machine, working or not, and says why one
+cannot be used. **Sync now** is `sefy sync`, and asks for the remote copy's own
+password when this vault's does not open it; **Push…** is `sefy push`, for a first
+copy, and asks first. What a sync brought is shown by title for as long as the vault
+stays unlocked, with an item changed on both machines marked **kept both**: the name
+goes to the other version, in the item's history.
+
+**An item's history** is under its fields: every version, on which machine, which
+fields it changed. A version reads by the same rules as the card, secrets named until
+you ask, and **Bring back** makes it current, keeping what it replaced as a version of
+its own.
+
+**Settings** sets how long the vault stays unlocked and how long a copy stays on the
+clipboard, changes the master password, says what `sefy status` says, and wipes,
+taking the vault's name and the password typed. The two times are kept **inside the
+vault**: there is still no settings file, the command line obeys them unless a flag
+says otherwise (`agent --ttl`, `--clear-after`), and `sefy status` shows them. A merge
+does not carry them, so each copy of a vault can have its own.
+
+**A save no longer writes over a file it did not read.** Until now a command that
+opened the vault and saved it later erased whatever was written in between, without a
+word: `sefy edit` with a note open in an editor, two terminals, a sync client
+replacing the file. Now it writes nothing and says to run it again, except `sefy edit`,
+which goes on top of the file as it is and keeps what it replaced in the item's
+history. The file's salt names its version, so nothing was added to the format
+(ADR-0013). The window looks at the file every couple of seconds and keeps up with what
+the command line wrote, which until now it did not see before the next unlock.
+
+Also fixed:
+
+- `sefy status | head -4`, and any printing command with nobody left reading, panicked.
+  It now carries on quietly, and what it changes still gets saved.
+- An empty `SEFY_VAULT` or `SEFY_AUTO_SYNC` stopped every command, including `sefy lock`,
+  while parsing arguments. Empty now means not set.
+- When Windows refuses the desktop app's installer, the one-line installer says so and
+  finishes: the command line is in place by then. These installers are not code signed,
+  and Microsoft Defender may stop one few machines have seen.
+- A build for Linux from Windows looked for a resource compiler it had no use for.
+- Versions the window writes now say which machine, as the command line's do.
+- The window is on dowel-ui 0.43, with overlay scrollbars that move nothing when they
+  appear.
+
+### Breaking Changes
+
+**Vault files: none.** The file format is still version 1 and the database schema is
+unchanged at 5. The two new settings are entries in a table every build since 0.8.0
+has, which an older build does not read and carries along.
+
+A command can now fail with "changed on disk, run the command again" where it used to
+overwrite. An older build goes on overwriting, as it always did.
+
 ## [0.19.0] - 2026-11-03
 
 Asked once, for as long as you say: the master password in the memory of one
