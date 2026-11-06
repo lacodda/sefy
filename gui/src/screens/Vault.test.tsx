@@ -417,7 +417,7 @@ describe('the open vault', () => {
           : cmd === 'last_transfer'
             ? {
                 at: 1_700_000_100,
-                transport: 'github',
+                transport: 'relay',
                 operation: 'sync',
                 added: [],
                 updated: [],

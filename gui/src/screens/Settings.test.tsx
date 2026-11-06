@@ -20,7 +20,7 @@ const STATUS: VaultStatus = {
   tags: 2,
   schema: 5,
   writtenByNewer: false,
-  lastSync: { at: 1_700_000_000, transport: 'github', operation: 'sync' },
+  lastSync: { at: 1_700_000_000, transport: 'relay', operation: 'sync' },
   copies: 1,
   newestCopy: 1_700_000_000,
   sealing: {
@@ -51,7 +51,7 @@ const PREVIEW: WipePreview = {
     { name: 'notes.bak', role: 'the vault', size: 86_118 },
     { name: '.notes.bak.1', role: 'the most recent copy', size: 86_000 },
   ],
-  remote: 'github',
+  remote: 'relay',
 }
 
 const REFUSED: Failure = { kind: 'refused', message: 'wrong password or not a vault file' }
@@ -74,7 +74,7 @@ function bridge() {
         return PREVIEW
       case 'wipe':
         if (given!.password !== 'right') throw REFUSED
-        return { destroyed: 2, vanished: 0, failed: [], remote: 'github' } satisfies WipeOutcome
+        return { destroyed: 2, vanished: 0, failed: [], remote: 'relay' } satisfies WipeOutcome
       default:
         return null
     }
@@ -195,7 +195,7 @@ describe('the Settings screen', () => {
 
     expect(await within(dialog).findByText('.notes.bak.1')).toBeInTheDocument()
     expect(within(dialog).getByText('the most recent copy')).toBeInTheDocument()
-    expect(within(dialog).getByText(/kept through github is not touched/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/kept through relay is not touched/)).toBeInTheDocument()
     expect(within(dialog).getByText(/An SSD, a snapshot/)).toBeInTheDocument()
 
     const submit = within(dialog).getByRole('button', { name: 'Wipe it' })

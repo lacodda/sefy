@@ -19,7 +19,7 @@ const STATUS: VaultStatus = {
   tags: 0,
   schema: 5,
   writtenByNewer: false,
-  lastSync: { at: 1_700_000_000, transport: 'github', operation: 'sync' },
+  lastSync: { at: 1_700_000_000, transport: 'relay', operation: 'sync' },
   copies: 0,
   newestCopy: null,
   sealing: {
@@ -37,7 +37,7 @@ const STATUS: VaultStatus = {
 
 const TRANSPORTS: Transports = {
   found: [
-    { name: 'github', version: '0.20.0', protocol: 1, operations: ['push', 'pull'], problem: null },
+    { name: 'relay', version: '0.20.0', protocol: 1, operations: ['push', 'pull'], problem: null },
     { name: 'publish', version: '1.0.0', protocol: 1, operations: ['push'], problem: null },
     { name: 'future', version: '9.0.0', protocol: 99, operations: [], problem: 'it speaks protocol 99 and this build speaks 1' },
   ],
@@ -47,7 +47,7 @@ const TRANSPORTS: Transports = {
 
 const MERGED: Transfer = {
   at: 1_700_000_100,
-  transport: 'github',
+  transport: 'relay',
   operation: 'sync',
   added: [{ id: 7, title: 'vpn office' }],
   updated: [{ id: 2, title: 'apartment wifi' }],
@@ -102,9 +102,9 @@ describe('the Sync screen', () => {
     bridge(() => MERGED)
     render(<Sync status={STATUS} onOpenHistory={() => undefined} />)
 
-    const github = await card('github')
-    expect(within(github).getByText('last used by this vault')).toBeInTheDocument()
-    expect(within(github).getByRole('button', { name: 'Sync now' })).toBeEnabled()
+    const relay = await card('relay')
+    expect(within(relay).getByText('last used by this vault')).toBeInTheDocument()
+    expect(within(relay).getByRole('button', { name: 'Sync now' })).toBeEnabled()
 
     const future = await card('future')
     expect(within(future).getByText(/speaks protocol 99/)).toBeInTheDocument()
@@ -124,7 +124,7 @@ describe('the Sync screen', () => {
     const onOpenHistory = vi.fn()
     render(<Sync status={STATUS} onOpenHistory={onOpenHistory} />)
 
-    await userEvent.click(within(await card('github')).getByRole('button', { name: 'Sync now' }))
+    await userEvent.click(within(await card('relay')).getByRole('button', { name: 'Sync now' }))
 
     expect(await screen.findByText('vpn office')).toBeInTheDocument()
     expect(screen.getByText('apartment wifi')).toBeInTheDocument()
@@ -134,7 +134,7 @@ describe('the Sync screen', () => {
     expect(screen.getByText(/\.notes\.bak\.1/)).toBeInTheDocument()
 
     const syncs = calls.calls.filter(([cmd]) => cmd === 'sync_now')
-    expect(syncs).toEqual([['sync_now', { transport: 'github', remotePassword: null }]])
+    expect(syncs).toEqual([['sync_now', { transport: 'relay', remotePassword: null }]])
 
     await userEvent.click(screen.getByRole('button', { name: 'bank · main' }))
     expect(onOpenHistory).toHaveBeenCalledWith(4)
@@ -158,14 +158,14 @@ describe('the Sync screen', () => {
   })
 
   it('asks for the copy’s own password when this vault’s does not open it', async () => {
-    const refused: Failure = { kind: 'remote-refused', message: 'that password does not open the copy at github' }
+    const refused: Failure = { kind: 'remote-refused', message: 'that password does not open the copy at relay' }
     const calls = bridge((password) => (password === 'the remote one' ? MERGED : refused))
     render(<Sync status={STATUS} onOpenHistory={() => undefined} />)
 
-    await userEvent.click(within(await card('github')).getByRole('button', { name: 'Sync now' }))
+    await userEvent.click(within(await card('relay')).getByRole('button', { name: 'Sync now' }))
 
     const dialog = await screen.findByRole('dialog')
-    expect(within(dialog).getByText(/does not open the copy kept through github/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/does not open the copy kept through relay/)).toBeInTheDocument()
     // Not said as a failure before anyone has typed anything.
     expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument()
 
@@ -183,7 +183,7 @@ describe('the Sync screen', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(calls.calls.filter(([cmd]) => cmd === 'sync_now').at(-1)).toEqual([
       'sync_now',
-      { transport: 'github', remotePassword: 'the remote one' },
+      { transport: 'relay', remotePassword: 'the remote one' },
     ])
   })
 
@@ -195,7 +195,7 @@ describe('the Sync screen', () => {
     bridge(() => failed)
     render(<Sync status={STATUS} onOpenHistory={() => undefined} />)
 
-    await userEvent.click(within(await card('github')).getByRole('button', { name: 'Sync now' }))
+    await userEvent.click(within(await card('relay')).getByRole('button', { name: 'Sync now' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('holds no copy called')
   })
 
@@ -203,7 +203,7 @@ describe('the Sync screen', () => {
     bridge(() => ({ ...MERGED, sendFailure: 'the network went away' }))
     render(<Sync status={STATUS} onOpenHistory={() => undefined} />)
 
-    await userEvent.click(within(await card('github')).getByRole('button', { name: 'Sync now' }))
+    await userEvent.click(within(await card('relay')).getByRole('button', { name: 'Sync now' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('What came down is in the vault')
     expect(screen.getByText('vpn office')).toBeInTheDocument()
   })
@@ -212,7 +212,7 @@ describe('the Sync screen', () => {
     const calls = bridge(() => MERGED)
     render(<Sync status={STATUS} onOpenHistory={() => undefined} />)
 
-    await userEvent.click(within(await card('github')).getByRole('button', { name: 'Push…' }))
+    await userEvent.click(within(await card('relay')).getByRole('button', { name: 'Push…' }))
     const dialog = await screen.findByRole('alertdialog')
     expect(within(dialog).getByText(/in place of whatever the remote holds/)).toBeInTheDocument()
     expect(calls.calls.some(([cmd]) => cmd === 'push_now')).toBe(false)
@@ -221,9 +221,9 @@ describe('the Sync screen', () => {
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
     expect(calls.calls.some(([cmd]) => cmd === 'push_now')).toBe(false)
 
-    await userEvent.click(within(await card('github')).getByRole('button', { name: 'Push…' }))
+    await userEvent.click(within(await card('relay')).getByRole('button', { name: 'Push…' }))
     await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Push' }))
     expect(await screen.findByText('The copy at the remote is now this vault.')).toBeInTheDocument()
-    expect(calls.calls.filter(([cmd]) => cmd === 'push_now')).toEqual([['push_now', { transport: 'github' }]])
+    expect(calls.calls.filter(([cmd]) => cmd === 'push_now')).toEqual([['push_now', { transport: 'relay' }]])
   })
 })

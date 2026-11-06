@@ -76,9 +76,9 @@ function backend(file: string | null = STATUS.path, hold = true): Backend {
       case 'status':
         return STATUS
       case 'wipe_preview':
-        return { name: STATUS.name, directory: 'C:\\Backups', parts: [], remote: 'github' }
+        return { name: STATUS.name, directory: 'C:\\Backups', parts: [], remote: 'relay' }
       case 'wipe':
-        return { destroyed: 2, vanished: 0, failed: [], remote: 'github' }
+        return { destroyed: 2, vanished: 0, failed: [], remote: 'relay' }
       case 'policy':
         return {
           clipboardSeconds: 45,
@@ -358,7 +358,7 @@ describe('the window', () => {
 
     const said = await screen.findByRole('status')
     expect(said).toHaveTextContent('The vault is wiped: 2 files overwritten and deleted.')
-    expect(said).toHaveTextContent('The copy kept through github is not touched')
+    expect(said).toHaveTextContent('The copy kept through relay is not touched')
     expect(screen.getByText('No file chosen')).toBeInTheDocument()
     expect(screen.queryByText('notes.bak')).not.toBeInTheDocument()
   })
