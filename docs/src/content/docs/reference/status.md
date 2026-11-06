@@ -22,6 +22,7 @@ schema   5
 sealed   Argon2id (64 MiB, 3 passes, 4 lanes), XChaCha20-Poly1305, format v1
 synced   2026-09-16 19:15 UTC (2 hours ago) through github (sync)
 copies   2 copies beside the vault, newest 2026-09-16 19:15 UTC (2 hours ago)
+policy   locks after 15m idle, the clipboard clears after 45s
 plugins  github, sftp
 ```
 
@@ -36,6 +37,7 @@ plugins  github, sftp
 | `sealed` | How the file is sealed: the key derivation and what it costs, the cipher, the file format — see [Vault format](/sefy/concepts/vault-format/). Read from the numbers the derivation runs on, so it cannot describe one thing while the code does another. |
 | `synced` | When this vault last reached a remote, through which transport, and by which command. |
 | `copies` | The [copies kept beside the vault](/sefy/guides/syncing/#a-copy-before-every-merge) before a merge or an import changed it, and when the newest was taken. |
+| `policy` | What this vault says about how long it stays unlocked and how long a copy stays on the clipboard. Kept inside it, set in the [desktop app](/sefy/guides/desktop-app/#settings), and what [`agent`](/sefy/reference/agent/) and [`get`](/sefy/reference/get/) go by unless told otherwise. |
 | `plugins` | Transports installed on this machine, with any unusable one marked. |
 
 ## On a locked vault

@@ -74,3 +74,4 @@ machines then need the new password to pull.
 
 - [Moving a vault between machines](/sefy/guides/moving-a-vault/) — backups and old copies
 - [How the vault works](/sefy/concepts/vault-format/) — salt, nonce and key derivation
+- [The desktop app](/sefy/guides/desktop-app/#settings) — the same change, from Settings

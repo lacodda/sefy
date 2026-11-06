@@ -95,3 +95,4 @@ after all, [`restore`](/sefy/reference/restore/) it and sync again.
 - [`merge`](/sefy/reference/merge/) — folding in a local file instead
 - [`doctor`](/sefy/reference/doctor/) — check that a sync would work, without one
 - [Moving a vault between machines](/sefy/guides/moving-a-vault/)
+- [The desktop app](/sefy/guides/desktop-app/#sync) — the same sync, from a window

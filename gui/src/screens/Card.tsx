@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import { History as HistoryIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Chip } from '@/components/ui/chip'
 import * as ipc from '@/ipc'
-import type { CardField, Failure, ItemCard } from '@/ipc'
+import type { CardBody, CardField, Failure, ItemCard, VersionRow } from '@/ipc'
 import { CopyButton, unexpected } from '@/lib/copies'
 import { Button } from '@/components/ui/button'
 import { ago, nowSeconds, size } from '@/lib/format'
@@ -10,6 +12,11 @@ import { text } from '@/text'
 
 interface Props {
   card: ItemCard
+  /** Starts with the history showing: how a conflict from the Sync screen
+   * arrives here. */
+  historyFirst?: boolean
+  /** Goes up when what the vault holds may have moved on. */
+  revision?: number
 }
 
 /**
@@ -21,8 +28,9 @@ interface Props {
  * lock - the card is drawn per item, and the page forgets it when it goes.
  * Copy never brings the value into the page at all.
  */
-export function Card({ card }: Props) {
+export function Card({ card, historyFirst = false, revision = 0 }: Props) {
   const [failure, setFailure] = useState<Failure | null>(null)
+  const [showingHistory, setShowingHistory] = useState(historyFirst)
   const now = nowSeconds()
 
   return (
@@ -50,7 +58,24 @@ export function Card({ card }: Props) {
         </Alert>
       )}
 
-      <Body card={card} onFailure={setFailure} />
+      {showingHistory ? (
+        <History id={card.id} revision={revision} onFailure={setFailure} />
+      ) : (
+        <Body id={card.id} body={card.body} onFailure={setFailure} />
+      )}
+
+      {card.earlierVersions > 0 ? (
+        <div>
+          <Button
+            size="sm"
+            aria-pressed={showingHistory}
+            onClick={() => setShowingHistory((now) => !now)}
+          >
+            <HistoryIcon aria-hidden />
+            {showingHistory ? text.card.current : text.card.historyOf(card.earlierVersions)}
+          </Button>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-line pt-3 font-mono text-2xs text-faint">
         <span>
@@ -59,7 +84,6 @@ export function Card({ card }: Props) {
         <span>
           {text.card.modified} {ago(card.updatedAt, now)}
         </span>
-        {card.earlierVersions > 0 ? <span>{text.card.earlier(card.earlierVersions)}</span> : null}
         <span title={card.uuid}>
           {text.card.uuid} {card.uuid.slice(0, 8)}…{card.uuid.slice(-4)}
         </span>
@@ -68,15 +92,29 @@ export function Card({ card }: Props) {
   )
 }
 
-function Body({ card, onFailure }: { card: ItemCard; onFailure: (failure: Failure) => void }) {
-  const { body } = card
+/**
+ * What an item holds, or held: `version` names the earlier one, when it is not
+ * the item as it is now. The same rules either way, and the same request for each
+ * secret: nothing about a version being old makes a password in it less of one.
+ */
+function Body({
+  id,
+  body,
+  version,
+  onFailure,
+}: {
+  id: number
+  body: CardBody
+  version?: string
+  onFailure: (failure: Failure) => void
+}) {
   switch (body.shape) {
     case 'note':
       return (
         <section aria-label={text.card.text} className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-2">
             <Label>{text.card.text}</Label>
-            <CopyButton id={card.id} field={null} label={text.card.copyOf('note')} onFailure={onFailure} />
+            <CopyButton id={id} field={null} version={version} label={text.card.copyOf('note')} onFailure={onFailure} />
           </div>
           <pre className="overflow-x-auto rounded-md border border-line bg-bg px-3.5 py-3 font-mono text-sm leading-relaxed whitespace-pre-wrap text-text">
             {body.text}
@@ -87,7 +125,7 @@ function Body({ card, onFailure }: { card: ItemCard; onFailure: (failure: Failur
       return (
         <div className="flex flex-col gap-3">
           {body.fields.map((field) => (
-            <Field key={field.name} id={card.id} field={field} onFailure={onFailure} />
+            <Field key={field.name} id={id} field={field} version={version} onFailure={onFailure} />
           ))}
         </div>
       )
@@ -118,7 +156,17 @@ function Line({ children }: { children: React.ReactNode }) {
 }
 
 /** One field of a record. */
-function Field({ id, field, onFailure }: { id: number; field: CardField; onFailure: (failure: Failure) => void }) {
+function Field({
+  id,
+  field,
+  version,
+  onFailure,
+}: {
+  id: number
+  field: CardField
+  version?: string
+  onFailure: (failure: Failure) => void
+}) {
   return (
     <section aria-label={field.name} className="flex flex-col gap-1.5">
       <Label>{field.name}</Label>
@@ -128,12 +176,12 @@ function Field({ id, field, onFailure }: { id: number; field: CardField; onFailu
             {field.value}
           </span>
           {field.daysLeft === null ? null : <Due days={field.daysLeft} />}
-          <CopyButton id={id} field={field.name} label={text.card.copyOf(field.name)} onFailure={onFailure} />
+          <CopyButton id={id} field={field.name} version={version} label={text.card.copyOf(field.name)} onFailure={onFailure} />
         </Line>
       ) : field.shape === 'secret' ? (
-        <Secret id={id} name={field.name} onFailure={onFailure} />
+        <Secret id={id} name={field.name} version={version} onFailure={onFailure} />
       ) : (
-        <Code id={id} name={field.name} period={field.period} onFailure={onFailure} />
+        <Code id={id} name={field.name} period={field.period} version={version} onFailure={onFailure} />
       )}
     </section>
   )
@@ -150,7 +198,17 @@ function Due({ days }: { days: number }) {
 }
 
 /** A secret field: dots until asked, the value until hidden again. */
-function Secret({ id, name, onFailure }: { id: number; name: string; onFailure: (failure: Failure) => void }) {
+function Secret({
+  id,
+  name,
+  version,
+  onFailure,
+}: {
+  id: number
+  name: string
+  version?: string
+  onFailure: (failure: Failure) => void
+}) {
   const [shown, setShown] = useState<string | null>(null)
 
   const toggle = () => {
@@ -159,7 +217,7 @@ function Secret({ id, name, onFailure }: { id: number; name: string; onFailure: 
       return
     }
     ipc
-      .reveal(id, name)
+      .reveal(id, name, version)
       .then((revealed) => setShown(revealed.value))
       .catch((cause: unknown) => onFailure(ipc.isFailure(cause) ? cause : unexpected(cause)))
   }
@@ -176,7 +234,7 @@ function Secret({ id, name, onFailure }: { id: number; name: string; onFailure: 
         {shown ?? text.card.hidden}
       </span>
       <RevealButton shown={shown !== null} name={name} onClick={toggle} />
-      <CopyButton id={id} field={name} label={text.card.copyOf(name)} onFailure={onFailure} />
+      <CopyButton id={id} field={name} version={version} label={text.card.copyOf(name)} onFailure={onFailure} />
     </Line>
   )
 }
@@ -216,11 +274,13 @@ function Code({
   id,
   name,
   period,
+  version,
   onFailure,
 }: {
   id: number
   name: string
   period: number
+  version?: string
   onFailure: (failure: Failure) => void
 }) {
   const now = useClock()
@@ -235,13 +295,13 @@ function Code({
     if (!shown || code?.step === step) return
     let current = true
     ipc
-      .reveal(id, name)
+      .reveal(id, name, version)
       .then((revealed) => current && setCode({ step, value: revealed.value }))
       .catch((cause: unknown) => current && onFailure(ipc.isFailure(cause) ? cause : unexpected(cause)))
     return () => {
       current = false
     }
-  }, [shown, step, code?.step, id, name, onFailure])
+  }, [shown, step, code?.step, id, name, version, onFailure])
 
   const value = shown && code !== null ? code.value : null
   const spaced = value === null ? text.card.codeHidden : value.replace(/^(\d{3})(\d{3})$/, '$1 $2')
@@ -279,7 +339,107 @@ function Code({
           setCode(null)
         }}
       />
-      <CopyButton id={id} field={name} label={text.card.copyOf(text.card.code)} onFailure={onFailure} />
+      <CopyButton id={id} field={name} version={version} label={text.card.copyOf(text.card.code)} onFailure={onFailure} />
     </Line>
+  )
+}
+
+/**
+ * Every version of an item, newest first, with who wrote it and which fields it
+ * changed. Opening one shows what it held, by the same rules as the card, with the
+ * way to bring it back; a version a conflict left behind opens by itself, since
+ * that is what someone arriving from the Sync screen came to read.
+ */
+function History({
+  id,
+  revision,
+  onFailure,
+}: {
+  id: number
+  revision: number
+  onFailure: (failure: Failure) => void
+}) {
+  const [versions, setVersions] = useState<VersionRow[] | null>(null)
+  const [opened, setOpened] = useState<string | null>(null)
+  const [restored, setRestored] = useState<number | null>(null)
+
+  useEffect(() => {
+    let live = true
+    ipc
+      .history(id)
+      .then((found) => {
+        if (!live) return
+        setVersions(found)
+        // Newest first from here on; a new version from a restore changes the
+        // list, and an open one stays open.
+        setOpened((now) => now ?? [...found].reverse().find((version) => version.conflict)?.uuid ?? null)
+      })
+      .catch((cause: unknown) => live && onFailure(ipc.isFailure(cause) ? cause : unexpected(cause)))
+    return () => {
+      live = false
+    }
+  }, [id, revision, onFailure])
+
+  const restore = (version: VersionRow) => {
+    ipc
+      .restore(id, version.uuid)
+      .then((changed) => {
+        if (changed) setRestored(version.number)
+      })
+      .catch((cause: unknown) => onFailure(ipc.isFailure(cause) ? cause : unexpected(cause)))
+  }
+
+  const now = nowSeconds()
+
+  return (
+    <section aria-label={text.card.history} className="flex flex-col gap-2">
+      {restored === null ? null : (
+        <Alert tone="good" role="status">
+          {text.card.restored(restored)}
+        </Alert>
+      )}
+      {(versions ?? []).toReversed().map((version) => {
+        const open = opened === version.uuid
+        return (
+          <div key={version.uuid} className="flex flex-col gap-3 rounded-md border border-line p-2">
+            <Button
+              variant="icon"
+              size="sm"
+              aria-expanded={open}
+              onClick={() => setOpened(open ? null : version.uuid)}
+              className="h-auto min-h-7 w-full flex-wrap justify-start gap-x-2 gap-y-1 py-1 text-left font-mono"
+            >
+              <span className="font-semibold text-text">v{version.number}</span>
+              <span>{ago(version.madeAt, now)}</span>
+              {version.device === null ? null : <span>· {version.device}</span>}
+              {version.changed.length === 0 ? null : (
+                <span className="min-w-0 truncate">· {version.changed.join(', ')}</span>
+              )}
+              <span className="ml-auto flex items-center gap-1.5">
+                {version.conflict ? <Badge variant="warn">{text.card.keptFromConflict}</Badge> : null}
+                {version.current ? <Badge variant="accent">{text.card.currentVersion}</Badge> : null}
+              </span>
+            </Button>
+            {open ? (
+              <>
+                <Body
+                  id={id}
+                  body={version.body}
+                  version={version.current ? undefined : version.uuid}
+                  onFailure={onFailure}
+                />
+                {version.current ? null : (
+                  <div>
+                    <Button size="sm" onClick={() => restore(version)}>
+                      {text.card.restore(version.number)}
+                    </Button>
+                  </div>
+                )}
+              </>
+            ) : null}
+          </div>
+        )
+      })}
+    </section>
   )
 }

@@ -87,12 +87,16 @@ mod tests {
 
     #[test]
     fn what_is_not_offered_is_not_offered() {
-        let mut policy = Policy::default();
-        policy.lock_after_seconds = 1;
+        let policy = Policy {
+            lock_after_seconds: 1,
+            ..Policy::default()
+        };
         assert!(!policy.is_offered());
 
-        let mut policy = Policy::default();
-        policy.clipboard_seconds = 0;
+        let policy = Policy {
+            clipboard_seconds: 0,
+            ..Policy::default()
+        };
         assert!(!policy.is_offered());
     }
 

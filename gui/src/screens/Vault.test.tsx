@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 import { describe, expect, it, vi } from 'vitest'
-import type { Filter, ItemCard, ItemRow, VaultStatus } from '@/ipc'
+import type { Filter, ItemCard, ItemRow, VaultStatus, VersionRow } from '@/ipc'
 import { Vault } from '@/screens/Vault'
 
 /*
@@ -99,6 +99,57 @@ const CARDS: Record<number, ItemCard> = {
   },
 }
 
+const HISTORY: VersionRow[] = [
+  {
+    number: 1,
+    uuid: 'first-version',
+    madeAt: 1_600_000_000,
+    device: null,
+    conflict: false,
+    current: false,
+    changed: [],
+    body: {
+      shape: 'record',
+      fields: [
+        { shape: 'plain', name: 'login', value: 'k.miller.old', daysLeft: null },
+        { shape: 'secret', name: 'password' },
+      ],
+    },
+  },
+  {
+    number: 2,
+    uuid: 'other-machines',
+    madeAt: 1_650_000_000,
+    device: 'laptop',
+    conflict: true,
+    current: false,
+    changed: ['password'],
+    body: {
+      shape: 'record',
+      fields: [
+        { shape: 'plain', name: 'login', value: 'k.miller.laptop', daysLeft: null },
+        { shape: 'secret', name: 'password' },
+      ],
+    },
+  },
+  {
+    number: 3,
+    uuid: 'now',
+    madeAt: 1_700_000_000,
+    device: 'desk',
+    conflict: false,
+    current: true,
+    changed: ['password', 'url'],
+    body: {
+      shape: 'record',
+      fields: [
+        { shape: 'plain', name: 'login', value: 'k.miller', daysLeft: null },
+        { shape: 'secret', name: 'password' },
+      ],
+    },
+  },
+]
+
 interface Bridge {
   calls: [string, Record<string, unknown> | undefined][]
   filters: () => Filter[]
@@ -129,7 +180,17 @@ function bridge(): Bridge {
           { tag: 'work', count: 1 },
         ]
       case 'policy':
-        return { clipboardSeconds: 45, lockAfterSeconds: 900, quick: { keys: 'Ctrl+Alt+Space', active: true } }
+        return {
+          clipboardSeconds: 45,
+          lockAfterSeconds: 900,
+          clipboardChoices: [15, 30, 45, 90, 180],
+          lockAfterChoices: [60, 300, 900, 1800, 3600, 14_400],
+          quick: { keys: 'Ctrl+Alt+Space', active: true },
+        }
+      case 'history':
+        return HISTORY
+      case 'restore':
+        return true
       case 'item':
         return CARDS[given!.id as number]
       case 'reveal':
@@ -275,5 +336,128 @@ describe('the open vault', () => {
     render(<Vault status={STATUS} onLock={() => undefined} />)
     expect(await screen.findByText('the clipboard clears 45 s after a copy')).toBeInTheDocument()
     expect(screen.getByText('quick search: Ctrl+Alt+Space')).toBeInTheDocument()
+  })
+
+  describe('its history', () => {
+    it('lists the versions newest first, and opens the one a conflict left', async () => {
+      bridge()
+      render(<Vault status={STATUS} onLock={() => undefined} />)
+      const card = await openBank()
+      await userEvent.click(await within(card).findByRole('button', { name: /History: 2 earlier versions/ }))
+
+      const history = await within(card).findByRole('region', { name: 'History' })
+      const rows = (await within(history).findAllByRole('button', { name: /^v\d/ })).map((row) => row.textContent)
+      expect(rows[0]).toMatch(/^v3/)
+      expect(rows[0]).toContain('current')
+      expect(rows[1]).toMatch(/^v2/)
+      expect(rows[1]).toContain('laptop')
+      expect(rows[1]).toContain('kept from a conflict')
+      expect(rows[2]).toMatch(/^v1/)
+
+      // The conflict's version is open, and no other.
+      expect(within(history).getByText('k.miller.laptop')).toBeInTheDocument()
+      expect(within(history).queryByText('k.miller.old')).not.toBeInTheDocument()
+    })
+
+    it('asks for one secret of one version, only when asked', async () => {
+      const calls = bridge()
+      render(<Vault status={STATUS} onLock={() => undefined} />)
+      const card = await openBank()
+      await userEvent.click(await within(card).findByRole('button', { name: /History/ }))
+      const history = await within(card).findByRole('region', { name: 'History' })
+      await within(history).findByText('k.miller.laptop')
+
+      const secrets = () => calls.calls.filter(([cmd]) => cmd === 'reveal')
+      expect(secrets()).toEqual([])
+      await userEvent.click(within(history).getByRole('button', { name: 'Show password' }))
+      await waitFor(() =>
+        expect(secrets()).toEqual([['reveal', { id: 1, field: 'password', version: 'other-machines' }]]),
+      )
+
+      await userEvent.click(within(history).getByRole('button', { name: 'Copy password' }))
+      await waitFor(() =>
+        expect(calls.calls.filter(([cmd]) => cmd === 'copy')).toEqual([
+          ['copy', { id: 1, field: 'password', version: 'other-machines' }],
+        ]),
+      )
+    })
+
+    it('brings a version back, and says what became of the one it replaced', async () => {
+      const calls = bridge()
+      render(<Vault status={STATUS} onLock={() => undefined} />)
+      const card = await openBank()
+      await userEvent.click(await within(card).findByRole('button', { name: /History/ }))
+      const history = await within(card).findByRole('region', { name: 'History' })
+      await within(history).findByText('k.miller.laptop')
+
+      await userEvent.click(within(history).getByRole('button', { name: 'Bring back version 2' }))
+      await waitFor(() =>
+        expect(calls.calls.filter(([cmd]) => cmd === 'restore')).toEqual([
+          ['restore', { id: 1, version: 'other-machines' }],
+        ]),
+      )
+      expect(await within(history).findByRole('status')).toHaveTextContent('Version 2 is back')
+    })
+
+    it('offers no way to bring back what is already current', async () => {
+      bridge()
+      render(<Vault status={STATUS} onLock={() => undefined} />)
+      const card = await openBank()
+      await userEvent.click(await within(card).findByRole('button', { name: /History/ }))
+      const history = await within(card).findByRole('region', { name: 'History' })
+      await userEvent.click(await within(history).findByRole('button', { name: /^v3/ }))
+      expect(within(history).queryByRole('button', { name: /Bring back/ })).not.toBeInTheDocument()
+    })
+
+    it('goes from a conflict on the Sync screen to the item, with its history showing', async () => {
+      const calls = bridge()
+      const answer = (cmd: string) =>
+        cmd === 'transports'
+          ? { found: [], directory: null, remote: 'vault' }
+          : cmd === 'last_transfer'
+            ? {
+                at: 1_700_000_100,
+                transport: 'github',
+                operation: 'sync',
+                added: [],
+                updated: [],
+                conflicts: [{ id: 1, title: 'bank · main', otherIsCurrent: true }],
+                unchanged: 0,
+                versions: 0,
+                unsupported: 0,
+                keptCopy: null,
+                said: [],
+                sendFailure: null,
+              }
+            : undefined
+      const given = calls.calls
+      mockIPC((cmd, args) => {
+        given.push([cmd, args as Record<string, unknown> | undefined])
+        const special = answer(cmd)
+        if (special !== undefined) return special
+        switch (cmd) {
+          case 'items':
+            return ROWS
+          case 'tags':
+            return []
+          case 'policy':
+            return null
+          case 'item':
+            return CARDS[1]
+          case 'history':
+            return HISTORY
+          default:
+            return null
+        }
+      })
+      render(<Vault status={STATUS} onLock={() => undefined} />)
+      await userEvent.click(await screen.findByRole('button', { name: 'Sync' }))
+      await userEvent.click(await screen.findByRole('button', { name: 'bank · main' }))
+
+      const heading = await screen.findByRole('heading', { name: 'bank · main' })
+      const card = heading.closest<HTMLElement>('[data-pane]')!
+      expect(await within(card).findByRole('region', { name: 'History' })).toBeInTheDocument()
+      expect(await within(card).findByText('k.miller.laptop')).toBeInTheDocument()
+    })
   })
 })

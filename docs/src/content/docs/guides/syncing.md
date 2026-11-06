@@ -101,6 +101,9 @@ Two machines sharing one name share one file, which is the ordinary setup — th
 are copies of one vault, and `sync` merges rather than overwrites. Use distinct
 names when you want distinct copies at the remote.
 
+The [desktop app](/sefy/guides/desktop-app/#sync) syncs through the same transport
+and reads the same variables, so set it up here first and then start the window.
+
 ## What happens when both machines changed
 
 The same thing that happens with [`merge`](/sefy/reference/merge/), because it

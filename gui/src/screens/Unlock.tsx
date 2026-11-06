@@ -14,6 +14,8 @@ interface Props {
   file: string | null
   /** Why the last attempt did not open it. */
   failure: Failure | null
+  /** Something to say on arriving here: what a wipe did. */
+  notice?: string
   /** Whether an attempt is on its way: the form stands still under the
    * splash, so that a refusal comes back to the same screen. */
   busy: boolean
@@ -64,7 +66,7 @@ function Sign() {
  * record of where its vaults are, and a list on this screen would be that
  * record (ADR 0010).
  */
-export function Unlock({ file: offered, failure, busy, onUnlock }: Props) {
+export function Unlock({ file: offered, failure, notice, busy, onUnlock }: Props) {
   const [file, setFile] = useState<string | null>(offered)
   const [password, setPassword] = useState('')
   const [dragging, setDragging] = useState(false)
@@ -187,6 +189,12 @@ export function Unlock({ file: offered, failure, busy, onUnlock }: Props) {
         {failure === null || busy ? null : (
           <Alert tone="bad" role="alert">
             {explain(failure)}
+          </Alert>
+        )}
+
+        {notice === undefined ? null : (
+          <Alert tone="info" role="status">
+            <span className="whitespace-pre-wrap">{notice}</span>
           </Alert>
         )}
 

@@ -1,12 +1,13 @@
 ---
 title: The desktop app
-description: The same vault in a window - browse and search it, copy a secret without it touching the screen, and find one from anywhere with quick search.
+description: The same vault in a window - browse and search it, copy a secret without it touching the screen, sync it, set how long it stays unlocked, and find an item from anywhere with quick search.
 ---
 
 The desktop app is the same vault as the command line, in a window: the same
 file, the same core, the same rules about what leaves it. It opens a vault,
-lists what is in it, shows one item at a time, and copies a field to the
-clipboard. Adding and editing items stays on the command line for now.
+lists what is in it, shows one item and its history at a time, copies a field to
+the clipboard, syncs, and looks after the vault itself. Adding and editing items
+stays on the command line for now.
 
 ## Install
 
@@ -66,10 +67,6 @@ are not secret, never a password - and puts the items whose **title** matches
 ahead of those that match only inside. <kbd>↓</kbd> steps from the box into
 the list, <kbd>Enter</kbd> opens the first match, and the arrows walk the list.
 
-**This vault**, at the foot of the rail, is what
-[`sefy status`](/sefy/reference/status/) says: how many items of each kind,
-where the file is, how it is sealed, when it last travelled. Never a title.
-
 ## An item, opened
 
 The card shows what [`sefy show`](/sefy/reference/show/) prints: the public
@@ -84,6 +81,18 @@ seconds the code has left; the key itself never leaves the vault.
 Files stay in the vault: take one out with
 [`sefy extract`](/sefy/reference/extract/).
 
+## History
+
+An item with earlier versions has a **History** button under its fields: every
+version, newest first, with when it was written, on which machine, and which fields
+it changed. Open one to read it, by the same rules as the card: public fields as
+they are, secrets named until you ask. Comparing them line by line is what
+[`sefy history`](/sefy/reference/history/) does.
+
+**Bring back** makes an earlier version current. What it replaces becomes a version
+of its own, so bringing one back can be undone the same way. To bring back one field
+and keep the rest, use [`sefy restore --field`](/sefy/reference/restore/).
+
 ## Copying
 
 **Copy** beside a field puts it on the clipboard without it passing through
@@ -95,6 +104,56 @@ what is on the clipboard, so whatever you copied since is left alone.
 Every copy is marked as one the clipboard history (<kbd>Win</kbd>
 <kbd>V</kbd>) and the cloud clipboard must not keep, and that clipboard
 managers should pass by - see [the clipboard](/sefy/reference/get/#the-clipboard-timeout).
+
+## Sync
+
+**Sync**, at the foot of the rail, lists the [transports](/sefy/reference/plugin/)
+on this machine, working or not, and says why one cannot be used. The window finds
+them where [`sefy plugin`](/sefy/reference/plugin/#where-plugins-live) does, and they
+read the same environment: set a transport up as in
+[Syncing through a transport](/sefy/guides/syncing/), then start the window.
+
+**Sync now** is [`sefy sync`](/sefy/reference/sync/): it takes what is at the remote,
+folds it in, and sends the result back up, keeping a copy of the vault as it was if
+anything changed. When the copy at the remote is under another password, it asks for
+that one, for this sync only.
+
+**Push…** is [`sefy push`](/sefy/reference/push/), and asks first, because it
+replaces what the remote holds. It is how a first copy gets to a remote that has
+none.
+
+Below the transports is what the last sync brought, by title, for as long as the
+vault stays unlocked. An item changed on both machines is marked **kept both**: both
+versions are in the vault, the one changed more recently is current, and the name
+takes you to the other one in the item's history. If the result could not be sent
+back up, it says so; what came down is in the vault all the same.
+
+## Settings
+
+**Settings**, at the foot of the rail, sets how long what the vault lets out stays
+out, and says what the vault is.
+
+- **Auto-lock** is how long the vault stays unlocked with nobody using it.
+- **Clear the clipboard** is how long a copy stays there.
+
+Both are kept **inside the vault**, encrypted: sefy keeps no settings file, which
+would be one more thing on disk saying it is used here. So they apply wherever this
+copy of the vault is opened, and the command line obeys them too - see
+[`sefy status`](/sefy/reference/status/) - unless a flag says otherwise. A merge does
+not carry them, so another copy of the vault can have its own.
+
+**Master password** takes the current one, typed, not a vault found unlocked, and
+the new one twice. The vault and the copies beside it are sealed under the new one,
+and a [`sefy agent`](/sefy/reference/agent/) holding the old one is locked.
+
+The rest is what [`sefy status`](/sefy/reference/status/) says: how many items of
+each kind, where the file is, how it is sealed, when it last travelled. Never a
+title.
+
+**Wipe…** is [`sefy wipe`](/sefy/reference/wipe/): it lists every file it destroys,
+and takes the vault's name typed back and the password typed again. Everything is
+locked before the first file is overwritten, and the window goes back to asking for
+a file.
 
 ## Quick search
 
@@ -120,10 +179,10 @@ elsewhere puts it away without copying.
 put on the clipboard, and closes quick search - which has titles in it, so it
 is destroyed rather than hidden. Closing the window does the same.
 
-The window also does this by itself after 15 minutes of nobody using it, and
-after 12 hours however busy it has been. Pressing, typing and scrolling count as
-using it; a one-time code running on a card does not. The file stays offered on
-the Unlock screen.
+The window also does this by itself after the **Auto-lock** time of nobody using it,
+15 minutes unless set otherwise, and after 12 hours however busy it has been.
+Pressing, typing and scrolling count as using it; a one-time code running on a card
+does not. The file stays offered on the Unlock screen.
 
 [`sefy lock`](/sefy/reference/lock/) in a terminal locks the window too.
 
@@ -140,8 +199,16 @@ size     84.1 KB
 lock     unlocked by the window, locks in 14m
 ```
 
-The window does not notice a change the command line made until it is unlocked
-again.
+## When something else changes the file
+
+The window looks at the file every couple of seconds, and when the command line or
+a sync client has changed it, reads it again: what it shows catches up by itself, and
+that does not count as anyone using the vault. Anything the window writes goes on top
+of the file as it is, so it never erases what was written elsewhere.
+
+A file that changed into something the window cannot read - a sync client halfway
+through, or a copy under another password - leaves what was read on the screen, with
+a line saying so, and the window writes nothing until it can read the file again.
 
 ## What the window does not protect against
 
@@ -155,5 +222,6 @@ being shown at all.
 ## Related
 
 - [`get`](/sefy/reference/get/) - the command line's copy, and the clipboard rules
-- [`status`](/sefy/reference/status/) - what **This vault** shows
+- [`status`](/sefy/reference/status/) - what **Settings** shows
+- [`sync`](/sefy/reference/sync/) - what **Sync now** does
 - [Threat model](/sefy/concepts/threat-model/)

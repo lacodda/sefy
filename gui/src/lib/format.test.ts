@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { ago, count, size } from './format'
+import { ago, count, size, span } from './format'
+
+describe('span', () => {
+  it('reads as the settings offer it', () => {
+    expect(span(45)).toBe('45 s')
+    expect(span(90)).toBe('90 s')
+    expect(span(60)).toBe('1 min')
+    expect(span(180)).toBe('3 min')
+    expect(span(900)).toBe('15 min')
+    expect(span(3600)).toBe('1 hour')
+    expect(span(14_400)).toBe('4 hours')
+  })
+})
 
 describe('size', () => {
   it('reads the way the command line prints it', () => {

@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { emit } from '@tauri-apps/api/event'
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 import { beforeEach, describe, expect, it } from 'vitest'
-import App, { HANDED_OVER_EVENT, LOCKED_EVENT } from '@/App'
+import App, { CHANGED_EVENT, HANDED_OVER_EVENT, LOCKED_EVENT, UNREADABLE_EVENT } from '@/App'
 import type { Failure, VaultStatus } from '@/ipc'
 
 const STATUS: VaultStatus = {
@@ -73,8 +73,20 @@ function backend(file: string | null = STATUS.path, hold = true): Backend {
         return []
       case 'tags':
         return []
+      case 'status':
+        return STATUS
+      case 'wipe_preview':
+        return { name: STATUS.name, directory: 'C:\\Backups', parts: [], remote: 'github' }
+      case 'wipe':
+        return { destroyed: 2, vanished: 0, failed: [], remote: 'github' }
       case 'policy':
-        return { clipboardSeconds: 45, lockAfterSeconds: 900, quick: { keys: 'Ctrl+Alt+Space', active: true } }
+        return {
+          clipboardSeconds: 45,
+          lockAfterSeconds: 900,
+          clipboardChoices: [15, 30, 45, 90, 180],
+          lockAfterChoices: [60, 300, 900, 1800, 3600, 14_400],
+          quick: { keys: 'Ctrl+Alt+Space', active: true },
+        }
       default:
         return null
     }
@@ -286,7 +298,7 @@ describe('the window', () => {
 
     const contents = await screen.findByRole('heading', { name: 'notes.bak' })
     const main = contents.closest('main')!
-    await userEvent.click(within(main).getByRole('button', { name: 'This vault' }))
+    await userEvent.click(within(main).getByRole('button', { name: 'Settings' }))
     expect(within(main).getAllByText('3 items')).not.toHaveLength(0)
     expect(within(main).getByText('Argon2id (64 MiB, 3 passes, 4 lanes)')).toBeInTheDocument()
     expect(within(main).getByText('XChaCha20-Poly1305')).toBeInTheDocument()
@@ -298,5 +310,56 @@ describe('the window', () => {
     expect(await screen.findByRole('heading', { name: 'Open a vault' })).toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Vault file' })).toHaveTextContent('notes.bak')
     expect(locks()).toBe(before + 1)
+  })
+
+  it('takes up what was written elsewhere while it is open', async () => {
+    const state = backend(STATUS.path, false)
+    render(<App />)
+    await userEvent.type(await screen.findByLabelText('Master password'), 'right{Enter}')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Lock' })).toBeInTheDocument())
+    const rowsAsked = () => state.calls.filter(([cmd]) => cmd === 'items').length
+    await waitFor(() => expect(rowsAsked()).toBeGreaterThan(0))
+    const before = rowsAsked()
+
+    await act(() => emit(CHANGED_EVENT))
+
+    // The list is asked for again, and the status with it.
+    await waitFor(() => expect(rowsAsked()).toBeGreaterThan(before))
+    expect(state.calls.some(([cmd]) => cmd === 'status')).toBe(true)
+    expect(screen.getByRole('button', { name: 'Lock' })).toBeInTheDocument()
+  })
+
+  it('says so when the file changed into something it cannot read, until it can', async () => {
+    backend(STATUS.path, false)
+    render(<App />)
+    await userEvent.type(await screen.findByLabelText('Master password'), 'right{Enter}')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Lock' })).toBeInTheDocument())
+    expect(screen.queryByText(/cannot read the new version/)).not.toBeInTheDocument()
+
+    await act(() => emit(UNREADABLE_EVENT))
+    expect(await screen.findByText(/cannot read the new version/)).toBeInTheDocument()
+
+    await act(() => emit(CHANGED_EVENT))
+    await waitFor(() => expect(screen.queryByText(/cannot read the new version/)).not.toBeInTheDocument())
+  })
+
+  it('asks for a file again after a wipe, and says what happened to the last one', async () => {
+    backend(STATUS.path, false)
+    render(<App />)
+    await userEvent.type(await screen.findByLabelText('Master password'), 'right{Enter}')
+    const main = await screen.findByRole('main')
+    await userEvent.click(await within(main).findByRole('button', { name: 'Settings' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Wipe…' }))
+    const dialog = await screen.findByRole('alertdialog')
+
+    await userEvent.type(within(dialog).getByLabelText('Master password'), 'right')
+    await userEvent.type(await within(dialog).findByLabelText(/Type the vault’s name/), 'notes.bak')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Wipe it' }))
+
+    const said = await screen.findByRole('status')
+    expect(said).toHaveTextContent('The vault is wiped: 2 files overwritten and deleted.')
+    expect(said).toHaveTextContent('The copy kept through github is not touched')
+    expect(screen.getByText('No file chosen')).toBeInTheDocument()
+    expect(screen.queryByText('notes.bak')).not.toBeInTheDocument()
   })
 })

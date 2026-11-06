@@ -19,7 +19,7 @@ copied password of "mail" to the clipboard; clearing in 45s
 
 | Option | Meaning |
 | --- | --- |
-| `--ttl <TIME>` | How long the vault stays unlocked with nobody using it: `90s`, `15m`, `2h`. Default `15m`. |
+| `--ttl <TIME>` | How long the vault stays unlocked with nobody using it: `90s`, `15m`, `2h`. Without it, what the vault says: `15m` unless set in the [desktop app](/sefy/guides/desktop-app/#settings). |
 
 Run it again and it says so and asks for nothing, so it can go in a shell's
 profile:

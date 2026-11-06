@@ -643,3 +643,42 @@ fn locking_leaves_no_socket_on_disk() {
     wait_until_gone(pid);
     assert!(!Path::new(&socket).exists());
 }
+
+#[test]
+fn an_agent_goes_by_what_the_vault_says_unless_told_otherwise() {
+    let fixture = Fixture::new();
+    let mut vault = sefy_core::Vault::open(&fixture.path, MASTER.as_bytes()).unwrap();
+    vault
+        .set_policy(sefy_core::Policy {
+            lock_after_seconds: 300,
+            clipboard_seconds: 45,
+        })
+        .unwrap();
+    vault.save().unwrap();
+
+    fixture
+        .with_password()
+        .arg("agent")
+        .assert()
+        .success()
+        .stdout(contains("unlocked for 5m of nobody using it"));
+    fixture.sefy().arg("lock").assert().success();
+
+    fixture
+        .with_password()
+        .args(["agent", "--ttl", "2m"])
+        .assert()
+        .success()
+        .stdout(contains("unlocked for 2m of nobody using it"));
+}
+
+#[test]
+fn a_command_on_a_vault_with_nothing_set_goes_by_the_defaults() {
+    let fixture = Fixture::new();
+    fixture
+        .with_password()
+        .arg("agent")
+        .assert()
+        .success()
+        .stdout(contains("unlocked for 15m of nobody using it"));
+}

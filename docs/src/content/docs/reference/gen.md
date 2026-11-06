@@ -29,7 +29,7 @@ sefy gen [OPTIONS]
 | `-u, --url <URL>` | Where the saved account lives. |
 | `--tag <TAG>` | Tags for the saved record; repeat or separate with commas. |
 | `--stdout` | Print the result instead of copying it. |
-| `--clear-after <SECONDS>` | Clear the clipboard again after this long. Default `45`; `0` leaves it. |
+| `--clear-after <SECONDS>` | Clear the clipboard again after this long; `0` leaves it. Without it, `45`, or with `--save` what the vault says: see the [desktop app](/sefy/guides/desktop-app/#settings). |
 
 ```console
 $ sefy gen

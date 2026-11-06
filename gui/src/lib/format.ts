@@ -19,6 +19,16 @@ export function count(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`
 }
 
+/** A length of time as a setting reads: `45 s`, `90 s`, `15 min`, `1 hour`. */
+export function span(seconds: number): string {
+  if (seconds >= 3600 && seconds % 3600 === 0) {
+    const hours = seconds / 3600
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`
+  }
+  if (seconds >= 60 && seconds % 60 === 0) return `${seconds / 60} min`
+  return `${seconds} s`
+}
+
 const relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 
 const STEPS: [Intl.RelativeTimeFormatUnit, number][] = [

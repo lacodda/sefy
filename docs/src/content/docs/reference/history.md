@@ -105,3 +105,4 @@ you changed because it leaked.
 - [`edit`](/sefy/reference/edit/) — the change that makes most versions
 - [`merge`](/sefy/reference/merge/) — where conflicts end up here
 - [`show`](/sefy/reference/show/) — says when an item has a history
+- [The desktop app](/sefy/guides/desktop-app/#history) — the versions of an item, in its card

@@ -90,7 +90,7 @@ content share no prefix, because the salt and nonce are fresh every time.
 		`sefy run -e TOKEN=github -- ./deploy.sh` hands the secret to that one command through its environment - no `.env` file, no `export` in the history - and keeps the master password's variable out of its reach.
 	</Card>
 	<Card title="A window, and a line over every window" icon="laptop">
-		The desktop app opens the same vault: search, open an item, copy a field without it touching the screen - every secret stays hidden until you ask to see it. Ctrl+Alt+Space brings up a search line over whatever you are doing; Enter copies the password.
+		The desktop app opens the same vault: search, open an item and its history, copy a field without it touching the screen - every secret stays hidden until you ask to see it. Sync from it, set how long it stays unlocked, and it keeps up when a terminal changes the file. Ctrl+Alt+Space brings up a search line over whatever you are doing; Enter copies the password.
 	</Card>
 	<Card title="Asked once, for as long as you say" icon="seti:lock">
 		`sefy agent` keeps the password in the memory of one process, and commands stop asking. Fifteen minutes with nobody using it and it wipes the password and exits; `sefy lock` does that at once. The desktop app does the same while a vault is unlocked in it.

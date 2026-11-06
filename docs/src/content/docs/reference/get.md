@@ -16,7 +16,7 @@ sefy get <REFERENCE>
 | --- | --- |
 | `--field <NAME>` | Which field of a record to take. Omit for the kind's own secret. |
 | `--stdout` | Print the secret instead of copying it. |
-| `--clear-after <SECONDS>` | Clear the clipboard again after this long. Default `45`; `0` leaves it. |
+| `--clear-after <SECONDS>` | Clear the clipboard again after this long; `0` leaves it. Without it, what the vault says: `45` unless set in the [desktop app](/sefy/guides/desktop-app/#settings). |
 
 ```console
 $ sefy get mail
@@ -87,7 +87,7 @@ marks still sees the secret while it is there - the timer clears the
 clipboard, not someone else's copy of it.
 
 The [desktop app](/sefy/guides/desktop-app/) copies the same way, for the same
-45 seconds.
+time.
 
 ## Stored files
 

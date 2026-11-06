@@ -59,6 +59,8 @@ Why the window keeps no list of vaults, and how its file dialog is told not to
 remember one either: [ADR-0010](docs/adr/0010-the-desktop-app.md). How it
 shows an item without its secrets, copies without the page, and what quick
 search is allowed to be: [ADR-0011](docs/adr/0011-browsing-copying-and-quick-search.md).
+What happens when the window writes a file something else is writing too, and where
+its settings live: [ADR-0013](docs/adr/0013-writing-from-the-window.md).
 
 ## Repository layout
 

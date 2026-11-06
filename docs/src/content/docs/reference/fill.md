@@ -14,7 +14,7 @@ sefy fill <REFERENCE> [OPTIONS]
 
 | Option | Meaning |
 | --- | --- |
-| `--clear-after <SECONDS>` | Clear the last field from the clipboard after this long. Default `45`; `0` leaves it. |
+| `--clear-after <SECONDS>` | Clear the last field from the clipboard after this long; `0` leaves it. Without it, what the vault says: `45` unless set in the [desktop app](/sefy/guides/desktop-app/#settings). |
 
 ```console
 $ sefy fill github

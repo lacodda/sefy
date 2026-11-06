@@ -3,4 +3,4 @@
 /**
  * The kinds of failure the page treats differently.
  */
-export type FailureKind = "refused" | "newer-format" | "missing" | "unreadable" | "locked" | "other";
+export type FailureKind = "refused" | "newer-format" | "missing" | "unreadable" | "locked" | "remote-refused" | "other";

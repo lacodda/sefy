@@ -8,6 +8,26 @@
  * rule the splash and the status share: shape, never contents.
  */
 export const text = {
+  wiped: ({
+    destroyed,
+    vanished,
+    failed,
+    remote,
+  }: {
+    destroyed: number
+    vanished: number
+    failed: string[]
+    remote: string | null
+  }) =>
+    [
+      `The vault is wiped: ${destroyed} ${destroyed === 1 ? 'file' : 'files'} overwritten and deleted` +
+        (vanished > 0 ? `, ${vanished} already gone.` : '.'),
+      ...failed.map((reason) => `Not wiped: ${reason}`),
+      failed.length > 0 ? 'Those are still on disk; once they can be written, wipe them with sefy wipe.' : null,
+      remote === null ? null : `The copy kept through ${remote} is not touched: delete it there.`,
+    ]
+      .filter((line) => line !== null)
+      .join('\n'),
   app: {
     name: 'sefy',
     tagline: 'An inconspicuous encrypted vault.',
@@ -44,7 +64,9 @@ export const text = {
     all: 'All items',
     tags: 'Tags',
     allTags: 'Any tag',
-    about: 'This vault',
+    vault: 'This vault',
+    sync: 'Sync',
+    settings: 'Settings',
     list: 'Items found',
     back: 'All items',
     nothingYet: 'Nothing in this vault yet.',
@@ -71,7 +93,13 @@ export const text = {
     expires: (days: number) => (days === 1 ? 'ends tomorrow' : `ends in ${days} days`),
     created: 'created',
     modified: 'modified',
-    earlier: (count: number) => `${count} earlier ${count === 1 ? 'version' : 'versions'}`,
+    history: 'History',
+    historyOf: (count: number) => `History: ${count} earlier ${count === 1 ? 'version' : 'versions'}`,
+    current: 'Back to this item',
+    currentVersion: 'current',
+    keptFromConflict: 'kept from a conflict',
+    restore: (number: number) => `Bring back version ${number}`,
+    restored: (number: number) => `Version ${number} is back. What it replaced is kept as a version of its own.`,
     uuid: 'uuid',
     text: 'Note',
     file: 'File',
@@ -80,8 +108,8 @@ export const text = {
     unknown: 'A newer sefy wrote this item, in a kind this version does not know. Update sefy to open it; nothing in it is lost.',
   },
   status: {
-    clears: (seconds: number) => `the clipboard clears ${seconds} s after a copy`,
-    locks: (seconds: number) => `locks after ${Math.round(seconds / 60)} min idle`,
+    clears: (time: string) => `the clipboard clears ${time} after a copy`,
+    locks: (time: string) => `locks after ${time} idle`,
     quick: (keys: string) => `quick search: ${keys}`,
     quickTaken: (keys: string) => `quick search is off: another program holds ${keys}`,
   },
@@ -92,9 +120,106 @@ export const text = {
     hint: 'Enter copies the secret · Esc closes',
     nothing: 'Nothing matches.',
   },
+  sync: {
+    title: 'Sync',
+    intro: 'Transports move the vault file between machines. The file itself stays an opaque blob.',
+    looking: 'Looking for transports',
+    noneYet: 'No transport is installed. Put an executable named sefy-plugin-NAME in',
+    addAnother: 'Another transport goes in',
+    unusable: 'unusable',
+    neverHere: 'not used by this vault yet',
+    reached: 'last used by this vault',
+    remote: 'remote',
+    lastSync: 'last sync',
+    protocol: 'protocol',
+    now: 'Sync now',
+    syncing: 'Syncing…',
+    pushAction: 'Push…',
+    pushing: 'Pushing…',
+    push: 'Push',
+    pushTitle: 'Replace the copy at the remote?',
+    pushBody:
+      'Push sends this vault up as it is, in place of whatever the remote holds. It is how a first copy gets there. Anything only the remote has is gone from it: Sync takes that in first.',
+    pushed: 'The copy at the remote is now this vault.',
+    agreed: 'The two copies already agree.',
+    lastTitle: 'Last sync',
+    neverAnywhere: 'This vault has not reached a remote yet.',
+    lastElsewhere: (when: string, transport: string, operation: string) =>
+      `It last reached a remote ${when}, through ${transport} (${operation}). What a sync brings shows here while the vault stays unlocked.`,
+    lastOf: (operation: string, transport: string, when: string) => `Last ${operation} · ${transport} · ${when}`,
+    notSent: (reason: string) => `What came down is in the vault, but the result could not be sent back up: ${reason}`,
+    keptBoth: 'kept both',
+    updated: 'updated',
+    added: 'added',
+    keptBothNote:
+      'Changed on both machines? Both versions stay in the vault: the one changed more recently is current, and the other is in the item’s history. Nothing is overwritten. Open it to read them, or bring the other one back.',
+    unchanged: 'unchanged',
+    version: 'earlier version brought across',
+    versions: 'earlier versions brought across',
+    unsupported: (count: number) => `${count} left where ${count === 1 ? 'it was' : 'they were'}: a newer sefy wrote ${count === 1 ? 'it' : 'them'}`,
+    kept: (path: string) => `the vault as it was is kept as ${path}`,
+    remotePasswordTitle: 'The copy at the remote has another password',
+    remotePasswordBody: (transport: string) =>
+      `This vault’s password does not open the copy kept through ${transport}. Its own password opens it here, for this one sync.`,
+    remotePassword: 'Password of the remote copy',
+  },
+  settings: {
+    security: 'Security',
+    lockAfter: 'Auto-lock',
+    lockAfterHint: 'After this long with nobody using it. The command line goes by it too.',
+    clipboard: 'Clear the clipboard',
+    clipboardHint: 'This long after a copy, whichever program copied it.',
+    password: 'Master password',
+    passwordHint: 'Seals the vault again under a new one, and the copies beside it.',
+    change: 'Change…',
+    changeTitle: 'Change the master password',
+    changeBody: 'There is no way back in without it: nothing and nobody can recover a master password.',
+    current: 'Master password',
+    notCurrent: 'That is not the master password.',
+    next: 'New master password',
+    repeat: 'Repeat it',
+    mismatch: 'The two do not match.',
+    strength: (score: number, warning: string | null) =>
+      `${['Guessable in moments', 'Weak', 'Fair', 'Strong', 'Very strong'][score] ?? ''}${warning === null ? '' : `: ${warning}`}`,
+    changeAction: 'Change it',
+    changing: 'Changing…',
+    changedOutcome: ({
+      resealed,
+      left,
+      agentLocked,
+    }: {
+      resealed: number
+      left: string[]
+      agentLocked: boolean
+    }) =>
+      [
+        'The master password is changed.',
+        resealed > 0 ? `${resealed} ${resealed === 1 ? 'copy' : 'copies'} beside the vault sealed under it too.` : null,
+        left.length > 0 ? `${left.join(', ')} did not open under the old one and ${left.length === 1 ? 'was' : 'were'} left as ${left.length === 1 ? 'it was' : 'they were'}.` : null,
+        agentLocked ? 'The agent held the old one, and is locked.' : null,
+      ]
+        .filter((line) => line !== null)
+        .join(' '),
+    cancel: 'Cancel',
+    danger: 'Danger zone',
+    wipe: 'Wipe this vault',
+    wipeHint: 'Overwrites the file and every copy beside it with random bytes, and deletes them.',
+    wipeAction: 'Wipe…',
+    wipeTitle: 'Wipe this vault',
+    wipeBody: 'This overwrites these with random bytes and deletes them. Nothing brings them back.',
+    wipeRemote: (transport: string) => `The copy kept through ${transport} is not touched: delete it there.`,
+    wipeReach:
+      'An SSD, a snapshot, a backup or a synced folder’s history can keep older blocks of these files out of a wipe’s reach.',
+    typeName: 'Type the vault’s name to wipe it',
+    wipeRefused: 'That is not the master password. Nothing was wiped.',
+    wipeConfirm: 'Wipe it',
+    wiping: 'Wiping…',
+  },
   vault: {
     lock: 'Lock',
     unlocked: 'unlocked',
+    unreadable:
+      'The file on disk changed and this window cannot read the new version. What you see is the last version it read, and nothing is written until it can.',
     contents: 'Contents',
     items: 'items',
     item: 'item',

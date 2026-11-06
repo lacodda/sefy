@@ -10,13 +10,20 @@
 //! locks the vault when nobody has used it for a while.
 
 use crate::wire::{
-    Failure, FailureKind, Filter, ItemCard, ItemRow, Opening, TagCount, VaultStatus,
+    CardBody, Failure, FailureKind, Filter, ItemCard, ItemRow, Opening, TagCount, Transfer,
+    VaultStatus, VersionRow,
 };
-use sefy_core::agent::{IDLE, Keeper};
-use sefy_core::{ItemKind, Payload, Query, Totp, Vault};
+use sefy_core::agent::Keeper;
+use sefy_core::crypto::{DerivedKey, SALT_LEN};
+use sefy_core::vault::version_on_disk;
+use sefy_core::{
+    Error, FreshKey, ItemKind, KeySource, Payload, Plugin, Policy, Query, Totp, Vault, sync,
+};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 use zeroize::Zeroizing;
 
 /// The event the page is sent when the vault locked: by itself, or because
@@ -26,10 +33,62 @@ pub const LOCKED: &str = "vault-locked";
 /// The event the page is sent when a second launch handed over a file.
 pub const HANDED_OVER: &str = "file-handed-over";
 
+/// The event the page is sent when what it shows may have moved on: something
+/// else wrote the file and the window read it again, or the window wrote it.
+pub const CHANGED: &str = "vault-changed";
+
+/// The event the page is sent when the file changed and the window cannot read
+/// the new version.
+pub const UNREADABLE: &str = "vault-unreadable";
+
+/// How often the window looks at the file. It reads no more than the salt at the
+/// front, so it can afford to, and a person switching back from a terminal should
+/// not find the window behind.
+pub const LOOK_EVERY: Duration = Duration::from_secs(2);
+
+/// What looking at the file came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Seen {
+    /// Nothing the page has to hear about.
+    Nothing,
+    /// The window now holds a newer version of the file, or can read it again.
+    Moved,
+    /// The file changed and does not open: what is on screen is the last version
+    /// read, and writing is refused until the file can be read.
+    Unreadable,
+}
+
+/// Asks the keeper for keys as someone looking rather than someone using the
+/// vault: a file that changes in an empty room must not keep the vault unlocked.
+/// A write is someone using it, and counts.
+struct Looking(Arc<Keeper>);
+
+impl KeySource for Looking {
+    fn key_for(&self, salt: &[u8; SALT_LEN]) -> sefy_core::Result<DerivedKey> {
+        self.0.peek(salt)
+    }
+
+    fn fresh(&self, opened_with: &[u8; SALT_LEN]) -> sefy_core::Result<FreshKey> {
+        self.0.fresh(opened_with)
+    }
+}
+
 /// The vault the window has open, if any.
 pub struct Session {
     vault: Mutex<Option<Vault>>,
     keeper: Arc<Keeper>,
+    /// Goes up whenever what is open changes hands, so that something that took
+    /// its time - a transfer, a second look at the file - can tell it is still
+    /// about the vault it started on.
+    opened: AtomicU64,
+    /// The version of the file that would not open, if one would not: it is not
+    /// tried again, at the cost of a stretched password every few seconds, until
+    /// the file is something else.
+    unreadable: Mutex<Option<Option<[u8; SALT_LEN]>>>,
+    /// What the last transfer did, until the vault locks.
+    last_transfer: Mutex<Option<Transfer>>,
+    /// Whether a transfer is under way: there is one remote and one file.
+    transferring: AtomicBool,
 }
 
 impl Default for Session {
@@ -37,7 +96,20 @@ impl Default for Session {
         Self {
             vault: Mutex::new(None),
             keeper: Keeper::new(),
+            opened: AtomicU64::new(0),
+            unreadable: Mutex::new(None),
+            last_transfer: Mutex::new(None),
+            transferring: AtomicBool::new(false),
         }
+    }
+}
+
+/// Holds [`Session::transferring`] for as long as a transfer lasts.
+struct OneTransfer<'a>(&'a AtomicBool);
+
+impl Drop for OneTransfer<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
     }
 }
 
@@ -46,11 +118,32 @@ impl Session {
     ///
     /// The keeper gets its own copy of the password. The vault keeps one to
     /// seal with, and neither outlasts [`Session::lock`].
-    pub fn hold(&self, vault: Vault, password: Zeroizing<Vec<u8>>) -> Result<VaultStatus, Failure> {
+    pub fn hold(
+        &self,
+        mut vault: Vault,
+        password: Zeroizing<Vec<u8>>,
+    ) -> Result<VaultStatus, Failure> {
         let status = VaultStatus::of(&vault.status()?);
+        let idle = Duration::from_secs(vault.policy()?.lock_after_seconds);
+        // Versions written from here say where, as the command line's do.
+        vault.set_device(sefy_core::device::name());
         *self.slot() = Some(vault);
-        self.keeper.give(password, IDLE);
+        self.changed_hands();
+        self.keeper.give(password, idle);
         Ok(status)
+    }
+
+    /// What is open is no longer what it was.
+    fn changed_hands(&self) {
+        self.opened.fetch_add(1, Ordering::SeqCst);
+        *self
+            .unreadable
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
+        *self
+            .last_transfer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = None;
     }
 
     /// Closes the open vault, if there is one.
@@ -59,6 +152,7 @@ impl Session {
         // the password and the database are gone the moment the window says
         // the vault is locked.
         drop(self.slot().take());
+        self.changed_hands();
         self.keeper.wipe();
     }
 
@@ -166,11 +260,35 @@ impl Session {
         field: Option<&str>,
         now: u64,
     ) -> Result<(Zeroizing<String>, String), Failure> {
+        self.value_of(id, None, field, now)
+    }
+
+    /// [`Session::value`], from an earlier version of the item when `version`
+    /// names one: what the history's Show and Copy take.
+    pub fn value_of(
+        &self,
+        id: i64,
+        version: Option<&str>,
+        field: Option<&str>,
+        now: u64,
+    ) -> Result<(Zeroizing<String>, String), Failure> {
         let slot = self.slot();
         let vault = slot.as_ref().ok_or_else(Failure::locked)?;
         let item = vault.get(id)?;
         let title = &item.summary.title;
-        match &item.payload {
+        let earlier;
+        let payload = match version {
+            None => &item.payload,
+            Some(wanted) => {
+                earlier = vault
+                    .history(id)?
+                    .into_iter()
+                    .find(|version| version.uuid == wanted)
+                    .ok_or_else(|| refused(format!("{title:?} has no such version")))?;
+                &earlier.payload
+            }
+        };
+        match payload {
             Payload::Note { text } => match field {
                 None => Ok((Zeroizing::new(text.clone()), "text".to_owned())),
                 Some(_) => Err(refused(format!("{title:?} is a note; it has no fields"))),
@@ -207,6 +325,325 @@ impl Session {
                 "{title:?} is a {kind}, which a newer sefy wrote; update sefy to open it"
             ))),
         }
+    }
+
+    /// Every version of the item with `id`, oldest first, the current one last,
+    /// as of `now` (Unix seconds).
+    pub fn history(&self, id: i64, now: i64) -> Result<Vec<VersionRow>, Failure> {
+        let slot = self.slot();
+        let vault = slot.as_ref().ok_or_else(Failure::locked)?;
+        let versions = vault.history(id)?;
+        Ok(versions
+            .iter()
+            .enumerate()
+            .map(|(index, version)| VersionRow {
+                number: index + 1,
+                uuid: version.uuid.clone(),
+                made_at: version.made_at,
+                device: version.device.clone(),
+                conflict: version.conflict,
+                current: version.current,
+                changed: index
+                    .checked_sub(1)
+                    .map(|before| {
+                        sefy_core::history::changed(&versions[before].payload, &version.payload)
+                    })
+                    .unwrap_or_default(),
+                body: CardBody::of(&version.payload, now),
+            })
+            .collect())
+    }
+
+    /// Changes the open vault, on top of the file as it is now.
+    ///
+    /// Whatever the command line or a sync client wrote since the window last
+    /// looked is read first, so `change` never works from a version the file has
+    /// moved on from. A file that will not open stops it there; `save` holds the
+    /// line for the moment between this and the write.
+    pub fn write<T>(
+        &self,
+        change: impl FnOnce(&mut Vault) -> Result<T, Failure>,
+    ) -> Result<T, Failure> {
+        let mut slot = self.slot();
+        let vault = slot.as_mut().ok_or_else(Failure::locked)?;
+        vault.reload().map_err(cannot_catch_up)?;
+        change(vault)
+    }
+
+    /// [`Session::write`], if the vault open now is still the one `opened` was
+    /// read from: a transfer that took a minute must not fold into another vault
+    /// unlocked meanwhile.
+    fn write_to<T>(
+        &self,
+        opened: u64,
+        change: impl FnOnce(&mut Vault) -> Result<T, Failure>,
+    ) -> Result<T, Failure> {
+        let mut slot = self.slot();
+        if self.opened.load(Ordering::SeqCst) != opened {
+            return Err(Failure::locked());
+        }
+        let vault = slot.as_mut().ok_or_else(Failure::locked)?;
+        vault.reload().map_err(cannot_catch_up)?;
+        change(vault)
+    }
+
+    /// Looks at the file, and reads it again if it is no longer what is held.
+    ///
+    /// The stretching, when there is any, happens with the vault left free for
+    /// the page: it is one word from a keeper that already knows the key when
+    /// the command line wrote through it, and most of a second when it did not.
+    pub fn look_again(&self) -> Seen {
+        let (path, opened) = {
+            let slot = self.slot();
+            let Some(vault) = slot.as_ref() else {
+                return Seen::Nothing;
+            };
+            if vault.is_current() {
+                // A file that would not open has gone back to being this one.
+                let was_unreadable = self
+                    .unreadable
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .take()
+                    .is_some();
+                return if was_unreadable {
+                    Seen::Moved
+                } else {
+                    Seen::Nothing
+                };
+            }
+            (
+                vault.path().to_path_buf(),
+                self.opened.load(Ordering::SeqCst),
+            )
+        };
+
+        let version = version_on_disk(&path);
+        if *self
+            .unreadable
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            == Some(version)
+        {
+            return Seen::Nothing;
+        }
+
+        match Vault::open_through(&path, Arc::new(Looking(self.keeper.clone()))) {
+            Ok(mut read) => {
+                read.set_device(sefy_core::device::name());
+                let mut slot = self.slot();
+                if self.opened.load(Ordering::SeqCst) != opened {
+                    return Seen::Nothing;
+                }
+                let Some(held) = slot.as_mut() else {
+                    return Seen::Nothing;
+                };
+                // The window's own write got in meanwhile, and is newer.
+                if held.is_current() {
+                    return Seen::Nothing;
+                }
+                if let Ok(policy) = read.policy() {
+                    self.keeper
+                        .set_idle(Duration::from_secs(policy.lock_after_seconds));
+                }
+                *held = read;
+                *self
+                    .unreadable
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = None;
+                Seen::Moved
+            }
+            // The password went while this was looking; the lock says the rest.
+            Err(Error::KeysGone) => Seen::Nothing,
+            Err(_) => {
+                *self
+                    .unreadable
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = Some(version);
+                Seen::Unreadable
+            }
+        }
+    }
+
+    /// Brings back an earlier version of an item, whole, and says whether that
+    /// changed anything. What it replaces becomes a version of its own, so this
+    /// can be undone the same way.
+    pub fn restore(&self, id: i64, version: &str) -> Result<bool, Failure> {
+        self.write(|vault| {
+            let changed = vault.restore(id, version, None)?;
+            if changed {
+                vault.save()?;
+            }
+            Ok(changed)
+        })
+    }
+
+    /// How long what the open vault lets out stays out; what a new vault says
+    /// when none is open.
+    pub fn policy(&self) -> Result<Policy, Failure> {
+        match self.slot().as_ref() {
+            Some(vault) => Ok(vault.policy()?),
+            None => Ok(Policy::default()),
+        }
+    }
+
+    /// Sets how long what the open vault lets out stays out. The time left starts
+    /// from the new number at once.
+    pub fn set_policy(&self, policy: Policy) -> Result<(), Failure> {
+        self.write(|vault| {
+            vault.set_policy(policy)?;
+            vault.save()?;
+            Ok(())
+        })?;
+        self.keeper
+            .set_idle(Duration::from_secs(policy.lock_after_seconds));
+        Ok(())
+    }
+
+    /// The path of the open vault, and which opening of it this is.
+    fn open_file(&self) -> Result<(PathBuf, u64), Failure> {
+        let slot = self.slot();
+        let vault = slot.as_ref().ok_or_else(Failure::locked)?;
+        Ok((
+            vault.path().to_path_buf(),
+            self.opened.load(Ordering::SeqCst),
+        ))
+    }
+
+    /// Changes the master password. Asks for the current one rather than taking
+    /// the vault being unlocked for an answer, as `sefy change-password` does:
+    /// retiring a password takes knowing it.
+    pub fn change_password(
+        &self,
+        current: &[u8],
+        new: &[u8],
+    ) -> Result<sefy_core::PasswordChange, Failure> {
+        if new.is_empty() {
+            return Err(refused("a master password cannot be empty".to_owned()));
+        }
+        let (path, opened) = self.open_file()?;
+        let mut vault = Vault::open(&path, current)?;
+        vault.set_device(sefy_core::device::name());
+        let change = vault.change_password(new)?;
+        let idle = Duration::from_secs(vault.policy()?.lock_after_seconds);
+
+        let mut slot = self.slot();
+        // Locked while the password was stretched: the file has the new one, and
+        // the window goes on being locked.
+        if self.opened.load(Ordering::SeqCst) == opened && slot.is_some() {
+            *slot = Some(vault);
+            self.keeper.give(Zeroizing::new(new.to_vec()), idle);
+        }
+        Ok(change)
+    }
+
+    /// The vault at the open path, opened by the password typed for it, if the
+    /// name typed is its own: what a wipe needs before anything is touched.
+    ///
+    /// The name exactly, every character: a near miss means the person was not
+    /// reading what they were destroying. And the password, typed: a vault found
+    /// unlocked is not a vault someone has the right to destroy.
+    pub fn open_to_wipe(&self, password: &[u8], typed: &str) -> Result<Vault, Failure> {
+        let (path, _) = self.open_file()?;
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if typed.trim() != name {
+            return Err(refused(format!("that is not {name:?}; nothing was wiped")));
+        }
+        Ok(Vault::open(&path, password)?)
+    }
+
+    /// One transfer at a time, or a word about the one under way.
+    fn one_transfer(&self) -> Result<OneTransfer<'_>, Failure> {
+        if self.transferring.swap(true, Ordering::SeqCst) {
+            return Err(refused("a transfer is already under way".to_owned()));
+        }
+        Ok(OneTransfer(&self.transferring))
+    }
+
+    /// Pull, then push, through `plugin`, as `sefy sync` does and in the same
+    /// order, for the reason [`sefy_core::sync::sync`] gives.
+    ///
+    /// The vault is held only for the merge: the two ends of the transfer take as
+    /// long as the network does, and the window stays usable through them. With
+    /// `remote_password`, the copy at the remote is opened with that rather than
+    /// with the vault's own.
+    ///
+    /// A result that cannot be sent back up is not a failed sync: what came down
+    /// is in the vault, and the transfer says what is left to do.
+    pub fn sync_through(
+        &self,
+        plugin: &Plugin,
+        remote_password: Option<&[u8]>,
+        now: i64,
+    ) -> Result<Transfer, Failure> {
+        let _one = self.one_transfer()?;
+        let (path, opened) = self.open_file()?;
+        let name = sync::remote_name();
+
+        let fetched = sync::fetch(plugin, &name)?;
+        let remote = match remote_password {
+            Some(password) => fetched.open(password),
+            None => fetched.open(&*self.keeper as &dyn KeySource),
+        }
+        .map_err(|error| match error {
+            Error::WrongPasswordOrNotAVault | Error::TooSmall => Failure {
+                kind: FailureKind::RemoteRefused,
+                message: format!("that password does not open the copy at {}", plugin.name()),
+            },
+            other => other.into(),
+        })?;
+
+        let merged = self.write_to(opened, |vault| {
+            let merged = sefy_core::merge(vault, &remote)?;
+            sync::stamp(vault, plugin, "sync")?;
+            Ok(merged)
+        })?;
+
+        let mut transfer = Transfer::new(now, plugin.name(), "sync").with_merge(&merged);
+        transfer.said.extend(fetched.transport.message);
+        match sync::send(&path, plugin, &name) {
+            Ok(sent) => transfer.said.extend(sent.message),
+            Err(error) => transfer.send_failure = Some(error.to_string()),
+        }
+        self.remember(transfer.clone());
+        Ok(transfer)
+    }
+
+    /// Sends this vault up through `plugin`, replacing what is there: how a first
+    /// copy gets to a remote that has none, as `sefy push`.
+    pub fn push_through(&self, plugin: &Plugin, now: i64) -> Result<Transfer, Failure> {
+        let _one = self.one_transfer()?;
+        let (path, opened) = self.open_file()?;
+        let name = sync::remote_name();
+
+        self.write_to(opened, |vault| {
+            sync::stamp(vault, plugin, "push")?;
+            Ok(())
+        })?;
+
+        let sent = sync::send(&path, plugin, &name)?;
+        let mut transfer = Transfer::new(now, plugin.name(), "push");
+        transfer.said.extend(sent.message);
+        self.remember(transfer.clone());
+        Ok(transfer)
+    }
+
+    fn remember(&self, transfer: Transfer) {
+        *self
+            .last_transfer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(transfer);
+    }
+
+    /// What the last transfer did, since the vault was unlocked.
+    pub fn last_transfer(&self) -> Option<Transfer> {
+        self.last_transfer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The slot, even after a panic elsewhere held the lock: what is in it is
@@ -247,6 +684,20 @@ fn refused(message: String) -> Failure {
     Failure {
         kind: FailureKind::Other,
         message,
+    }
+}
+
+/// A file that moved on and will not open is not a wrong password, whatever the
+/// core calls it: nobody just typed one.
+fn cannot_catch_up(error: Error) -> Failure {
+    match error {
+        Error::KeysGone => Failure::locked(),
+        Error::WrongPasswordOrNotAVault | Error::TooSmall => refused(
+            "the file on disk changed and this window cannot read the new version; \
+             nothing was written"
+                .to_owned(),
+        ),
+        other => other.into(),
     }
 }
 
@@ -375,7 +826,7 @@ mod tests {
         let LockState::Unlocked { idle, .. } = keeper.state() else {
             panic!("an unlocked window holds the password");
         };
-        assert_eq!(idle, IDLE);
+        assert_eq!(idle, sefy_core::agent::IDLE);
 
         session.lock();
         assert_eq!(keeper.state(), LockState::Locked);
@@ -731,6 +1182,547 @@ mod tests {
         assert_eq!(
             session.value(id, None, 0).unwrap_err().kind,
             FailureKind::Locked
+        );
+    }
+
+    /// `SEFY_REMOTE_NAME` is left alone: these tests pass the default through.
+    fn stand_in_transport(directory: &Path, remote: &Path) -> Plugin {
+        let manifest = r#"{"protocol_version":1,"name":"file","version":"0.1.0","operations":["push","pull"]}"#;
+        let remote = remote.display().to_string();
+        #[cfg(windows)]
+        {
+            let manifest_path = directory.join("manifest.json");
+            std::fs::write(&manifest_path, manifest).unwrap();
+            let script = directory.join("transport.ps1");
+            std::fs::write(
+                &script,
+                format!(
+                    "$request = [Console]::In.ReadToEnd() | ConvertFrom-Json\r\n\
+                     if ($request.operation -eq 'push') {{ Copy-Item -LiteralPath $request.file -Destination '{remote}' -Force }}\r\n\
+                     else {{ Copy-Item -LiteralPath '{remote}' -Destination $request.file -Force }}\r\n"
+                ),
+            )
+            .unwrap();
+            std::fs::write(
+                directory.join("sefy-plugin-file.cmd"),
+                format!(
+                    "@echo off\r\n\
+                     if \"%1\"==\"--manifest\" (type \"{manifest}\" & exit /b 0)\r\n\
+                     powershell -NoProfile -ExecutionPolicy Bypass -File \"{script}\"\r\n",
+                    manifest = manifest_path.display(),
+                    script = script.display(),
+                ),
+            )
+            .unwrap();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = directory.join("sefy-plugin-file");
+            std::fs::write(
+                &path,
+                format!(
+                    "#!/bin/sh\n\
+                     if [ \"$1\" = \"--manifest\" ]; then echo '{manifest}'; exit 0; fi\n\
+                     request=$(cat)\n\
+                     file=$(printf '%s' \"$request\" | sed -e 's/.*\"file\":\"//' -e 's/\".*//')\n\
+                     case \"$request\" in\n\
+                     *'\"operation\":\"push\"'*) cp \"$file\" '{remote}' ;;\n\
+                     *) cp '{remote}' \"$file\" ;;\n\
+                     esac\n"
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        sefy_core::plugin::find(
+            sefy_core::plugin::discover_in(&[directory.to_path_buf()]),
+            "file",
+        )
+        .expect("the stand-in transport is found")
+    }
+
+    #[test]
+    fn the_window_catches_up_with_what_the_command_line_wrote() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+        assert_eq!(session.look_again(), Seen::Nothing, "nothing changed yet");
+
+        // What `sefy add` does while the window is open.
+        let mut outside = Vault::open(&path, PASSWORD).unwrap();
+        outside
+            .add(sefy_core::NewItem::new(
+                "from outside",
+                Payload::Note { text: "x".into() },
+            ))
+            .unwrap();
+        outside.save().unwrap();
+
+        assert_eq!(session.look_again(), Seen::Moved);
+        assert_eq!(session.status().unwrap().items, 2);
+        assert_eq!(session.look_again(), Seen::Nothing, "it is caught up now");
+    }
+
+    #[test]
+    fn a_write_from_the_window_keeps_what_the_command_line_wrote() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+
+        let mut outside = Vault::open(&path, PASSWORD).unwrap();
+        outside
+            .add(sefy_core::NewItem::new(
+                "from outside",
+                Payload::Note { text: "x".into() },
+            ))
+            .unwrap();
+        outside.save().unwrap();
+
+        // Before the window has looked: the write itself has to catch up.
+        session
+            .set_policy(Policy {
+                lock_after_seconds: 300,
+                clipboard_seconds: 90,
+            })
+            .unwrap();
+
+        let reopened = Vault::open(&path, PASSWORD).unwrap();
+        assert_eq!(reopened.list().unwrap().len(), 2, "the write erased it");
+        assert_eq!(reopened.policy().unwrap().clipboard_seconds, 90);
+    }
+
+    #[test]
+    fn looking_at_the_file_is_not_someone_using_the_vault() {
+        use sefy_core::agent::LockState;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        let vault = open(&path, PASSWORD).unwrap();
+        let given = std::time::Instant::now();
+        session.hold(vault, password()).unwrap();
+        let keeper = session.keeper();
+        std::thread::sleep(Duration::from_millis(1100));
+
+        let mut outside = Vault::open(&path, PASSWORD).unwrap();
+        outside
+            .add(sefy_core::NewItem::new(
+                "from outside",
+                Payload::Note { text: "x".into() },
+            ))
+            .unwrap();
+        outside.save().unwrap();
+        assert_eq!(session.look_again(), Seen::Moved);
+
+        // Taken from the answer rather than assumed: reading the file again takes
+        // up what it says about this too.
+        let LockState::Unlocked { left, idle } = keeper.state() else {
+            panic!("it is still unlocked");
+        };
+        // Everything since the password was given is on the clock. Measured
+        // against that rather than against a number, because the look itself
+        // stretches the password, which can take a second under load.
+        let on_the_clock = idle - left;
+        let since_given = given.elapsed();
+        assert!(
+            on_the_clock + Duration::from_millis(500) >= since_given,
+            "the idle time started over: {on_the_clock:?} on the clock, {since_given:?} since it was given"
+        );
+    }
+
+    #[test]
+    fn a_file_that_will_not_open_is_said_once_and_refuses_writes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+        let good = std::fs::read(&path).unwrap();
+
+        // Halfway through a sync client's replacing it, or another password.
+        let other = directory.path().join("other.bak");
+        Vault::create(&other, b"another password").unwrap();
+        std::fs::copy(&other, &path).unwrap();
+
+        assert_eq!(session.look_again(), Seen::Unreadable);
+        assert_eq!(session.look_again(), Seen::Nothing, "said once");
+        assert_eq!(session.status().unwrap().items, 1, "what was read stays");
+
+        let refusal = session
+            .set_policy(Policy {
+                lock_after_seconds: 300,
+                clipboard_seconds: 90,
+            })
+            .unwrap_err();
+        assert!(
+            refusal.message.contains("nothing was written"),
+            "{refusal:?}"
+        );
+        assert_eq!(refusal.kind, FailureKind::Other);
+
+        // The file comes back, and the window says so.
+        std::fs::write(&path, &good).unwrap();
+        assert_eq!(session.look_again(), Seen::Moved);
+        assert_eq!(session.look_again(), Seen::Nothing);
+    }
+
+    #[test]
+    fn a_setting_reaches_the_keeper_and_the_file() {
+        use sefy_core::agent::LockState;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+        let set = Policy {
+            lock_after_seconds: 60,
+            clipboard_seconds: 15,
+        };
+        session.set_policy(set).unwrap();
+        assert_eq!(session.policy().unwrap(), set);
+
+        let LockState::Unlocked { idle, .. } = session.keeper().state() else {
+            panic!("it is still unlocked");
+        };
+        assert_eq!(idle, Duration::from_secs(60));
+
+        // The next unlock goes by it.
+        session.lock();
+        assert_eq!(session.policy().unwrap(), Policy::default());
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+        let LockState::Unlocked { idle, .. } = session.keeper().state() else {
+            panic!("it is unlocked");
+        };
+        assert_eq!(idle, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn a_version_written_here_says_where() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = browsing(&directory);
+        let id = id_of(&session, "recovery codes");
+        session
+            .write(|vault| {
+                vault.update(
+                    id,
+                    None,
+                    Some(Payload::Note {
+                        text: "changed".into(),
+                    }),
+                    None,
+                )?;
+                vault.save()?;
+                Ok(())
+            })
+            .unwrap();
+        let versions = session.history(id, 0).unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(
+            versions.last().unwrap().device,
+            sefy_core::device::name(),
+            "the window's versions go unmarked"
+        );
+    }
+
+    #[test]
+    fn the_history_names_secrets_and_carries_none() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = browsing(&directory);
+        let id = id_of(&session, "mailbox");
+        let (before, _) = session.value(id, Some("password"), 0).unwrap();
+        session
+            .write(|vault| {
+                let item = vault.get(id)?;
+                let Payload::Fields { kind, mut fields } = item.payload else {
+                    panic!("a login is a record");
+                };
+                fields
+                    .iter_mut()
+                    .find(|field| field.name == "password")
+                    .unwrap()
+                    .value = "new-not-real".into();
+                vault.update(id, None, Some(Payload::Fields { kind, fields }), None)?;
+                vault.save()?;
+                Ok(())
+            })
+            .unwrap();
+
+        let versions = session.history(id, 0).unwrap();
+        let wire = serde_json::to_string(&versions).unwrap();
+        for secret in [before.as_str(), "new-not-real", "JBSWY3DPEHPK3PXP"] {
+            assert!(
+                !wire.contains(secret),
+                "the history carries {secret}: {wire}"
+            );
+        }
+        assert_eq!(versions[1].changed, ["password"]);
+        assert!(versions[1].current);
+        assert!(!versions[0].current);
+        assert_eq!((versions[0].number, versions[1].number), (1, 2));
+
+        // Asked for, one field of one version comes across, and only then.
+        let (old, what) = session
+            .value_of(id, Some(&versions[0].uuid), Some("password"), 0)
+            .unwrap();
+        assert_eq!((old.as_str(), what.as_str()), (before.as_str(), "password"));
+        let (now, _) = session.value(id, Some("password"), 0).unwrap();
+        assert_eq!(now.as_str(), "new-not-real");
+    }
+
+    #[test]
+    fn restoring_brings_it_back_and_can_be_undone() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = browsing(&directory);
+        let id = id_of(&session, "recovery codes");
+        session
+            .write(|vault| {
+                vault.update(
+                    id,
+                    None,
+                    Some(Payload::Note {
+                        text: "second".into(),
+                    }),
+                    None,
+                )?;
+                vault.save()?;
+                Ok(())
+            })
+            .unwrap();
+        let versions = session.history(id, 0).unwrap();
+        assert!(session.restore(id, &versions[0].uuid).unwrap());
+        let (value, _) = session.value(id, None, 0).unwrap();
+        assert_eq!(value.as_str(), "mailbox: F7Q2-XXXX");
+
+        let after = session.history(id, 0).unwrap();
+        assert_eq!(after.len(), 3, "what it replaced is a version of its own");
+
+        // Nothing to bring back: nothing is written.
+        let current = after.last().unwrap().uuid.clone();
+        assert!(!session.restore(id, &current).unwrap());
+    }
+
+    #[test]
+    fn a_new_password_takes_the_old_one_and_replaces_it_everywhere() {
+        use sefy_core::agent::LockState;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+
+        let refused = session.change_password(b"not it", b"new").unwrap_err();
+        assert_eq!(refused.kind, FailureKind::Refused);
+        assert!(Vault::open(&path, PASSWORD).is_ok(), "the file was changed");
+
+        assert_eq!(
+            session.change_password(PASSWORD, b"").unwrap_err().kind,
+            FailureKind::Other,
+            "an empty password would lock the vault for good"
+        );
+
+        session.change_password(PASSWORD, b"new one").unwrap();
+        assert!(
+            Vault::open(&path, PASSWORD).is_err(),
+            "the old one still opens it"
+        );
+        assert!(Vault::open(&path, b"new one").is_ok());
+
+        // The window goes on: the keeper answers for the new password, and the
+        // command line through it can still seal.
+        assert!(session.is_open());
+        assert!(matches!(
+            session.keeper().state(),
+            LockState::Unlocked { .. }
+        ));
+        let mut through = Vault::open_through(&path, session.keeper()).unwrap();
+        through
+            .add(sefy_core::NewItem::new(
+                "after",
+                Payload::Note { text: "x".into() },
+            ))
+            .unwrap();
+        through.save().unwrap();
+    }
+
+    #[test]
+    fn a_wipe_takes_the_name_and_the_password_both() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+
+        for typed in ["", "notes", "NOTES.BAK"] {
+            let refused = session.open_to_wipe(PASSWORD, typed).err().unwrap();
+            assert!(refused.message.contains("nothing was wiped"), "{refused:?}");
+        }
+        assert_eq!(
+            session
+                .open_to_wipe(b"not it", "notes.bak")
+                .err()
+                .unwrap()
+                .kind,
+            FailureKind::Refused
+        );
+        assert!(path.exists());
+
+        let vault = session.open_to_wipe(PASSWORD, "notes.bak").unwrap();
+        let wiped = vault.wipe();
+        assert!(wiped.complete());
+        assert!(!path.exists());
+    }
+
+    /// A vault at a remote holding one note of its own, under `remote_password`.
+    fn remote_with(directory: &Path, remote_password: &[u8]) -> PathBuf {
+        let remote = directory.join("remote.bin");
+        let mut vault = Vault::create(&remote, remote_password).unwrap();
+        vault
+            .add(sefy_core::NewItem::new(
+                "their note",
+                Payload::Note { text: "x".into() },
+            ))
+            .unwrap();
+        vault.save().unwrap();
+        remote
+    }
+
+    #[test]
+    fn a_sync_folds_in_what_came_and_sends_the_result_back() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let remote = remote_with(directory.path(), PASSWORD);
+        let plugin = stand_in_transport(directory.path(), &remote);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+
+        let transfer = session.sync_through(&plugin, None, 1_000).unwrap();
+        assert_eq!(transfer.operation, "sync");
+        assert_eq!(transfer.send_failure, None);
+        assert_eq!(transfer.added.len(), 1);
+        assert_eq!(transfer.added[0].title, "their note");
+        assert!(transfer.kept_copy.is_some(), "a merge keeps a copy first");
+        assert_eq!(session.last_transfer(), Some(transfer));
+
+        // Both ends hold both notes, and the file says it travelled.
+        assert_eq!(session.status().unwrap().items, 2);
+        let there = Vault::open(&remote, PASSWORD).unwrap();
+        assert_eq!(there.list().unwrap().len(), 2);
+        let stamp = session.status().unwrap().last_sync.unwrap();
+        assert_eq!(
+            (stamp.transport.as_str(), stamp.operation.as_str()),
+            ("file", "sync")
+        );
+
+        // What it did is gone with the vault: it has titles in it.
+        session.lock();
+        assert_eq!(session.last_transfer(), None);
+    }
+
+    #[test]
+    fn a_copy_under_another_password_is_asked_for() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let remote = remote_with(directory.path(), b"the remote's password");
+        let plugin = stand_in_transport(directory.path(), &remote);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+        let before = std::fs::read(&remote).unwrap();
+
+        let refused = session.sync_through(&plugin, None, 1_000).unwrap_err();
+        assert_eq!(refused.kind, FailureKind::RemoteRefused);
+        assert_eq!(session.status().unwrap().items, 1, "nothing was folded in");
+        assert_eq!(std::fs::read(&remote).unwrap(), before, "nothing was sent");
+
+        let transfer = session
+            .sync_through(&plugin, Some(b"the remote's password".as_slice()), 1_000)
+            .unwrap();
+        assert_eq!(transfer.added.len(), 1);
+    }
+
+    #[test]
+    fn a_transfer_does_not_fold_into_a_vault_opened_since() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+        let (_, opened) = session.open_file().unwrap();
+
+        // Locked and unlocked on another file while the network took its time.
+        let other = directory.path().join("other.bak");
+        Vault::create(&other, PASSWORD).unwrap();
+        session
+            .hold(open(&other, PASSWORD).unwrap(), password())
+            .unwrap();
+
+        let failure = session
+            .write_to(opened, |vault| {
+                vault.add(sefy_core::NewItem::new(
+                    "stray",
+                    Payload::Note { text: "x".into() },
+                ))?;
+                vault.save()?;
+                Ok(())
+            })
+            .unwrap_err();
+        assert_eq!(failure.kind, FailureKind::Locked);
+        assert_eq!(
+            session.status().unwrap().items,
+            0,
+            "it went into the wrong vault"
+        );
+    }
+
+    #[test]
+    fn one_transfer_at_a_time() {
+        let session = Session::default();
+        let first = session.one_transfer().unwrap();
+        assert!(session.one_transfer().is_err());
+        drop(first);
+        assert!(session.one_transfer().is_ok());
+    }
+
+    #[test]
+    fn a_first_copy_goes_up_with_a_push() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let remote = directory.path().join("remote.bin");
+        let plugin = stand_in_transport(directory.path(), &remote);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+
+        let transfer = session.push_through(&plugin, 1_000).unwrap();
+        assert_eq!(transfer.operation, "push");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            std::fs::read(&remote).unwrap(),
+            "what travels is the sealed file, carrying the note about this very trip"
+        );
+        assert_eq!(
+            session.status().unwrap().last_sync.unwrap().operation,
+            "push"
         );
     }
 

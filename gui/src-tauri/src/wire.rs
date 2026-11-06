@@ -334,7 +334,9 @@ impl ItemCard {
 }
 
 impl CardBody {
-    fn of(payload: &sefy_core::Payload, now: i64) -> Self {
+    /// What a payload holds, for the card: as of `now` (Unix seconds), every
+    /// secret named and none filled in.
+    pub fn of(payload: &sefy_core::Payload, now: i64) -> Self {
         use sefy_core::Payload;
         match payload {
             Payload::Note { text } => Self::Note { text: text.clone() },
@@ -403,18 +405,25 @@ pub struct Copied {
     pub seconds: u64,
 }
 
-/// How this window treats what leaves the vault: what the status line says.
+/// How this window treats what leaves the vault: what the status line says and
+/// what the settings offer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Policy {
-    /// Seconds a copy stays on the clipboard: the core's, shared with the
-    /// command line.
+    /// Seconds a copy stays on the clipboard: what the open vault says, which
+    /// the command line obeys too.
     #[ts(type = "number")]
     pub clipboard_seconds: u64,
-    /// Seconds the vault stays unlocked with nobody using it: the core's, the
-    /// same as `sefy agent` by default.
+    /// Seconds the vault stays unlocked with nobody using it: what the open
+    /// vault says, which `sefy agent` obeys too.
     #[ts(type = "number")]
     pub lock_after_seconds: u64,
+    /// What the clipboard's time can be set to.
+    #[ts(type = "number[]")]
+    pub clipboard_choices: Vec<u64>,
+    /// What the vault's time can be set to.
+    #[ts(type = "number[]")]
+    pub lock_after_choices: Vec<u64>,
     /// The quick search shortcut.
     pub quick: Shortcut,
 }
@@ -426,6 +435,280 @@ pub struct Shortcut {
     pub keys: String,
     /// Whether the system gave it to sefy; another program can hold it.
     pub active: bool,
+}
+
+/// One version of an item's contents, as `sefy history` lists it: named
+/// secrets, never filled in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct VersionRow {
+    /// Its number, the one `sefy history` and `sefy restore` go by.
+    #[ts(type = "number")]
+    pub number: usize,
+    /// Its identity, which is how the window asks about it.
+    pub uuid: String,
+    /// When these contents were written, in Unix seconds.
+    #[ts(type = "number")]
+    pub made_at: i64,
+    /// The machine they were written on, when it was known.
+    pub device: Option<String>,
+    /// Whether this version lost a conflict in a merge and was kept.
+    pub conflict: bool,
+    /// Whether these are the item's contents now.
+    pub current: bool,
+    /// The fields this version changed from the one before it. Names only.
+    pub changed: Vec<String>,
+    /// What it held.
+    pub body: CardBody,
+}
+
+/// The transports on this machine, and what sefy goes by when using them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct Transports {
+    /// Everything found, usable or not.
+    pub found: Vec<Transport>,
+    /// The directory a transport is put in, when the system has one.
+    pub directory: Option<String>,
+    /// What the remote copy is called.
+    pub remote: String,
+}
+
+/// One transport, whether or not it can be used. A broken one is listed with
+/// the reason: silence would read as one that was never installed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct Transport {
+    /// Its short name, the one `--transport` goes by.
+    pub name: String,
+    /// Its own version, when it could say.
+    pub version: Option<String>,
+    /// The protocol it speaks, when it could say.
+    #[ts(type = "number | null")]
+    pub protocol: Option<u32>,
+    /// What it can do: `push`, `pull`.
+    pub operations: Vec<String>,
+    /// Why it cannot be used, if it cannot.
+    pub problem: Option<String>,
+}
+
+impl Transport {
+    /// The window's view of a plugin the core found.
+    pub fn of(plugin: &sefy_core::Plugin) -> Self {
+        let manifest = plugin.manifest.as_ref();
+        Self {
+            name: plugin.name().to_owned(),
+            version: manifest.map(|manifest| manifest.version.clone()),
+            protocol: manifest.map(|manifest| manifest.protocol_version),
+            operations: manifest
+                .map(|manifest| {
+                    manifest
+                        .operations
+                        .iter()
+                        .map(|operation| operation.as_str().to_owned())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            problem: (!plugin.usable).then(|| {
+                plugin
+                    .reason
+                    .clone()
+                    .unwrap_or_else(|| "it is not usable".to_owned())
+            }),
+        }
+    }
+}
+
+/// What the last transfer in this window did. Kept in memory until the vault
+/// locks and nowhere else: it has titles in it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Transfer {
+    /// When it happened, in Unix seconds.
+    #[ts(type = "number")]
+    pub at: i64,
+    /// Through which transport.
+    pub transport: String,
+    /// `sync` or `push`.
+    pub operation: String,
+    /// Items the other copy had and this one did not.
+    pub added: Vec<MergedRow>,
+    /// Items whose contents were taken from the other copy.
+    pub updated: Vec<MergedRow>,
+    /// Items changed on both sides: both versions are kept, in the item's
+    /// history.
+    pub conflicts: Vec<ConflictRow>,
+    /// Items that were already the same, or already ahead here.
+    #[ts(type = "number")]
+    pub unchanged: usize,
+    /// Earlier versions brought across into items' histories.
+    #[ts(type = "number")]
+    pub versions: usize,
+    /// Items of a kind this build does not know, left where they were.
+    #[ts(type = "number")]
+    pub unsupported: usize,
+    /// Where the vault as it was is kept, when the merge changed anything.
+    pub kept_copy: Option<String>,
+    /// What the transport itself had to say.
+    pub said: Vec<String>,
+    /// Why the result could not be sent back up, if it could not: what came
+    /// down is in the vault all the same.
+    pub send_failure: Option<String>,
+}
+
+impl Transfer {
+    /// A transfer that moved nothing into the vault, yet.
+    pub fn new(at: i64, transport: &str, operation: &str) -> Self {
+        Self {
+            at,
+            transport: transport.to_owned(),
+            operation: operation.to_owned(),
+            added: Vec::new(),
+            updated: Vec::new(),
+            conflicts: Vec::new(),
+            unchanged: 0,
+            versions: 0,
+            unsupported: 0,
+            kept_copy: None,
+            said: Vec::new(),
+            send_failure: None,
+        }
+    }
+
+    /// Takes in what a merge did.
+    pub fn with_merge(mut self, report: &sefy_core::MergeReport) -> Self {
+        let rows = |items: &[sefy_core::MergedItem]| {
+            items
+                .iter()
+                .map(|item| MergedRow {
+                    id: item.id,
+                    title: item.title.clone(),
+                })
+                .collect::<Vec<_>>()
+        };
+        self.added = rows(&report.added);
+        self.updated = rows(&report.updated);
+        self.conflicts = report
+            .conflicts
+            .iter()
+            .map(|conflict| ConflictRow {
+                id: conflict.id,
+                title: conflict.title.clone(),
+                other_is_current: conflict.current == sefy_core::Side::There,
+            })
+            .collect();
+        self.unchanged = report.unchanged;
+        self.versions = report.versions;
+        self.unsupported = report.unsupported;
+        self.kept_copy = report
+            .kept_copy
+            .as_ref()
+            .map(|path| path.display().to_string());
+        self
+    }
+}
+
+/// An item a merge brought across or changed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct MergedRow {
+    /// The item, in this vault.
+    #[ts(type = "number")]
+    pub id: i64,
+    /// What it is called now.
+    pub title: String,
+}
+
+/// An item changed on both sides.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ConflictRow {
+    /// The item, in this vault.
+    #[ts(type = "number")]
+    pub id: i64,
+    /// What it is called now.
+    pub title: String,
+    /// Whether the other copy's contents are the current ones, and this one's
+    /// are what went to the history.
+    pub other_is_current: bool,
+}
+
+/// How hard a new password would be to guess, on zxcvbn's scale: what the
+/// master password dialog draws. Worked out here, offline.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct PasswordStrength {
+    /// From 0, guessable in moments, to 4.
+    pub score: u8,
+    /// What makes it weak, when something can be named.
+    pub warning: Option<String>,
+}
+
+/// What changing the master password did beyond the vault itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct PasswordChanged {
+    /// Copies beside the vault, sealed under the new password as well.
+    #[ts(type = "number")]
+    pub resealed: usize,
+    /// Copies the old password did not open, left as they were.
+    pub left: Vec<String>,
+    /// Whether an agent holding the old password was locked.
+    pub agent_locked: bool,
+}
+
+/// What a wipe would destroy, for the person about to ask for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct WipePreview {
+    /// The vault's own name, which is what has to be typed back.
+    pub name: String,
+    /// The directory they are all in.
+    pub directory: String,
+    /// Every file, the vault first.
+    pub parts: Vec<WipePart>,
+    /// The transport the vault last went through: the copy there is out of
+    /// reach.
+    pub remote: Option<String>,
+}
+
+/// One file a wipe destroys.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct WipePart {
+    /// Its name; the directory is said once.
+    pub name: String,
+    /// What it is to the vault, in words.
+    pub role: String,
+    /// How large it is, when the file system says.
+    #[ts(type = "number | null")]
+    pub size: Option<u64>,
+}
+
+impl WipePart {
+    /// The window's view of a part the core listed.
+    pub fn of(part: &sefy_core::wipe::Part) -> Self {
+        use sefy_core::wipe::Role;
+        Self {
+            name: file_name(&part.path),
+            role: match part.role {
+                Role::Vault => "the vault".to_owned(),
+                Role::Copy(1) => "the most recent copy".to_owned(),
+                Role::Copy(number) => format!("copy {number}"),
+                Role::Unfinished => "a write that never finished".to_owned(),
+            },
+            size: part.size,
+        }
+    }
+}
+
+/// What a wipe did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct WipeOutcome {
+    /// Files overwritten and deleted.
+    #[ts(type = "number")]
+    pub destroyed: usize,
+    /// Files something else deleted before the wipe reached them.
+    #[ts(type = "number")]
+    pub vanished: usize,
+    /// Files still on disk, each with the reason.
+    pub failed: Vec<String>,
+    /// The transport the vault last went through, whose copy was not touched.
+    pub remote: Option<String>,
 }
 
 /// Why something the window asked for did not happen.
@@ -457,6 +740,9 @@ pub enum FailureKind {
     Unreadable,
     /// The window asked about a vault while none was open.
     Locked,
+    /// The password did not open the copy at the remote, which can be under
+    /// another one: the page asks for it.
+    RemoteRefused,
     /// Anything else.
     Other,
 }

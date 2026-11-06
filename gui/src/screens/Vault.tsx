@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { Lock } from 'lucide-react'
+import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Chip } from '@/components/ui/chip'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -8,24 +9,32 @@ import { RowButton } from '@/components/ui/list-row'
 import { SearchField } from '@/components/ui/search-field'
 import { SectionNav } from '@/components/ui/section-nav'
 import * as ipc from '@/ipc'
-import type { Filter, ItemCard, ItemRow, Policy, TagCount, VaultStatus } from '@/ipc'
+import type { Filter, ItemCard, ItemRow, Policy, TagCount, VaultStatus, WipeOutcome } from '@/ipc'
 import { CopiesProvider } from '@/lib/copies'
-import { ago, count, nowSeconds } from '@/lib/format'
-import { About } from '@/screens/About'
+import { ago, count, nowSeconds, span } from '@/lib/format'
 import { Card } from '@/screens/Card'
+import { Settings } from '@/screens/Settings'
+import { Sync } from '@/screens/Sync'
 import { text } from '@/text'
 
 interface Props {
   status: VaultStatus
+  /** Goes up when what the vault holds may have moved on: the command line wrote
+   * the file, or the window did. Everything drawn from it is asked for again. */
+  revision?: number
+  /** The file changed and the window cannot read the new version. */
+  unreadable?: boolean
   onLock: () => void
+  onWiped?: (outcome: WipeOutcome) => void
 }
 
-/** What the rail has picked: every item, one kind, or the vault itself. */
-type View = { at: 'items'; kind: string | null } | { at: 'about' }
+/** What the rail has picked: every item, one kind, or a screen about the vault. */
+type View = { at: 'items'; kind: string | null } | { at: 'sync' } | { at: 'settings' }
 
 /** The id the rail gives "every item"; kinds go by their stored names. */
 const ALL = '*'
-const ABOUT = 'about'
+const SYNC = 'sync'
+const SETTINGS = 'settings'
 
 /** Headings the generic rule below would get wrong. */
 const HEADINGS: Record<string, string> = {
@@ -56,8 +65,10 @@ function kindHeading(kind: string): string {
  * Nothing here holds a secret for longer than it is on screen: the card is
  * drawn per item, and a lock unmounts all of it.
  */
-export function Vault({ status, onLock }: Props) {
+export function Vault({ status, revision = 0, unreadable = false, onLock, onWiped }: Props) {
   const [view, setView] = useState<View>({ at: 'items', kind: null })
+  // The item to open with its history showing, arriving from a conflict.
+  const [historyOf, setHistoryOf] = useState<number | null>(null)
   const [query, setQuery] = useState('')
   const [tag, setTag] = useState<string | null>(null)
   const [rows, setRows] = useState<ItemRow[] | null>(null)
@@ -85,7 +96,7 @@ export function Vault({ status, onLock }: Props) {
     return () => {
       current = false
     }
-  }, [])
+  }, [revision])
 
   // The list follows the box and the rail. An answer that comes back after a
   // newer question was asked is dropped rather than drawn over it.
@@ -99,7 +110,7 @@ export function Vault({ status, onLock }: Props) {
     return () => {
       current = false
     }
-  }, [typed, kind, tag])
+  }, [typed, kind, tag, revision])
 
   // The open item is one the list still shows: narrowing the list closes
   // what it no longer holds.
@@ -115,7 +126,7 @@ export function Vault({ status, onLock }: Props) {
     return () => {
       current = false
     }
-  }, [open])
+  }, [open, revision])
 
   // The card on screen is the open item's, and nothing once none is: a card
   // fetched for an item since closed is not drawn.
@@ -130,6 +141,18 @@ export function Vault({ status, onLock }: Props) {
 
   const choose = (id: number | null) => {
     turn(id === null ? null : String(id))
+    setHistoryOf(null)
+    setSelected(id)
+  }
+
+  /* From a conflict on the Sync screen to the item, with its history showing. The
+   * search and the filters go, so that the list holds what is being opened. */
+  const openHistory = (id: number) => {
+    setQuery('')
+    setTag(null)
+    setView({ at: 'items', kind: null })
+    turn(String(id))
+    setHistoryOf(id)
     setSelected(id)
   }
 
@@ -192,7 +215,7 @@ export function Vault({ status, onLock }: Props) {
             value={query}
             onValueChange={(value) => {
               setQuery(value)
-              if (view.at === 'about') setView({ at: 'items', kind: null })
+              if (view.at !== 'items') setView({ at: 'items', kind: null })
             }}
             onKeyDown={fromSearch}
             placeholder={text.browse.search}
@@ -210,6 +233,12 @@ export function Vault({ status, onLock }: Props) {
             {text.vault.lock}
           </Button>
         </div>
+
+        {unreadable ? (
+          <Alert tone="warn" role="alert" className="mx-2.5 mt-2.5 shrink-0">
+            {text.vault.unreadable}
+          </Alert>
+        ) : null}
 
         <div className="flex min-h-0 flex-1 gap-2.5 p-2.5">
           <nav aria-label={text.browse.items} className="flex w-rail shrink-0 flex-col gap-4 overflow-y-auto">
@@ -238,17 +267,22 @@ export function Vault({ status, onLock }: Props) {
               </div>
             )}
             <SectionNav
-              label={text.browse.about}
+              label={text.browse.vault}
               labelHidden
-              items={[{ id: ABOUT, label: text.browse.about }]}
-              activeId={view.at === 'about' ? ABOUT : undefined}
-              onSelect={() => setView({ at: 'about' })}
+              items={[
+                { id: SYNC, label: text.browse.sync },
+                { id: SETTINGS, label: text.browse.settings },
+              ]}
+              activeId={view.at === 'sync' ? SYNC : view.at === 'settings' ? SETTINGS : undefined}
+              onSelect={(id) => setView({ at: id === SYNC ? 'sync' : 'settings' })}
               className="mt-auto"
             />
           </nav>
 
-          {view.at === 'about' ? (
-            <About status={status} />
+          {view.at === 'sync' ? (
+            <Sync status={status} revision={revision} onOpenHistory={openHistory} />
+          ) : view.at === 'settings' ? (
+            <Settings status={status} policy={policy} onWiped={(outcome) => onWiped?.(outcome)} />
           ) : rows !== null && rows.length === 0 && typed === '' && kind === null && tag === null ? (
             <EmptyState title={text.browse.nothingYet} body={text.browse.nothingYetBody} className="flex-1" />
           ) : (
@@ -308,7 +342,12 @@ export function Vault({ status, onLock }: Props) {
                     }
                     bodyClassName="p-4"
                   >
-                    <Card key={shown.id} card={shown} />
+                    <Card
+                      key={shown.id}
+                      card={shown}
+                      historyFirst={historyOf === shown.id}
+                      revision={revision}
+                    />
                   </Pane>
                 )
               }
@@ -325,9 +364,9 @@ export function Vault({ status, onLock }: Props) {
           {policy === null ? null : (
             <>
               <span aria-hidden>·</span>
-              <span>{text.status.clears(policy.clipboardSeconds)}</span>
+              <span>{text.status.clears(span(policy.clipboardSeconds))}</span>
               <span aria-hidden>·</span>
-              <span>{text.status.locks(policy.lockAfterSeconds)}</span>
+              <span>{text.status.locks(span(policy.lockAfterSeconds))}</span>
               <span aria-hidden>·</span>
               <span className={policy.quick.active ? undefined : 'text-warn'}>
                 {policy.quick.active ? text.status.quick(policy.quick.keys) : text.status.quickTaken(policy.quick.keys)}

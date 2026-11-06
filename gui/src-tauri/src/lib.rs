@@ -53,7 +53,7 @@ pub fn run() {
     let app = builder
         .manage(session::Session::default())
         .manage(session::Handover::default())
-        .manage(clip::Clip::standard())
+        .manage(clip::Clip::start())
         .manage(opening)
         .setup(|app| {
             let shortcut = quick::register(app.handle());
@@ -68,6 +68,25 @@ pub fn run() {
             // A window that cannot listen works as before: the command line
             // goes on asking for the password, which is all it loses.
             let _ = agent::serve(Seat::Window, keeper);
+
+            // The file can change under the window: the command line writes it
+            // through the window's own keys, a sync client replaces it.
+            let handle = app.handle().clone();
+            std::thread::Builder::new()
+                .name("watching the file".to_owned())
+                .spawn(move || {
+                    loop {
+                        std::thread::sleep(session::LOOK_EVERY);
+                        match handle.state::<session::Session>().look_again() {
+                            session::Seen::Nothing => {}
+                            session::Seen::Moved => commands::tell_changed(&handle),
+                            session::Seen::Unreadable => {
+                                let _ = handle.emit_to(quick::MAIN, session::UNREADABLE, ());
+                            }
+                        }
+                    }
+                })
+                .expect("the thread that watches the file starts");
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -89,9 +108,20 @@ pub fn run() {
             commands::items,
             commands::tags,
             commands::item,
+            commands::history,
+            commands::restore,
             commands::reveal,
             commands::copy,
             commands::policy,
+            commands::set_policy,
+            commands::strength,
+            commands::change_password,
+            commands::wipe_preview,
+            commands::wipe,
+            commands::transports,
+            commands::sync_now,
+            commands::push_now,
+            commands::last_transfer,
             commands::dismiss,
         ])
         .build(tauri::generate_context!())

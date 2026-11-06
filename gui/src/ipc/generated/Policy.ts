@@ -2,19 +2,28 @@
 import type { Shortcut } from "./Shortcut";
 
 /**
- * How this window treats what leaves the vault: what the status line says.
+ * How this window treats what leaves the vault: what the status line says and
+ * what the settings offer.
  */
 export type Policy = { 
 /**
- * Seconds a copy stays on the clipboard: the core's, shared with the
- * command line.
+ * Seconds a copy stays on the clipboard: what the open vault says, which
+ * the command line obeys too.
  */
 clipboardSeconds: number, 
 /**
- * Seconds the vault stays unlocked with nobody using it: the core's, the
- * same as `sefy agent` by default.
+ * Seconds the vault stays unlocked with nobody using it: what the open
+ * vault says, which `sefy agent` obeys too.
  */
 lockAfterSeconds: number, 
+/**
+ * What the clipboard's time can be set to.
+ */
+clipboardChoices: number[], 
+/**
+ * What the vault's time can be set to.
+ */
+lockAfterChoices: number[], 
 /**
  * The quick search shortcut.
  */

@@ -31,7 +31,8 @@ everything below is an expansion of it.
   with your privileges can read the decrypted database out of sefy's memory
   while it runs.
 - **Your own clipboard, beyond the timer.** `sefy get` and the desktop app
-  clear the clipboard after 45 seconds, and mark every copy so that the
+  clear the clipboard after 45 seconds, or the time set for the vault, and mark
+  every copy so that the
   Windows clipboard history, the cloud clipboard and the clipboard managers
   that honour the mark do not keep it. Anything that reads the clipboard
   during those seconds and ignores the mark still gets the secret.
@@ -41,7 +42,7 @@ everything below is an expansion of it.
   like anything else. The socket keeps other users out, and it cannot tell one
   of your programs from another: anything running as you can ask for a key and
   read the vault until it locks. It locks by itself after 15 minutes of nobody
-  using it and at 12 hours, wiping the password rather than only refusing to
+  using it, or the time set for the vault, and at 12 hours, wiping the password rather than only refusing to
   use it; without an agent, none of this applies. On Linux the agent makes
   itself undumpable, as ssh-agent does. The pipe or the socket says that sefy
   is running, not which file: `sefy agent` is never told the path, and nothing

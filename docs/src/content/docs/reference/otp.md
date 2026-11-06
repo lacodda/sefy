@@ -19,7 +19,7 @@ sefy otp <REFERENCE> [OPTIONS]
 | `--key-env <VAR>` | Read the key to store from this variable instead of asking. Implies `--set`. |
 | `--qr` | Draw the key as a QR code for an authenticator app on a phone. |
 | `--stdout` | Print the code instead of copying it. |
-| `--clear-after <SECONDS>` | Clear the clipboard again after this long. Default `45`; `0` leaves it. |
+| `--clear-after <SECONDS>` | Clear the clipboard again after this long; `0` leaves it. Without it, what the vault says: `45` unless set in the [desktop app](/sefy/guides/desktop-app/#settings). |
 
 ```console
 $ sefy otp github

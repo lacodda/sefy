@@ -5,11 +5,19 @@ import type { Filter } from './generated/Filter'
 import type { ItemCard } from './generated/ItemCard'
 import type { ItemRow } from './generated/ItemRow'
 import type { Opening } from './generated/Opening'
+import type { PasswordChanged } from './generated/PasswordChanged'
+import type { PasswordStrength } from './generated/PasswordStrength'
 import type { Policy } from './generated/Policy'
 import type { Revealed } from './generated/Revealed'
 import type { Shortcut } from './generated/Shortcut'
 import type { TagCount } from './generated/TagCount'
+import type { Transfer } from './generated/Transfer'
+import type { Transport } from './generated/Transport'
+import type { Transports } from './generated/Transports'
 import type { VaultStatus } from './generated/VaultStatus'
+import type { VersionRow } from './generated/VersionRow'
+import type { WipeOutcome } from './generated/WipeOutcome'
+import type { WipePreview } from './generated/WipePreview'
 
 /*
  * The commands the window may call, typed by the Rust that answers them
@@ -18,7 +26,27 @@ import type { VaultStatus } from './generated/VaultStatus'
  * arguments itself.
  */
 
-export type { Copied, Failure, Filter, ItemCard, ItemRow, Opening, Policy, Revealed, Shortcut, TagCount, VaultStatus }
+export type {
+  Copied,
+  Failure,
+  Filter,
+  ItemCard,
+  ItemRow,
+  Opening,
+  PasswordChanged,
+  PasswordStrength,
+  Policy,
+  Revealed,
+  Shortcut,
+  TagCount,
+  Transfer,
+  Transport,
+  Transports,
+  VaultStatus,
+  VersionRow,
+  WipeOutcome,
+  WipePreview,
+}
 export type { CardBody } from './generated/CardBody'
 export type { CardField } from './generated/CardField'
 export type { FailureKind } from './generated/FailureKind'
@@ -55,16 +83,58 @@ export const tags = () => invoke<TagCount[]>('tags')
 /** One item, as the card shows it: every secret named, none filled in. */
 export const item = (id: number) => invoke<ItemCard>('item', { id })
 
-/** One secret field, because someone asked to see it. */
-export const reveal = (id: number, field: string) => invoke<Revealed>('reveal', { id, field })
+/** Every version of an item, oldest first: every secret named, none filled in. */
+export const history = (id: number) => invoke<VersionRow[]>('history', { id })
+
+/** Brings back an earlier version of an item; says whether anything changed. */
+export const restore = (id: number, version: string) => invoke<boolean>('restore', { id, version })
+
+/** One secret field, because someone asked to see it; of an earlier version,
+ * when one is named. */
+export const reveal = (id: number, field: string, version?: string) =>
+  invoke<Revealed>('reveal', version === undefined ? { id, field } : { id, field, version })
 
 /** Puts a field on the clipboard without it passing through the page; with
- * no field, what `sefy get` would take. */
-export const copy = (id: number, field: string | null) => invoke<Copied>('copy', { id, field })
+ * no field, what `sefy get` would take. Of an earlier version, when one is
+ * named. */
+export const copy = (id: number, field: string | null, version?: string) =>
+  invoke<Copied>('copy', version === undefined ? { id, field } : { id, field, version })
 
 /** How long a copy stays on the clipboard, how long the vault stays unlocked
- * with nobody using it, and the quick search shortcut. */
+ * with nobody using it, what those can be set to, and the quick search
+ * shortcut. */
 export const policy = () => invoke<Policy>('policy')
+
+/** Sets how long the vault stays unlocked and a copy stays on the clipboard. */
+export const setPolicy = (lockAfterSeconds: number, clipboardSeconds: number) =>
+  invoke<void>('set_policy', { lockAfterSeconds, clipboardSeconds })
+
+/** How hard a new password would be to guess, worked out offline. */
+export const strength = (password: string) => invoke<PasswordStrength>('strength', { password })
+
+/** Changes the master password. Rejects with `refused` if `current` is not it. */
+export const changePassword = (current: string, next: string) =>
+  invoke<PasswordChanged>('change_password', { current, new: next })
+
+/** What a wipe of the open vault would destroy. */
+export const wipePreview = () => invoke<WipePreview>('wipe_preview')
+
+/** Destroys the open vault, given its password and its name typed back. */
+export const wipe = (password: string, name: string) => invoke<WipeOutcome>('wipe', { password, name })
+
+/** The transports on this machine, usable or not. */
+export const transports = () => invoke<Transports>('transports')
+
+/** Pull, then push, through a transport. Rejects with `remote-refused` when the
+ * copy there needs a password of its own. */
+export const syncNow = (transport: string, remotePassword: string | null) =>
+  invoke<Transfer>('sync_now', { transport, remotePassword })
+
+/** Sends this vault up through a transport, replacing what is there. */
+export const pushNow = (transport: string) => invoke<Transfer>('push_now', { transport })
+
+/** What the last transfer did, since the vault was unlocked. */
+export const lastTransfer = () => invoke<Transfer | null>('last_transfer')
 
 /** Puts the quick search window away. */
 export const dismiss = () => invoke<void>('dismiss')

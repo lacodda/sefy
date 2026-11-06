@@ -59,6 +59,12 @@ history, so calling it secret would be a promise sefy cannot keep. A field that
 already exists keeps whatever secrecy it was stored with — changing a password's
 value does not expose it.
 
+An edit goes on top of the file as it is when it is applied, so a note left open in
+an editor while something else wrote the vault keeps both: what you typed is current,
+and what it replaced is in the item's [history](/sefy/reference/history/). Any other
+command that finds the file changed since it opened it writes nothing and says to run
+it again, rather than erase what was written.
+
 For a value that must stay off the command line, `--set-secret` asks for it the
 way the master password is asked for, and marks the field secret:
 

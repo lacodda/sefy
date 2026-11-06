@@ -484,7 +484,9 @@ pub fn generate(vault: Option<&mut Vault>, args: GenArgs, auto: &mut AutoSync) -
         }
     };
 
+    let mut vault_says = None;
     if let (Some(vault), Some(title)) = (vault, &args.save) {
+        vault_says = Some(vault.policy()?.clipboard_seconds);
         let mut fields = Vec::new();
         push_optional(&mut fields, "login", args.login.clone(), false);
         fields.push(Field::secret("password", generated.value.as_str()));
@@ -515,6 +517,7 @@ pub fn generate(vault: Option<&mut Vault>, args: GenArgs, auto: &mut AutoSync) -
     // was set.
     let clear_after = args
         .clear_after
+        .or(vault_says)
         .unwrap_or(sefy_core::clipboard::HOLD_SECONDS);
     if clear_after > 0 {
         println!("copied it to the clipboard; clearing in {clear_after}s");
@@ -2421,4 +2424,33 @@ fn confirm(question: &str) -> Result<bool> {
         answer.trim().to_ascii_lowercase().as_str(),
         "y" | "yes"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_copy_goes_by_the_option_and_otherwise_by_the_vault() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut vault = Vault::create(directory.path().join("notes.bak"), b"not real").unwrap();
+        assert_eq!(
+            clear_after(None, &vault).unwrap(),
+            sefy_core::clipboard::HOLD_SECONDS
+        );
+
+        vault
+            .set_policy(sefy_core::Policy {
+                lock_after_seconds: 900,
+                clipboard_seconds: 90,
+            })
+            .unwrap();
+        assert_eq!(clear_after(None, &vault).unwrap(), 90);
+        assert_eq!(clear_after(Some(7), &vault).unwrap(), 7);
+        assert_eq!(
+            clear_after(Some(0), &vault).unwrap(),
+            0,
+            "0 still means leave it there"
+        );
+    }
 }

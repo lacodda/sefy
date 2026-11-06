@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { ResizeEdges } from '@/components/ui/window-frame'
 import * as ipc from '@/ipc'
-import type { Failure, VaultStatus } from '@/ipc'
+import type { Failure, VaultStatus, WipeOutcome } from '@/ipc'
 import { Unlock } from '@/screens/Unlock'
 import { Vault } from '@/screens/Vault'
 import { reportActivity } from '@/shell/activity'
@@ -19,13 +19,15 @@ import { text } from '@/text'
  *   Unlock screen that stands still beneath it, so a refusal comes back to
  *   the same file - but only once the wait is long enough to be seen
  *   (`shown`); see `SHOW_AFTER`.
- * - `open`: a vault is unlocked.
+ * - `open`: a vault is unlocked. `revision` goes up when what it holds may have
+ *   moved on, and `unreadable` says the file changed into something the window
+ *   cannot read.
  */
 type Stage =
   | { at: 'starting' }
-  | { at: 'locked'; file: string | null; failure: Failure | null }
+  | { at: 'locked'; file: string | null; failure: Failure | null; notice?: string }
   | { at: 'unsealing'; file: string; shown: boolean }
-  | { at: 'open'; status: VaultStatus }
+  | { at: 'open'; status: VaultStatus; revision: number; unreadable: boolean }
 
 /**
  * How long unsealing runs before the splash comes up, and how long it then
@@ -47,6 +49,14 @@ export const LOCKED_EVENT = 'vault-locked'
 /** The event the process sends when a second launch handed over a file
  * (`session::HANDED_OVER`). */
 export const HANDED_OVER_EVENT = 'file-handed-over'
+
+/** The event the process sends when what the page shows may have moved on: the
+ * file was written, from here or from elsewhere (`session::CHANGED`). */
+export const CHANGED_EVENT = 'vault-changed'
+
+/** The event the process sends when the file changed and it cannot read the new
+ * version (`session::UNREADABLE`). */
+export const UNREADABLE_EVENT = 'vault-unreadable'
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -87,6 +97,21 @@ export default function App() {
       setStage((now) => (now.at === 'open' ? { at: 'locked', file: now.status.path, failure: null } : now))
     })
     const stopHanded = page.listen(HANDED_OVER_EVENT, () => void takeHandover())
+    const stopChanged = page.listen(CHANGED_EVENT, () => {
+      ipc
+        .status()
+        .then((status) => {
+          if (current) {
+            setStage((now) =>
+              now.at === 'open' ? { at: 'open', status, revision: now.revision + 1, unreadable: false } : now,
+            )
+          }
+        })
+        .catch(() => undefined)
+    })
+    const stopUnreadable = page.listen(UNREADABLE_EVENT, () => {
+      setStage((now) => (now.at === 'open' ? { ...now, unreadable: true } : now))
+    })
 
     // A page that starts is a page that knows of no open vault, so there is
     // none: after a reload the vault the last page unlocked is locked, rather
@@ -105,6 +130,8 @@ export default function App() {
       current = false
       void stopLocked.then((stop) => stop())
       void stopHanded.then((stop) => stop())
+      void stopChanged.then((stop) => stop())
+      void stopUnreadable.then((stop) => stop())
     }
   }, [])
 
@@ -118,7 +145,7 @@ export default function App() {
 
     let next: Stage
     try {
-      next = { at: 'open', status: await ipc.unlock(file, password) }
+      next = { at: 'open', status: await ipc.unlock(file, password), revision: 0, unreadable: false }
     } catch (cause) {
       next = { at: 'locked', file, failure: ipc.isFailure(cause) ? cause : unexpected(cause) }
     }
@@ -140,6 +167,12 @@ export default function App() {
     await ipc.lock().catch(() => undefined)
   }
 
+  // The screen is told what is left, and starts over asking for a file.
+  function wiped(outcome: WipeOutcome) {
+    setHandovers((count) => count + 1)
+    setStage({ at: 'locked', file: null, failure: null, notice: text.wiped(outcome) })
+  }
+
   if (stage.at === 'starting') return <Splash />
 
   return (
@@ -147,12 +180,19 @@ export default function App() {
       <ResizeEdges />
       <Titlebar />
       {stage.at === 'open' ? (
-        <Vault status={stage.status} onLock={() => void lock()} />
+        <Vault
+          status={stage.status}
+          revision={stage.revision}
+          unreadable={stage.unreadable}
+          onLock={() => void lock()}
+          onWiped={wiped}
+        />
       ) : (
         <Unlock
           key={handovers}
           file={stage.file}
           failure={stage.at === 'locked' ? stage.failure : null}
+          notice={stage.at === 'locked' ? stage.notice : undefined}
           busy={stage.at === 'unsealing'}
           onUnlock={(file, password) => void unlock(file, password)}
         />

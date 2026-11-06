@@ -151,3 +151,4 @@ a vault of its own, under whichever password opens it.
 - [`change-password`](/sefy/reference/change-password/) - retire a password without destroying the vault
 - [Syncing](/sefy/guides/syncing/) - the copies beside the vault, and the remote one
 - [`rm`](/sefy/reference/rm/) - remove one item instead
+- [The desktop app](/sefy/guides/desktop-app/#settings) - the same wipe, from Settings

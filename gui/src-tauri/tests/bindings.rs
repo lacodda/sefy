@@ -42,6 +42,13 @@ fn export_all(dir: &Path) -> Result<(), ts_rs::ExportError> {
     sefy_gui::wire::Revealed::export_all(&config)?;
     sefy_gui::wire::Copied::export_all(&config)?;
     sefy_gui::wire::Policy::export_all(&config)?;
+    sefy_gui::wire::VersionRow::export_all(&config)?;
+    sefy_gui::wire::Transports::export_all(&config)?;
+    sefy_gui::wire::Transfer::export_all(&config)?;
+    sefy_gui::wire::PasswordStrength::export_all(&config)?;
+    sefy_gui::wire::PasswordChanged::export_all(&config)?;
+    sefy_gui::wire::WipePreview::export_all(&config)?;
+    sefy_gui::wire::WipeOutcome::export_all(&config)?;
     Ok(())
 }
 

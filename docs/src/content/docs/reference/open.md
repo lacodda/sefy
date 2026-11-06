@@ -15,7 +15,7 @@ sefy open <REFERENCE> [OPTIONS]
 | Option | Meaning |
 | --- | --- |
 | `--no-password` | Open the site without touching the clipboard. |
-| `--clear-after <SECONDS>` | Seconds before the clipboard is cleared; `0` leaves it there. Default 45. |
+| `--clear-after <SECONDS>` | Seconds before the clipboard is cleared; `0` leaves it there. Without it, what the vault says: `45` unless set in the [desktop app](/sefy/guides/desktop-app/#settings). |
 
 ```console
 $ sefy open github

@@ -106,6 +106,13 @@ vault it cannot fully read** — it will not corrupt or drop what it does not
 understand — but it cannot merge those items into another vault. Merge from the
 newer side, or upgrade.
 
+## Settings kept in the vault
+
+0.20.0 lets a vault say how long it stays unlocked and how long a copy stays on the
+clipboard. They are two more facts in the table 0.8.0 added, so the schema does not
+move: an older build does not read them, carries them along, and goes on by its own
+numbers. A merge does not carry them, so each copy of a vault keeps its own.
+
 ## What a plugin can rely on
 
 The [plugin protocol](/sefy/reference/plugin/) is at version 1, and a plugin

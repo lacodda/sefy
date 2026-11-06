@@ -22,8 +22,12 @@ fn holds(value: &str) -> bool {
 #[test]
 #[ignore = "writes to the system clipboard"]
 fn a_copy_is_taken_back_when_the_hold_is_over() {
-    let clip = Clip::start(Duration::from_millis(400));
-    clip.put(Zeroizing::new(SECRET.to_owned())).unwrap();
+    let clip = Clip::start();
+    clip.put(
+        Zeroizing::new(SECRET.to_owned()),
+        Duration::from_millis(400),
+    )
+    .unwrap();
     assert!(holds(SECRET));
 
     std::thread::sleep(Duration::from_millis(1200));
@@ -36,8 +40,9 @@ fn a_copy_is_taken_back_when_the_hold_is_over() {
 #[test]
 #[ignore = "writes to the system clipboard"]
 fn a_lock_takes_the_copy_back_at_once() {
-    let clip = Clip::start(Duration::from_secs(60));
-    clip.put(Zeroizing::new(SECRET.to_owned())).unwrap();
+    let clip = Clip::start();
+    clip.put(Zeroizing::new(SECRET.to_owned()), Duration::from_secs(60))
+        .unwrap();
 
     clip.take_back();
     assert!(!holds(SECRET));
@@ -46,10 +51,14 @@ fn a_lock_takes_the_copy_back_at_once() {
 #[test]
 #[ignore = "writes to the system clipboard"]
 fn a_second_copy_replaces_the_first_and_is_the_one_taken_back() {
-    let clip = Clip::start(Duration::from_secs(60));
-    clip.put(Zeroizing::new("first-not-real".to_owned()))
+    let clip = Clip::start();
+    clip.put(
+        Zeroizing::new("first-not-real".to_owned()),
+        Duration::from_secs(60),
+    )
+    .unwrap();
+    clip.put(Zeroizing::new(SECRET.to_owned()), Duration::from_secs(60))
         .unwrap();
-    clip.put(Zeroizing::new(SECRET.to_owned())).unwrap();
     assert!(holds(SECRET));
 
     clip.take_back();
@@ -59,8 +68,9 @@ fn a_second_copy_replaces_the_first_and_is_the_one_taken_back() {
 #[test]
 #[ignore = "writes to the system clipboard"]
 fn what_the_person_copied_since_is_left_alone() {
-    let clip = Clip::start(Duration::from_secs(60));
-    clip.put(Zeroizing::new(SECRET.to_owned())).unwrap();
+    let clip = Clip::start();
+    clip.put(Zeroizing::new(SECRET.to_owned()), Duration::from_secs(60))
+        .unwrap();
     clipboard_win::set_clipboard_string("a shopping list").unwrap();
 
     clip.take_back();
@@ -74,8 +84,9 @@ fn what_the_person_copied_since_is_left_alone() {
 #[ignore = "writes to the system clipboard"]
 fn closing_the_window_takes_the_copy_back() {
     // Dropping the last handle is how the thread learns the window is gone.
-    let clip = Clip::start(Duration::from_secs(60));
-    clip.put(Zeroizing::new(SECRET.to_owned())).unwrap();
+    let clip = Clip::start();
+    clip.put(Zeroizing::new(SECRET.to_owned()), Duration::from_secs(60))
+        .unwrap();
     drop(clip);
     std::thread::sleep(Duration::from_millis(300));
     assert!(!holds(SECRET));

@@ -11,7 +11,7 @@
 //! core's (`sefy_core::clipboard`): the same as the command line's `get`.
 
 use crate::wire::{Failure, FailureKind};
-use sefy_core::clipboard::{Clipboard, HOLD_SECONDS};
+use sefy_core::clipboard::Clipboard;
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
@@ -20,8 +20,8 @@ use zeroize::Zeroizing;
 /// What the clipboard thread is told to do.
 enum Order {
     /// Put this value on the clipboard, say whether it went, and take it back
-    /// once the hold is over.
-    Put(Zeroizing<String>, Sender<Result<(), Failure>>),
+    /// once this long is over.
+    Put(Zeroizing<String>, Duration, Sender<Result<(), Failure>>),
     /// Take back what is held now, if it is still there, and say when done.
     TakeBack(Sender<()>),
 }
@@ -32,28 +32,24 @@ pub struct Clip {
 }
 
 impl Clip {
-    /// Starts the clipboard thread, holding each value for `hold`.
-    pub fn start(hold: Duration) -> Self {
+    /// Starts the clipboard thread.
+    pub fn start() -> Self {
         let (orders, inbox) = mpsc::channel();
         std::thread::Builder::new()
             .name("clipboard".to_owned())
-            .spawn(move || serve(inbox, hold))
+            .spawn(move || serve(inbox))
             .expect("the clipboard thread starts");
         Self {
             orders: Mutex::new(orders),
         }
     }
 
-    /// Starts the clipboard thread with the hold every front end uses.
-    pub fn standard() -> Self {
-        Self::start(Duration::from_secs(HOLD_SECONDS))
-    }
-
     /// Puts `value` on the clipboard in place of whatever this window put
-    /// there before. Waits until it is there, or says why it is not.
-    pub fn put(&self, value: Zeroizing<String>) -> Result<(), Failure> {
+    /// there before, for `hold`: what the open vault says. Waits until it is
+    /// there, or says why it is not.
+    pub fn put(&self, value: Zeroizing<String>, hold: Duration) -> Result<(), Failure> {
         let (reply, answer) = mpsc::channel();
-        self.send(Order::Put(value, reply))?;
+        self.send(Order::Put(value, hold, reply))?;
         answer.recv().unwrap_or_else(|_| Err(gone()))
     }
 
@@ -78,7 +74,7 @@ impl Clip {
 
 /// The clipboard thread: one value held at most, taken back when its time is
 /// up or when told to.
-fn serve(inbox: Receiver<Order>, hold: Duration) {
+fn serve(inbox: Receiver<Order>) {
     // Opened at the first copy rather than at start: a window that is never
     // asked to copy anything never touches the clipboard.
     let mut clipboard: Option<Clipboard> = None;
@@ -106,7 +102,7 @@ fn serve(inbox: Receiver<Order>, hold: Duration) {
                 give_back(&mut clipboard, &mut held);
                 let _ = done.send(());
             }
-            Some(Order::Put(value, reply)) => {
+            Some(Order::Put(value, hold, reply)) => {
                 let result = opened(&mut clipboard)
                     .and_then(|clipboard| clipboard.put(&value).map_err(Failure::from));
                 // The value replaced, if any, is ours no longer to take back:
