@@ -199,3 +199,33 @@ fn an_opener_says_what_it_opens() {
     assert!(!Opener::Source(wrong.as_ref()).opens(&path));
     assert!(!Opener::Source(right.as_ref()).opens(&directory.path().join("gone")));
 }
+
+#[test]
+fn a_vault_held_through_a_source_catches_up_with_the_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = vault_in(directory.path());
+    let source = Source::holding(PASSWORD);
+
+    let mut mine = Vault::open_through(&path, source.clone()).unwrap();
+    assert!(!mine.reload().unwrap());
+
+    let mut theirs = Vault::open(&path, PASSWORD).unwrap();
+    theirs.add(note("theirs")).unwrap();
+    theirs.save().unwrap();
+    assert!(matches!(mine.save(), Err(Error::ChangedOnDisk(_))));
+
+    assert!(mine.reload().unwrap());
+    mine.add(note("mine")).unwrap();
+    // Sealing proves the source still holds the password that opened this, which
+    // is now the version just read rather than the first one.
+    mine.save().unwrap();
+
+    let reopened = Vault::open(&path, PASSWORD).unwrap();
+    let titles: Vec<String> = reopened
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|item| item.title)
+        .collect();
+    assert_eq!(titles.len(), 3, "{titles:?}");
+}

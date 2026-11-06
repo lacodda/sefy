@@ -56,6 +56,7 @@ pub mod merge;
 pub mod model;
 pub mod otp;
 pub mod plugin;
+pub mod policy;
 pub mod strength;
 pub mod sync;
 pub mod time;
@@ -80,6 +81,7 @@ pub use model::{
 };
 pub use otp::Totp;
 pub use plugin::{PROTOCOL_VERSION, Plugin};
+pub use policy::Policy;
 pub use strength::{Strength, estimate, estimate_generated};
 pub use sync::{Fetched, PullReport, SyncPreview, SyncReport, fetch, pull, push, sync};
 pub use vault::{PasswordChange, Stats, Status, SyncStamp, Vault};

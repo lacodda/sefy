@@ -9,6 +9,7 @@ use crate::format;
 use crate::history::Version;
 use crate::keys::{KeySource, Opener};
 use crate::model::{Field, Item, ItemSummary, NewItem, Payload, Query};
+use crate::policy::{self, Policy};
 use crate::wipe::{self, Wiped};
 use rusqlite::Connection;
 use std::cell::Cell;
@@ -36,6 +37,9 @@ pub struct Vault {
     backing: Backing,
     /// How many times this value has written its file.
     writes: Cell<u64>,
+    /// Which version of the file this value holds, by the salt at its front:
+    /// every write samples a new one. `None` until a new vault's first write.
+    seen: Cell<Option<[u8; SALT_LEN]>>,
 }
 
 /// How a save gets the key it seals with.
@@ -89,6 +93,7 @@ impl Vault {
             device: None,
             backing: Backing::File,
             writes: Cell::new(0),
+            seen: Cell::new(None),
         };
         vault.save()?;
         Ok(vault)
@@ -108,6 +113,7 @@ impl Vault {
             device: None,
             backing: Backing::File,
             writes: Cell::new(0),
+            seen: Cell::new(Some(format::salt_of(&file)?)),
         })
     }
 
@@ -138,6 +144,7 @@ impl Vault {
             device: None,
             backing: Backing::File,
             writes: Cell::new(0),
+            seen: Cell::new(Some(salt)),
         })
     }
 
@@ -162,6 +169,7 @@ impl Vault {
             device: None,
             backing: Backing::Memory,
             writes: Cell::new(0),
+            seen: Cell::new(None),
         })
     }
 
@@ -179,6 +187,7 @@ impl Vault {
             device: self.device.clone(),
             backing: Backing::Memory,
             writes: Cell::new(0),
+            seen: Cell::new(None),
         })
     }
 
@@ -203,6 +212,11 @@ impl Vault {
     /// flushed and synced, and only then renamed over the target. A crash
     /// leaves either the old vault or the new one — never a half-written file,
     /// and never plaintext.
+    ///
+    /// A file that is no longer the one this value read is left alone, with
+    /// [`Error::ChangedOnDisk`]: what is in memory knows nothing of what was
+    /// written there since, and sealing it over the top would erase that without
+    /// a word. See [`Vault::reload`].
     pub fn save(&self) -> Result<()> {
         // Only copies made inside this crate are memory-backed, and none of
         // them is ever saved; reaching this is a bug here, not a condition a
@@ -212,6 +226,9 @@ impl Vault {
             Backing::File,
             "a vault with no file of its own was asked to save"
         );
+        if !self.is_current() {
+            return Err(Error::ChangedOnDisk(self.path.clone()));
+        }
         let database = Zeroizing::new(db::dump(&self.connection)?);
         let sealed = match &self.sealer {
             Sealer::Password(password) => format::encode(password, &database)?,
@@ -231,8 +248,54 @@ impl Vault {
             Sealer::Nothing => unreachable!("only a copy without a file has no sealer"),
         };
         write_atomically(&self.path, &sealed)?;
+        self.seen.set(Some(format::salt_of(&sealed)?));
         self.writes.set(self.writes.get() + 1);
         Ok(())
+    }
+
+    /// Whether the file on disk is the version this value read or last wrote.
+    ///
+    /// Something else can write the same file at any time: another `sefy`, the
+    /// same command line through the window's own agent, a sync client replacing
+    /// it. A vault that has never been written has nothing to fall behind.
+    pub fn is_current(&self) -> bool {
+        match self.seen.get() {
+            Some(seen) => version_on_disk(&self.path) == Some(seen),
+            None => true,
+        }
+    }
+
+    /// Reads the file again if it is no longer the version this value holds, and
+    /// says whether it did.
+    ///
+    /// Whatever was changed here and not saved is gone, in favour of the file:
+    /// call this before changing anything, not after. A file the password no
+    /// longer opens leaves this value as it was.
+    pub fn reload(&mut self) -> Result<bool> {
+        if self.is_current() {
+            return Ok(false);
+        }
+        let file = fs::read(&self.path)
+            .map_err(|source| Error::io(format!("cannot read {}", self.path.display()), source))?;
+        let salt = format::salt_of(&file)?;
+        let database = match &mut self.sealer {
+            Sealer::Password(password) => format::decode(password, &file)?,
+            Sealer::Source {
+                source,
+                opened_salt,
+                opened_key,
+            } => {
+                let key = source.key_for(&salt)?;
+                let database = format::open_under(&key, &file)?;
+                *opened_salt = salt;
+                *opened_key = key;
+                database
+            }
+            Sealer::Nothing => unreachable!("only a copy without a file has no sealer"),
+        };
+        self.connection = db::load(&database)?;
+        self.seen.set(Some(salt));
+        Ok(true)
     }
 
     /// How many times this value has written its file since it was opened.
@@ -535,8 +598,16 @@ impl Vault {
             return Err(Error::PasswordNeeded);
         };
         let old = old.clone();
-        self.sealer = Sealer::Password(Zeroizing::new(password.to_vec()));
-        self.save()?;
+        let before = std::mem::replace(
+            &mut self.sealer,
+            Sealer::Password(Zeroizing::new(password.to_vec())),
+        );
+        // The file still opens under the old one when this fails, and the value
+        // has to go on saying so.
+        if let Err(error) = self.save() {
+            self.sealer = before;
+            return Err(error);
+        }
         copies::reseal(&self.path, &old, password)
     }
 
@@ -605,6 +676,39 @@ impl Vault {
         db::meta_set(&self.connection, LAST_SYNC, &stamp.encode())
     }
 
+    /// How long what this vault lets out stays out; see [`crate::policy`].
+    pub fn policy(&self) -> Result<Policy> {
+        Ok(Policy {
+            lock_after_seconds: Policy::read(
+                db::meta_get(&self.connection, policy::LOCK_AFTER_KEY)?,
+                policy::LOCK_AFTER_SECONDS,
+            ),
+            clipboard_seconds: Policy::read(
+                db::meta_get(&self.connection, policy::CLIPBOARD_KEY)?,
+                policy::CLIPBOARD_SECONDS,
+            ),
+        })
+    }
+
+    /// Sets how long what this vault lets out stays out, to values on offer.
+    ///
+    /// The caller saves, as with any other change.
+    pub fn set_policy(&mut self, policy: Policy) -> Result<()> {
+        if !policy.is_offered() {
+            return Err(Error::PolicyNotOffered);
+        }
+        db::meta_set(
+            &self.connection,
+            policy::LOCK_AFTER_KEY,
+            &policy.lock_after_seconds.to_string(),
+        )?;
+        db::meta_set(
+            &self.connection,
+            policy::CLIPBOARD_KEY,
+            &policy.clipboard_seconds.to_string(),
+        )
+    }
+
     /// Destroys this vault on disk: the file, the copies kept beside it and
     /// any write a crash left unfinished — every part [`wipe::parts`] lists.
     /// Each is overwritten with random bytes in place, synced and deleted.
@@ -667,6 +771,16 @@ fn with_field_from(current: &Payload, earlier: &Payload, name: &str) -> Result<P
         kind: kind.clone(),
         fields,
     })
+}
+
+/// Which version of a vault is on disk: the salt at the front of the file, new
+/// with every write. `None` when there is no file there or it is too short to
+/// have one. Reads no more than the salt, so asking often costs next to nothing.
+pub fn version_on_disk(path: &Path) -> Option<[u8; SALT_LEN]> {
+    use std::io::Read;
+    let mut salt = [0; SALT_LEN];
+    fs::File::open(path).ok()?.read_exact(&mut salt).ok()?;
+    Some(salt)
 }
 
 /// `meta` key under which the last sync is recorded.

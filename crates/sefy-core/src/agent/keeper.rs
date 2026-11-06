@@ -16,7 +16,7 @@ use std::time::{Duration, Instant, SystemTime};
 use zeroize::Zeroizing;
 
 /// How long an agent stays unlocked with nobody using it, unless told otherwise.
-pub const IDLE: Duration = Duration::from_secs(15 * 60);
+pub const IDLE: Duration = Duration::from_secs(crate::policy::LOCK_AFTER_SECONDS);
 
 /// How long an agent stays unlocked from the moment it got the password,
 /// however busy. Without it a script asking every few minutes would keep the
@@ -157,6 +157,14 @@ impl Keeper {
     /// Tells nobody: the caller is who wanted it gone.
     pub fn wipe(&self) -> bool {
         self.slot().take().is_some()
+    }
+
+    /// From now on, how long the vault stays unlocked with nobody using it. No
+    /// more than [`CAP`], as ever; the time since it was last used still counts.
+    pub fn set_idle(&self, idle: Duration) {
+        if let Some(held) = self.slot().as_mut() {
+            held.idle = idle.min(CAP);
+        }
     }
 
     /// Someone is using the vault: the idle time starts over.

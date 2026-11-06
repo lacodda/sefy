@@ -9,11 +9,7 @@ use std::time::Duration;
 /// The variable naming the transport to use when there are several.
 pub const TRANSPORT_ENV: &str = "SEFY_TRANSPORT";
 
-/// The variable naming the remote copy.
-pub const REMOTE_NAME_ENV: &str = "SEFY_REMOTE_NAME";
-
-/// What the remote copy is called when nothing says otherwise.
-pub const DEFAULT_REMOTE_NAME: &str = "vault";
+pub use sefy_core::sync::{DEFAULT_REMOTE_NAME, REMOTE_NAME_ENV};
 
 /// The options that fall back to a variable clap refuses to find empty, with
 /// the variable.
@@ -375,9 +371,11 @@ pub enum Command {
 pub struct AgentArgs {
     /// How long the vault stays unlocked with nobody using it: 90s, 15m, 2h.
     ///
-    /// However busy it is, it locks 12 hours after the password was given.
-    #[arg(long, value_name = "TIME", default_value = "15m", value_parser = parse_time)]
-    pub ttl: Duration,
+    /// Left out, it is what the vault says: 15 minutes unless set otherwise in
+    /// the desktop app's settings. However busy it is, it locks 12 hours after
+    /// the password was given.
+    #[arg(long, value_name = "TIME", value_parser = parse_time)]
+    pub ttl: Option<Duration>,
 
     /// Be the process that holds it: read the password from standard input
     /// and answer until locked. What `sefy agent` starts; not for typing.
@@ -727,12 +725,13 @@ pub struct GetArgs {
     #[arg(long)]
     pub stdout: bool,
 
-    /// Seconds before the clipboard is cleared again; 0 leaves it there.
+    /// Seconds before the clipboard is cleared again; 0 leaves it there. Left
+    /// out, it is what the vault says: 45 unless set otherwise in the desktop app.
     ///
     /// sefy waits that long before exiting, and clears the clipboard only if
     /// the secret is still the value sitting on it.
-    #[arg(long, value_name = "SECONDS", default_value_t = sefy_core::clipboard::HOLD_SECONDS)]
-    pub clear_after: u64,
+    #[arg(long, value_name = "SECONDS")]
+    pub clear_after: Option<u64>,
 }
 
 /// Arguments of `sefy gen`.
@@ -803,9 +802,10 @@ pub struct GenArgs {
     #[arg(long)]
     pub stdout: bool,
 
-    /// Seconds before the clipboard is cleared again; 0 leaves it there.
-    #[arg(long, value_name = "SECONDS", default_value_t = sefy_core::clipboard::HOLD_SECONDS)]
-    pub clear_after: u64,
+    /// Seconds before the clipboard is cleared again; 0 leaves it there. Left
+    /// out, it is what the vault says: 45 unless set otherwise in the desktop app.
+    #[arg(long, value_name = "SECONDS")]
+    pub clear_after: Option<u64>,
 }
 
 /// What `sefy export` writes, as spelled on the command line.
@@ -847,9 +847,10 @@ pub struct OpenArgs {
     #[arg(long)]
     pub no_password: bool,
 
-    /// Seconds before the clipboard is cleared again; 0 leaves it there.
-    #[arg(long, value_name = "SECONDS", default_value_t = sefy_core::clipboard::HOLD_SECONDS)]
-    pub clear_after: u64,
+    /// Seconds before the clipboard is cleared again; 0 leaves it there. Left
+    /// out, it is what the vault says: 45 unless set otherwise in the desktop app.
+    #[arg(long, value_name = "SECONDS")]
+    pub clear_after: Option<u64>,
 }
 
 /// Arguments of `sefy otp`.
@@ -882,9 +883,10 @@ pub struct OtpArgs {
     #[arg(long)]
     pub stdout: bool,
 
-    /// Seconds before the clipboard is cleared again; 0 leaves it there.
-    #[arg(long, value_name = "SECONDS", default_value_t = sefy_core::clipboard::HOLD_SECONDS)]
-    pub clear_after: u64,
+    /// Seconds before the clipboard is cleared again; 0 leaves it there. Left
+    /// out, it is what the vault says: 45 unless set otherwise in the desktop app.
+    #[arg(long, value_name = "SECONDS")]
+    pub clear_after: Option<u64>,
 }
 
 /// Arguments of `sefy fill`.
@@ -894,9 +896,10 @@ pub struct FillArgs {
     pub reference: String,
 
     /// Seconds before the last field is cleared from the clipboard; 0 leaves
-    /// it there.
-    #[arg(long, value_name = "SECONDS", default_value_t = sefy_core::clipboard::HOLD_SECONDS)]
-    pub clear_after: u64,
+    /// it there. Left out, it is what the vault says: 45 unless set otherwise in
+    /// the desktop app.
+    #[arg(long, value_name = "SECONDS")]
+    pub clear_after: Option<u64>,
 }
 
 /// Arguments of `sefy run`.

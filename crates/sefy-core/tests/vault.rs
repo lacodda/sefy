@@ -1035,3 +1035,193 @@ fn a_status_of_a_file_that_went_missing_still_answers() {
     assert_eq!(status.size, None);
     assert!(status.copies.is_empty());
 }
+
+#[test]
+fn a_save_leaves_alone_a_file_it_did_not_read() {
+    let fixture = fixture();
+    Vault::create(&fixture.path, PASSWORD).unwrap();
+
+    let mut behind = Vault::open(&fixture.path, PASSWORD).unwrap();
+    let mut ahead = Vault::open(&fixture.path, PASSWORD).unwrap();
+    assert!(behind.is_current());
+
+    ahead.add(NewItem::new("theirs", note("kept"))).unwrap();
+    ahead.save().unwrap();
+    assert!(!behind.is_current());
+    assert!(ahead.is_current());
+
+    behind.add(NewItem::new("mine", note("stale"))).unwrap();
+    let before = fs::read(&fixture.path).unwrap();
+    assert!(matches!(behind.save(), Err(Error::ChangedOnDisk(_))));
+    assert_eq!(
+        fs::read(&fixture.path).unwrap(),
+        before,
+        "the file was touched"
+    );
+    assert_eq!(behind.writes(), 0);
+
+    let titles: Vec<String> = Vault::open(&fixture.path, PASSWORD)
+        .unwrap()
+        .list()
+        .unwrap()
+        .into_iter()
+        .map(|item| item.title)
+        .collect();
+    assert_eq!(titles, ["theirs"]);
+}
+
+#[test]
+fn saving_again_is_not_a_change_from_elsewhere() {
+    let fixture = fixture();
+    let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+    for title in ["first", "second", "third"] {
+        vault.add(NewItem::new(title, note("x"))).unwrap();
+        vault.save().unwrap();
+    }
+    assert!(vault.is_current());
+    assert_eq!(vault.writes(), 4);
+}
+
+#[test]
+fn a_file_removed_under_an_open_vault_does_not_come_back() {
+    let fixture = fixture();
+    let vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+    fs::remove_file(&fixture.path).unwrap();
+
+    assert!(!vault.is_current());
+    assert!(matches!(vault.save(), Err(Error::ChangedOnDisk(_))));
+    assert!(!fixture.path.exists(), "a wiped vault was written back");
+}
+
+#[test]
+fn reload_takes_up_what_was_written_elsewhere() {
+    let fixture = fixture();
+    Vault::create(&fixture.path, PASSWORD).unwrap();
+
+    let mut mine = Vault::open(&fixture.path, PASSWORD).unwrap();
+    assert!(!mine.reload().unwrap(), "nothing had changed");
+
+    let mut theirs = Vault::open(&fixture.path, PASSWORD).unwrap();
+    theirs.add(NewItem::new("theirs", note("kept"))).unwrap();
+    theirs.save().unwrap();
+
+    assert!(mine.reload().unwrap());
+    assert!(mine.is_current());
+    mine.add(NewItem::new("mine", note("too"))).unwrap();
+    mine.save().unwrap();
+
+    let reopened = Vault::open(&fixture.path, PASSWORD).unwrap();
+    assert_eq!(reopened.list().unwrap().len(), 2);
+}
+
+#[test]
+fn a_file_that_will_not_open_leaves_what_is_in_memory() {
+    let fixture = fixture();
+    Vault::create(&fixture.path, PASSWORD).unwrap();
+    let mut mine = Vault::open(&fixture.path, PASSWORD).unwrap();
+    mine.add(NewItem::new("still here", note("x"))).unwrap();
+    mine.save().unwrap();
+
+    // A sync client halfway through replacing it, or a file under another
+    // password: either way, what was read stays readable, and nothing is written.
+    let other = fixture.path.with_extension("other");
+    Vault::create(&other, b"another password").unwrap();
+    fs::copy(&other, &fixture.path).unwrap();
+
+    assert!(matches!(
+        mine.reload(),
+        Err(Error::WrongPasswordOrNotAVault)
+    ));
+    assert_eq!(mine.list().unwrap().len(), 1);
+    assert!(matches!(mine.save(), Err(Error::ChangedOnDisk(_))));
+}
+
+#[test]
+fn a_refused_password_change_leaves_the_old_password_in_charge() {
+    let fixture = fixture();
+    Vault::create(&fixture.path, PASSWORD).unwrap();
+    let mut behind = Vault::open(&fixture.path, PASSWORD).unwrap();
+    let mut ahead = Vault::open(&fixture.path, PASSWORD).unwrap();
+    ahead.add(NewItem::new("theirs", note("x"))).unwrap();
+    ahead.save().unwrap();
+
+    assert!(matches!(
+        behind.change_password(b"new password"),
+        Err(Error::ChangedOnDisk(_))
+    ));
+
+    // The file still opens under the old one, and this value still seals with
+    // it: caught up, what it writes opens with the old password.
+    assert!(behind.reload().unwrap());
+    behind.add(NewItem::new("mine", note("x"))).unwrap();
+    behind.save().unwrap();
+    assert_eq!(
+        Vault::open(&fixture.path, PASSWORD)
+            .unwrap()
+            .list()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn a_vault_says_how_long_things_stay_out_and_keeps_saying_it() {
+    use sefy_core::Policy;
+    let fixture = fixture();
+    let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+    assert_eq!(vault.policy().unwrap(), Policy::default());
+
+    let set = Policy {
+        lock_after_seconds: 300,
+        clipboard_seconds: 90,
+    };
+    vault.set_policy(set).unwrap();
+    vault.save().unwrap();
+
+    let reopened = Vault::open(&fixture.path, PASSWORD).unwrap();
+    assert_eq!(reopened.policy().unwrap(), set);
+}
+
+#[test]
+fn a_vault_cannot_be_set_to_what_is_not_on_offer() {
+    use sefy_core::Policy;
+    let fixture = fixture();
+    let mut vault = Vault::create(&fixture.path, PASSWORD).unwrap();
+    for policy in [
+        Policy {
+            lock_after_seconds: 1,
+            clipboard_seconds: 45,
+        },
+        Policy {
+            lock_after_seconds: 900,
+            clipboard_seconds: 0,
+        },
+    ] {
+        assert!(matches!(
+            vault.set_policy(policy),
+            Err(Error::PolicyNotOffered)
+        ));
+    }
+    assert_eq!(vault.policy().unwrap(), Policy::default());
+}
+
+#[test]
+fn a_merge_leaves_each_copy_its_own_policy() {
+    use sefy_core::Policy;
+    let directory = tempfile::tempdir().unwrap();
+    let mut here = Vault::create(directory.path().join("here"), PASSWORD).unwrap();
+    let mut there = Vault::create(directory.path().join("there"), PASSWORD).unwrap();
+    there
+        .set_policy(Policy {
+            lock_after_seconds: 60,
+            clipboard_seconds: 15,
+        })
+        .unwrap();
+    there.add(NewItem::new("theirs", note("x"))).unwrap();
+    there.save().unwrap();
+
+    sefy_core::merge(&mut here, &there).unwrap();
+    assert_eq!(here.list().unwrap().len(), 1);
+    assert_eq!(here.policy().unwrap(), Policy::default());
+}

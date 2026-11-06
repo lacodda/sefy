@@ -14,11 +14,9 @@
 //! needs, and a program that only reads vaults has no reason to link a
 //! desktop's clipboard.
 
-/// Seconds a copied secret stays on the clipboard before it is taken back.
-///
-/// Long enough to switch windows, find the field and paste; short enough that
-/// a secret copied and forgotten is gone before the next thing is pasted.
-pub const HOLD_SECONDS: u64 = 45;
+/// Seconds a copied secret stays on the clipboard before it is taken back, unless
+/// the vault says otherwise.
+pub const HOLD_SECONDS: u64 = crate::policy::CLIPBOARD_SECONDS;
 
 #[cfg(feature = "clipboard")]
 pub use system::{Clipboard, Held};

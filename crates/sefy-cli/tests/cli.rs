@@ -4027,3 +4027,32 @@ fn a_variable_set_to_nothing_is_a_variable_not_set() {
         .assert()
         .success();
 }
+
+#[test]
+fn what_a_vault_says_is_what_the_command_line_does() {
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains("locks after 15m idle"))
+        .stdout(contains("clears after 45s"));
+
+    let mut vault = sefy_core::Vault::open(&fixture.path, MASTER.as_bytes()).unwrap();
+    vault
+        .set_policy(sefy_core::Policy {
+            lock_after_seconds: 300,
+            clipboard_seconds: 90,
+        })
+        .unwrap();
+    vault.save().unwrap();
+
+    fixture
+        .sefy()
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(contains("locks after 5m idle"))
+        .stdout(contains("clears after 90s"));
+}

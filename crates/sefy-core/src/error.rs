@@ -29,6 +29,18 @@ pub enum Error {
     #[error("vault already exists: {0}")]
     AlreadyExists(PathBuf),
 
+    /// The vault's file is no longer the version this value read: something
+    /// else wrote it, or removed it. Nothing was written over it.
+    #[error(
+        "{0} changed on disk after it was opened, and writing now would erase that; \
+         nothing was written, so run the command again"
+    )]
+    ChangedOnDisk(PathBuf),
+
+    /// A vault can only be set to the values on offer ([`crate::policy`]).
+    #[error("a vault cannot be set to that")]
+    PolicyNotOffered,
+
     /// The requested item is not in the vault.
     #[error("no item with id {0}")]
     ItemNotFound(i64),

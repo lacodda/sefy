@@ -34,7 +34,7 @@ const FAILED: &str = "failed";
 /// `sefy agent`.
 pub fn run(args: AgentArgs, vault: Option<PathBuf>, password_env: Option<&str>) -> Result<()> {
     if args.serve {
-        return serve(args.ttl);
+        return serve(args.ttl.unwrap_or(agent::IDLE));
     }
 
     let path = session::vault_path(vault)?;
@@ -55,12 +55,16 @@ pub fn run(args: AgentArgs, vault: Option<PathBuf>, password_env: Option<&str>) 
     let password = Zeroizing::new(session::password(password_env)?);
     // Checked here, where a typo can be said: otherwise it would surface later
     // as every command asking for the password anyway.
-    session::open(&path, &password)?;
+    let vault = session::open(&path, &password)?;
+    let ttl = match args.ttl {
+        Some(ttl) => ttl,
+        None => Duration::from_secs(vault.policy()?.lock_after_seconds),
+    };
 
-    let pid = start(&password, args.ttl, password_env)?;
+    let pid = start(&password, ttl, password_env)?;
     println!(
         "unlocked for {} of nobody using it, {} at most (agent pid {pid})",
-        crate::when::span(args.ttl),
+        crate::when::span(ttl),
         crate::when::span(agent::CAP)
     );
     println!("`sefy lock` locks it now");

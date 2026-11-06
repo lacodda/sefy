@@ -38,6 +38,22 @@ use crate::plugin::{Operation, Plugin, Report, Request, invoke};
 use crate::vault::Vault;
 use std::path::Path;
 
+/// The variable naming the remote copy.
+pub const REMOTE_NAME_ENV: &str = "SEFY_REMOTE_NAME";
+
+/// What the remote copy is called when nothing says otherwise.
+pub const DEFAULT_REMOTE_NAME: &str = "vault";
+
+/// What the remote copy is called on this machine, for a front end with no
+/// option to say: the variable when it says something, else the default. Empty
+/// means not set, as it does for every variable sefy reads.
+pub fn remote_name() -> String {
+    std::env::var(REMOTE_NAME_ENV)
+        .ok()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| DEFAULT_REMOTE_NAME.to_owned())
+}
+
 /// What a pull did: what the transport said, and what the merge found.
 #[derive(Debug, Clone)]
 pub struct PullReport {
@@ -105,12 +121,21 @@ fn push_labelled(
     operation: &str,
 ) -> Result<Report> {
     stamp(vault, plugin, operation)?;
+    send(vault.path(), plugin, name)
+}
 
+/// Hands the sealed file at `file` to a transport, to replace the remote copy.
+///
+/// The second half of a push on its own, for a program that holds the vault
+/// where others wait for it: a transfer takes as long as the network does, and
+/// needs nothing but the file. [`stamp`] comes first, for the reason [`push`]
+/// gives.
+pub fn send(file: &Path, plugin: &Plugin, name: &str) -> Result<Report> {
     invoke(
         plugin,
         &Request {
             operation: Operation::Push,
-            file: vault.path(),
+            file,
             name,
         },
     )
@@ -121,7 +146,7 @@ fn push_labelled(
 /// Its own function because both transfers need it and each calls it at a
 /// different point: a push stamps before uploading, so that the copy going up
 /// carries the note about its own journey.
-fn stamp(vault: &mut Vault, plugin: &Plugin, operation: &str) -> Result<()> {
+pub fn stamp(vault: &mut Vault, plugin: &Plugin, operation: &str) -> Result<()> {
     vault.record_sync(plugin.name(), operation)?;
     vault.save()
 }

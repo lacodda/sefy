@@ -387,12 +387,13 @@ pub fn get(vault: &Vault, args: GetArgs) -> Result<()> {
         return Ok(());
     }
 
-    if args.clear_after > 0 {
+    let clear_after = clear_after(args.clear_after, vault)?;
+    if clear_after > 0 {
         // Said before the wait, not after: the user needs to know why the
         // command is sitting there.
         println!(
-            "copied {description} of {:?} to the clipboard; clearing in {}s",
-            item.summary.title, args.clear_after
+            "copied {description} of {:?} to the clipboard; clearing in {clear_after}s",
+            item.summary.title
         );
     } else {
         println!(
@@ -402,11 +403,20 @@ pub fn get(vault: &Vault, args: GetArgs) -> Result<()> {
     }
     flush_stdout();
 
-    let hold = output::to_clipboard(&value, args.clear_after)?;
+    let hold = output::to_clipboard(&value, clear_after)?;
     if hold.cleared {
         println!("clipboard cleared");
     }
     Ok(())
+}
+
+/// How long a copy stays on the clipboard: the option when it was given, else
+/// what the vault says.
+fn clear_after(option: Option<u64>, vault: &Vault) -> Result<u64> {
+    Ok(match option {
+        Some(seconds) => seconds,
+        None => vault.policy()?.clipboard_seconds,
+    })
 }
 
 /// Generates a password or a passphrase, keeps it if asked, and hands it over.
@@ -501,17 +511,19 @@ pub fn generate(vault: Option<&mut Vault>, args: GenArgs, auto: &mut AutoSync) -
         return Ok(());
     }
 
-    if args.clear_after > 0 {
-        println!(
-            "copied it to the clipboard; clearing in {}s",
-            args.clear_after
-        );
+    // With no vault in this command, the same answer a vault gives when nothing
+    // was set.
+    let clear_after = args
+        .clear_after
+        .unwrap_or(sefy_core::clipboard::HOLD_SECONDS);
+    if clear_after > 0 {
+        println!("copied it to the clipboard; clearing in {clear_after}s");
     } else {
         println!("copied it to the clipboard");
     }
     flush_stdout();
 
-    let hold = output::to_clipboard(&generated.value, args.clear_after)?;
+    let hold = output::to_clipboard(&generated.value, clear_after)?;
     if hold.cleared {
         println!("clipboard cleared");
     }
@@ -721,6 +733,11 @@ pub fn edit(vault: &mut Vault, args: EditArgs) -> Result<()> {
         bail!("nothing to change; pass --title, --tag, or a field to edit");
     }
 
+    // A note can stay open in an editor for twenty minutes, and what someone
+    // typed there should not be refused because something else wrote the file
+    // meanwhile. On top of the file as it is now, what they replaced is a version
+    // like any other.
+    vault.reload()?;
     vault.update(summary.id, args.title, payload, tags)?;
     vault.save()?;
     println!("updated {}", summary.id);
@@ -1520,13 +1537,14 @@ pub fn open(vault: &Vault, args: OpenArgs) -> Result<()> {
         return Ok(());
     };
 
+    let clear_after = clear_after(args.clear_after, vault)?;
     println!(
-        "copied {} of {:?} to the clipboard; clearing in {}s",
-        secret.name, item.summary.title, args.clear_after
+        "copied {} of {:?} to the clipboard; clearing in {clear_after}s",
+        secret.name, item.summary.title
     );
     flush_stdout();
 
-    let hold = output::to_clipboard(&secret.value, args.clear_after)?;
+    let hold = output::to_clipboard(&secret.value, clear_after)?;
     if hold.cleared {
         println!("clipboard cleared");
     }
@@ -1617,18 +1635,18 @@ pub fn otp(vault: &mut Vault, args: OtpArgs, auto: &mut AutoSync) -> Result<()> 
     }
 
     let valid = totp.remaining(now);
-    if args.clear_after > 0 {
+    let clear_after = clear_after(args.clear_after, vault)?;
+    if clear_after > 0 {
         println!(
             "copied the one-time code of {title:?} to the clipboard; \
-             valid for {valid}s, clearing in {}s",
-            args.clear_after
+             valid for {valid}s, clearing in {clear_after}s"
         );
     } else {
         println!("copied the one-time code of {title:?} to the clipboard; valid for {valid}s");
     }
     flush_stdout();
 
-    let hold = output::to_clipboard(&code, args.clear_after)?;
+    let hold = output::to_clipboard(&code, clear_after)?;
     if hold.cleared {
         println!("clipboard cleared");
     }
@@ -1720,16 +1738,14 @@ pub fn fill(vault: &Vault, args: FillArgs) -> Result<()> {
                 bail!("input closed before the last field; the clipboard is cleared");
             }
         } else {
-            if args.clear_after > 0 {
-                println!(
-                    "{position} {label} is on the clipboard; clearing in {}s",
-                    args.clear_after
-                );
+            let clear_after = clear_after(args.clear_after, vault)?;
+            if clear_after > 0 {
+                println!("{position} {label} is on the clipboard; clearing in {clear_after}s");
             } else {
                 println!("{position} {label} is on the clipboard");
             }
             flush_stdout();
-            let hold = clipboard.hold(&value, args.clear_after)?;
+            let hold = clipboard.hold(&value, clear_after)?;
             if hold.cleared {
                 println!("clipboard cleared");
             }
@@ -1941,6 +1957,12 @@ pub fn status(path: &Path, password_env: Option<&str>) -> Result<()> {
     }
 
     println!("copies   {}", copies_line(&status.copies));
+    let policy = vault.policy()?;
+    println!(
+        "policy   locks after {} idle, the clipboard clears after {}s",
+        crate::when::span(std::time::Duration::from_secs(policy.lock_after_seconds)),
+        policy.clipboard_seconds
+    );
 
     let plugins = sefy_core::plugin::discover_in(&sefy_core::plugin::search_paths());
     if plugins.is_empty() {
