@@ -3928,3 +3928,102 @@ mod expires {
             .stderr(contains("warning: \"gone\" expired yesterday"));
     }
 }
+
+/// `sefy`, writing to a pipe whose reading end is already closed: what
+/// `sefy status | head -4` comes to once `head` has what it wanted. Closed before
+/// the start rather than by racing it, so the test always meets the closed pipe.
+fn with_nobody_reading(fixture: &Fixture) -> std::process::Command {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_sefy"));
+    command
+        .env("SEFY_VAULT", &fixture.path)
+        .env("SEFY_TEST_PASSWORD", MASTER)
+        .env_remove("SEFY_AUTO_SYNC")
+        .env("SEFY_AGENT_SOCKET", fixture.directory().join("no-agent"))
+        .args(["--password-env", "SEFY_TEST_PASSWORD"])
+        .stdout(writer);
+    command
+}
+
+#[test]
+fn a_reader_who_went_away_is_not_a_panic() {
+    let fixture = Fixture::with_vault();
+    fixture
+        .sefy()
+        .args(["add", "note", "first", "--text", "not real"])
+        .assert()
+        .success();
+
+    for arguments in [
+        vec!["status"],
+        vec!["ls"],
+        vec!["show", "first"],
+        vec!["completions", "powershell"],
+    ] {
+        let output = with_nobody_reading(&fixture)
+            .args(&arguments)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&output.stderr);
+        assert!(!said.contains("panicked"), "{arguments:?}: {said}");
+        assert!(output.status.success(), "{arguments:?}: {said}");
+    }
+}
+
+#[test]
+fn a_change_does_not_depend_on_anyone_reading_about_it() {
+    let fixture = Fixture::with_vault();
+    let output = with_nobody_reading(&fixture)
+        .args(["add", "note", "kept", "--text", "not real"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    fixture
+        .sefy()
+        .args(["show", "kept"])
+        .assert()
+        .success()
+        .stdout(contains("not real"));
+}
+
+#[test]
+fn a_variable_set_to_nothing_is_a_variable_not_set() {
+    let fixture = Fixture::with_vault();
+
+    // Commands with no use for a vault work, which is what an installer's lock
+    // before replacing the program relies on.
+    Command::cargo_bin("sefy")
+        .unwrap()
+        .env("SEFY_VAULT", "")
+        .env("SEFY_AUTO_SYNC", "")
+        .env("SEFY_AGENT_SOCKET", fixture.directory().join("no-agent"))
+        .arg("lock")
+        .assert()
+        .success()
+        .stdout(contains("nothing was unlocked"));
+
+    // One that wants a vault says so in its own words, not clap's.
+    Command::cargo_bin("sefy")
+        .unwrap()
+        .env("SEFY_VAULT", "")
+        .env_remove("SEFY_AUTO_SYNC")
+        .arg("status")
+        .assert()
+        .failure()
+        .stderr(contains("set SEFY_VAULT"));
+
+    // And a file named outright still comes before it.
+    Command::cargo_bin("sefy")
+        .unwrap()
+        .env("SEFY_VAULT", "")
+        .env("SEFY_TEST_PASSWORD", MASTER)
+        .env_remove("SEFY_AUTO_SYNC")
+        .env("SEFY_AGENT_SOCKET", fixture.directory().join("no-agent"))
+        .arg("--vault")
+        .arg(&fixture.path)
+        .args(["--password-env", "SEFY_TEST_PASSWORD", "status"])
+        .assert()
+        .success();
+}

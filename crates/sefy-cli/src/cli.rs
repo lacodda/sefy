@@ -1,6 +1,7 @@
 //! Command-line surface: what `sefy` accepts and what each option means.
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::builder::Resettable;
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -13,6 +14,28 @@ pub const REMOTE_NAME_ENV: &str = "SEFY_REMOTE_NAME";
 
 /// What the remote copy is called when nothing says otherwise.
 pub const DEFAULT_REMOTE_NAME: &str = "vault";
+
+/// The options that fall back to a variable clap refuses to find empty, with
+/// the variable.
+const OPTIONS_FROM_THE_ENVIRONMENT: [(&str, &str); 2] =
+    [("vault", "SEFY_VAULT"), ("auto_sync", "SEFY_AUTO_SYNC")];
+
+/// Reads the command line.
+///
+/// A variable set to nothing means it is not set, as it does for every other
+/// variable sefy reads. Left to clap, an empty `SEFY_VAULT` is an option given
+/// without a value, which stops every command, including the ones that have no
+/// use for a vault; and PowerShell's `$env:X = ''` is an ordinary way to get one.
+pub fn parse() -> Cli {
+    let mut command = Cli::command();
+    for (option, variable) in OPTIONS_FROM_THE_ENVIRONMENT {
+        if std::env::var_os(variable).is_some_and(|value| value.is_empty()) {
+            command = command.mut_arg(option, |arg| arg.env(Resettable::Reset));
+        }
+    }
+    let matches = command.get_matches();
+    Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit())
+}
 
 /// An inconspicuous encrypted store for notes, credentials and files.
 #[derive(Debug, Parser)]

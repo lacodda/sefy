@@ -1,8 +1,41 @@
 //! Printing things, and the one path by which a secret leaves the program.
 
+/// `println!`, for a reader who may have gone away: see [`out`].
+macro_rules! println {
+    () => {
+        $crate::output::out(format_args!("\n"))
+    };
+    ($($text:tt)*) => {
+        $crate::output::out(format_args!("{}\n", format_args!($($text)*)))
+    };
+}
+
+/// `print!`, for a reader who may have gone away: see [`out`].
+macro_rules! print {
+    ($($text:tt)*) => {
+        $crate::output::out(format_args!($($text)*))
+    };
+}
+
 use anyhow::Result;
 use sefy_core::clipboard::{Clipboard, Held};
 use sefy_core::{Error, ItemSummary};
+
+/// Writes to standard output, and shrugs at a reader who has stopped reading.
+///
+/// `sefy status | head -4` closes the pipe while sefy is still talking, and the
+/// standard macros panic when that happens. Nothing has gone wrong: whoever asked
+/// has what they wanted. The command carries on with no one listening rather than
+/// stopping there, because many of them print before they save, and a change must
+/// not depend on someone reading about it.
+pub fn out(text: std::fmt::Arguments<'_>) {
+    use std::io::Write;
+    if let Err(error) = std::io::stdout().write_fmt(text)
+        && error.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        panic!("failed printing to stdout: {error}");
+    }
+}
 
 /// Puts a secret on the clipboard, and takes it back off after `seconds`.
 ///

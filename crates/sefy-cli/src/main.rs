@@ -4,6 +4,11 @@
 //! read the master password, open the vault in memory, act, and — for anything
 //! that changed something — seal it back to disk.
 
+// Before the modules, so that what they print goes through these: a macro is in
+// scope for whatever is written after it.
+#[macro_use]
+mod output;
+
 mod agent;
 mod audit;
 mod autosync;
@@ -14,7 +19,6 @@ mod diff;
 mod doctor;
 mod editor;
 mod launch;
-mod output;
 mod picker;
 mod qr;
 mod session;
@@ -23,7 +27,7 @@ mod wipe;
 
 use anyhow::Result;
 use autosync::AutoSync;
-use clap::{CommandFactory, Parser};
+use clap::CommandFactory;
 use cli::{Cli, Command, PluginAction};
 use std::process::ExitCode;
 
@@ -33,7 +37,7 @@ use std::process::ExitCode;
 const RUN_FAILED: u8 = 125;
 
 fn main() -> ExitCode {
-    let arguments = Cli::parse();
+    let arguments = cli::parse();
     let runs_a_command = matches!(arguments.command, Some(Command::Run(_)));
     match run(arguments) {
         Ok(()) => ExitCode::SUCCESS,
@@ -84,7 +88,11 @@ fn run(arguments: Cli) -> Result<()> {
         Command::Completions { shell } => {
             let mut command = Cli::command();
             let name = command.get_name().to_owned();
-            clap_complete::generate(shell, &mut command, name, &mut std::io::stdout());
+            // Into a buffer first: the generator treats a failed write as a bug,
+            // and a reader who has gone away is not one.
+            let mut script = Vec::new();
+            clap_complete::generate(shell, &mut command, name, &mut script);
+            print!("{}", String::from_utf8_lossy(&script));
             return Ok(());
         }
         // Only keeping the result needs the vault.
