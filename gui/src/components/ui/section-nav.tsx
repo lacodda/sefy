@@ -39,6 +39,7 @@ export interface SectionNavProps extends Omit<HTMLAttributes<HTMLElement>, 'chil
   /** What the list is called: the caption above it, and the name a screen
    * reader gives the landmark. */
   label: string
+  /** The sections, in order. Each row is a button, or the element `render` returns for it. */
   items: readonly SectionNavItem[]
   /** Which item is the current page. */
   activeId?: string
@@ -144,7 +145,9 @@ function SectionNavRow({
 }
 
 export interface SectionHeadingProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'> {
+  /** The open section's title, drawn as a heading. */
   title: ReactNode
+  /** A line under the title that says what the section is for. */
   description?: ReactNode
   /** Where the open section's title stands in the outline: `2` by default. */
   level?: HeadingLevel

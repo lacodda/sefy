@@ -1,7 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { initTheme } from 'dowel-ui'
+import { initTheme, overlayScrollbars } from 'dowel-ui'
 import App from '@/App'
 import { guard } from '@/shell/guards'
 import '@/styles.css'
@@ -9,6 +9,10 @@ import '@/styles.css'
 // The theme follows the system; a choice made elsewhere in the line on this
 // machine is applied before the first paint rather than a moment after it.
 initTheme()
+
+// Nothing at rest, a thin line while scrolling, and nothing on the page moves
+// when it appears: https://lacodda.github.io/dowel/concepts/scrollbars/
+overlayScrollbars()
 
 // The window is created hidden (tauri.conf.json) and shown from here, once
 // the document has painted its splash in the right colours. Shown before it

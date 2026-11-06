@@ -25,7 +25,7 @@
         "visible": false,
         "generalAutofillEnabled": false,
         "backgroundColor": "#171a1d",
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ElasticOverscroll"
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ElasticOverscroll --enable-features=OverlayScrollbar"
       },
       {
         "label": "quick",
@@ -47,7 +47,7 @@
         "dragDropEnabled": false,
         "generalAutofillEnabled": false,
         "backgroundColor": "#171a1d",
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ElasticOverscroll"
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,ElasticOverscroll --enable-features=OverlayScrollbar"
       }
     ],
     "security": {

@@ -21,8 +21,8 @@ importers:
         specifier: ^2.1.1
         version: 2.1.1
       dowel-ui:
-        specifier: ^0.41.0
-        version: 0.41.0(eslint@10.14.0(jiti@2.7.0))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+        specifier: ^0.43.0
+        version: 0.43.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
       lucide-react:
         specifier: ^1.67.0
         version: 1.67.0(@types/react@19.3.0)(react@19.3.1)
@@ -912,16 +912,12 @@ packages:
   dom-accessibility-api@0.6.3:
     resolution: {integrity: sha512-7ZgogeTnjuHbo+ct10G9Ffp0mif17idi0IyWNVA/wcwcm7NPOD/WEHVP3n7n3MhXqxoIYm8d6MuZohYWIZ4T3w==}
 
-  dowel-ui@0.41.0:
-    resolution: {integrity: sha512-vFpoq82J9TAVQhlio9YE/qs9ScrVVCn0Mg3d5+lk1hrVQf2ZYd8zNtvDi3ywAW+LukrivGQcOEDkRHMIKteOiw==}
+  dowel-ui@0.43.0:
+    resolution: {integrity: sha512-62lkfpMn7Ow21IX/1q3nBEOb/4k2Q1v6wqgZP5PnhjfdL7yIvlmFQ29An9S2tuWbintq9XzFySbqCDgWL03+Lw==}
     hasBin: true
     peerDependencies:
-      eslint: ^9.0.0 || ^10.0.0
       react: ^19.0.0
       react-dom: ^19.0.0
-    peerDependenciesMeta:
-      eslint:
-        optional: true
 
   electron-to-chromium@1.5.475:
     resolution: {integrity: sha512-S9tceHJbIsHH8VRwh9x+8lJO50SYwTdwVGdEjdz2FERyP59j1N6rdXOSklIusrhxt9GG/WN4V/kRgmDHl9MM5w==}
@@ -2323,14 +2319,12 @@ snapshots:
 
   dom-accessibility-api@0.6.3: {}
 
-  dowel-ui@0.41.0(eslint@10.14.0(jiti@2.7.0))(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
+  dowel-ui@0.43.0(react-dom@19.3.1(react@19.3.1))(react@19.3.1):
     dependencies:
       clsx: 2.1.1
       react: 19.3.1
       react-dom: 19.3.1(react@19.3.1)
       tailwind-merge: 3.7.0
-    optionalDependencies:
-      eslint: 10.14.0(jiti@2.7.0)
 
   electron-to-chromium@1.5.475: {}
 

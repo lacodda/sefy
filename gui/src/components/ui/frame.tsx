@@ -251,6 +251,7 @@ export interface ListDetailBackProps {
   /** What it says: "All works", "Settings". The product's word, shown
    * beside the arrow. */
   label: ReactNode
+  /** Called when the button is pressed. The screen uses it to close the open thing and show the list again. */
   onClick: MouseEventHandler<HTMLButtonElement>
   className?: string
 }

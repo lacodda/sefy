@@ -123,6 +123,7 @@ export interface ScrollAreaProps {
   viewportRef?: Ref<HTMLDivElement>
   /** On the root: its size is the area's size, so the height goes here. */
   className?: string
+  /** On the scrolling element, for padding that should scroll with the content. */
   viewportClassName?: string
   children: ReactNode
 }
