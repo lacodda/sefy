@@ -14,10 +14,13 @@
 // difference nobody notices until a user reports a blank icon. The SVG masters
 // it is rasterized from stay in assets/ - they serve GitHub and the docs site,
 // and the exporter writes the .ico here.
+//
+// Which system the program is for is the target's business, not this machine's:
+// `#[cfg(windows)]` here would ask about the host, and a build for Linux from
+// Windows would go looking for a resource compiler it has no use for.
 fn main() {
-    #[cfg(windows)]
-    {
-        println!("cargo:rerun-if-changed=assets/icon.ico");
+    println!("cargo:rerun-if-changed=assets/icon.ico");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         winresource::WindowsResource::new()
             .set_icon("assets/icon.ico")
             .compile()
