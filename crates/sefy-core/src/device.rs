@@ -2,7 +2,11 @@
 //!
 //! A merge conflict is two machines disagreeing, and the first thing worth
 //! knowing about the version that lost is where it came from. The name goes
-//! inside the sealed vault only — never beside it, never into a file name.
+//! inside the sealed vault only: never beside it, never into a file name.
+//!
+//! Here rather than in a program around the core because there are two of them
+//! writing versions now, and a vault should not say `laptop` for what the command
+//! line wrote there and nothing for what the window did.
 
 /// This machine's name, or nothing when it cannot be found.
 ///
@@ -21,26 +25,16 @@ fn host_name() -> Option<String> {
     std::env::var("COMPUTERNAME").ok()
 }
 
-/// `gethostname(2)`: every Unix has it, and the C library it lives in is
-/// linked already. A crate for one call would be one more thing a secret
-/// store's users have to trust.
+/// `uname(2)`, through the crate that already keeps this library's other Unix
+/// calls safe: this one forbids `unsafe` of its own.
 #[cfg(unix)]
 fn host_name() -> Option<String> {
-    use std::ffi::{c_char, c_int};
-
-    unsafe extern "C" {
-        fn gethostname(name: *mut c_char, len: usize) -> c_int;
-    }
-
-    let mut buffer = [0u8; 256];
-    // SAFETY: the pointer and length describe `buffer`, which outlives the
-    // call; the result is read only up to the first NUL inside it.
-    let status = unsafe { gethostname(buffer.as_mut_ptr().cast(), buffer.len()) };
-    if status != 0 {
-        return None;
-    }
-    let end = buffer.iter().position(|&byte| byte == 0)?;
-    String::from_utf8(buffer[..end].to_vec()).ok()
+    Some(
+        rustix::system::uname()
+            .nodename()
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 #[cfg(not(any(windows, unix)))]

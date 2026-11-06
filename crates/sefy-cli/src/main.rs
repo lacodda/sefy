@@ -10,7 +10,6 @@ mod autosync;
 mod browser;
 mod cli;
 mod commands;
-mod device;
 mod diff;
 mod doctor;
 mod editor;

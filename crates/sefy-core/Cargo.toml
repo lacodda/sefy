@@ -51,6 +51,11 @@ flate2.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 
+# The machine's name, without an `unsafe` here: the crate is already in the tree
+# through tempfile, and this library forbids its own.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", default-features = false, features = ["std", "system"] }
+
 # The security descriptor of the agent's pipe is written as text, and the call
 # that reads it takes this crate's string type; the version interprocess builds.
 [target.'cfg(windows)'.dependencies]

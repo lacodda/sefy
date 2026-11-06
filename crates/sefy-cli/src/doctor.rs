@@ -10,7 +10,7 @@ use crate::autosync::AutoSync;
 use crate::cli::{RemoteArgs, Switch};
 use crate::commands::{self, copies_line, size};
 use crate::session::Master;
-use crate::{device, output, session};
+use crate::{output, session};
 use anyhow::{Result, bail};
 use sefy_core::{Plugin, Vault};
 use std::path::{Path, PathBuf};
@@ -247,7 +247,7 @@ fn agent() -> Check {
 }
 
 fn device() -> Check {
-    match device::name() {
+    match sefy_core::device::name() {
         Some(name) => Check::new(
             "device",
             Verdict::Ok,

@@ -44,6 +44,7 @@ pub mod clipboard;
 pub mod copies;
 pub mod crypto;
 pub mod db;
+pub mod device;
 pub mod error;
 pub mod exchange;
 pub mod expiry;

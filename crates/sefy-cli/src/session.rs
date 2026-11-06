@@ -201,7 +201,7 @@ fn open_through_agent(path: &Path, looking: bool) -> Result<Option<(Vault, Maste
         let keys = Arc::new(HeldKeys::new(client));
         match Vault::open_through(path, keys.clone()) {
             Ok(mut vault) => {
-                vault.set_device(crate::device::name());
+                vault.set_device(sefy_core::device::name());
                 keys.opened.store(true, Ordering::SeqCst);
                 return Ok(Some((vault, Master::Held(keys))));
             }
@@ -321,7 +321,7 @@ fn prompt(text: &str) -> Result<String> {
 pub fn open(path: &Path, password: &str) -> Result<Vault> {
     match Vault::open(path, password.as_bytes()) {
         Ok(mut vault) => {
-            vault.set_device(crate::device::name());
+            vault.set_device(sefy_core::device::name());
             Ok(vault)
         }
         Err(Error::WrongPasswordOrNotAVault) => bail!(
