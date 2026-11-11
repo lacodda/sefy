@@ -611,11 +611,14 @@ describe('the open vault', () => {
       await userEvent.click(within(card).getByRole('button', { name: 'Edit' }))
       const form = await editor()
 
+      // A key is issued by the site: there is nothing to generate it from. Asked
+      // while it is kept, which is when the other buttons are offered.
+      expect(within(form).getByRole('button', { name: 'Change totp' })).toBeInTheDocument()
+      expect(within(form).queryByRole('button', { name: 'Generate totp' })).toBeNull()
+
       await userEvent.click(within(form).getByRole('button', { name: 'Generate password' }))
       await userEvent.click(within(form).getByRole('button', { name: 'Remove totp' }))
       expect(within(form).getByRole('region', { name: 'totp' })).toHaveTextContent('removed when you save')
-      // A key is issued by the site: there is nothing to generate it from.
-      expect(within(form).queryByRole('button', { name: 'Generate totp' })).toBeNull()
       await userEvent.click(within(form).getByRole('button', { name: 'Save' }))
 
       await waitFor(() => expect(calls.of('edit_item')).toHaveLength(1))
