@@ -638,13 +638,15 @@ fn nothing_outside_a_transport_knows_which_transport_it_is() {
                 // subtracted before the line is judged: what is left is `ssh`
                 // meaning the program, which nothing outside a transport may
                 // know about.
-                // Spelled three ways: `ssh-key` on the command line and in the
+                // Spelled four ways: `ssh-key` on the command line and in the
                 // database, `SshKey`/`sshKey` in types and Bitwarden's JSON,
-                // `ssh_key` as a field holding one.
+                // `ssh_key` as a field holding one, and `SSH key` where the
+                // window names the kind to a person.
                 let without_the_kind = code
                     .replace("ssh-key", "")
                     .replace("sshkey", "")
-                    .replace("ssh_key", "");
+                    .replace("ssh_key", "")
+                    .replace("ssh key", "");
                 let mentions_ssh = without_the_kind.contains("ssh");
                 assert!(
                     !mentions_ssh,
