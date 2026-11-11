@@ -198,7 +198,7 @@ for transports.
 
 ## Status
 
-**v0.20.0**, in daily use. The vault file format is stable at version 1 and
+**v0.21.0**, in daily use. The vault file format is stable at version 1 and
 the plugin protocol at version 1 since 0.3.0; the database schema inside the
 ciphertext moves between releases, and older builds keep reading a vault
 safely - see [versions and compatibility](https://lacodda.github.io/sefy/concepts/versions/).
