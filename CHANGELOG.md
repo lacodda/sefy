@@ -19,6 +19,49 @@ Any change that would break an existing file gets its own "Breaking Changes"
 section here, with the migration path or a plain statement that there is none.
 This paragraph survives regenerating the file.
 
+## [0.21.0] - 2026-11-11
+
+The window edits: **New item**, **Edit** and **Delete**, as the approved design has
+them. Adding, changing and removing an item no longer needs the command line; taking a
+file out of the vault and bringing back one field alone still do.
+
+**New item** (Ctrl+N) offers the fields `sefy add` offers for the kind, with the same
+help under each, and holds each value to the same shape: a one-time password key, a
+card's `03/29`, a token's last day. A field left empty is not kept, and **Add a field**
+keeps anything else. A file item takes a file from the system's dialog and is read
+when it is saved. An empty vault now offers New item rather than sending you to a
+terminal.
+
+**Edit** turns the card into the same form. A secret already in the vault is not
+brought onto the page to be edited: it says *unchanged*, and can be typed anew,
+generated or removed. Only what you changed is saved, on top of the item as the file
+has it then, so whatever the command line or a sync changed meanwhile and you left
+alone keeps what they wrote, and whatever you changed keeps theirs in the history.
+
+**Generate** beside a password, a Wi-Fi password or a key's passphrase is `sefy gen` -
+random characters, pronounceable ones or words, the same defaults - and says how many
+bits that is before anything is made. The password is made by the window's process
+when you save and never shown in the form: Show or Copy it from the card. In place of
+a password the item already has, that is a rotation, and the old one stays in the
+history.
+
+**Delete** asks as `sefy rm` does, saying how many earlier versions go with the item,
+and that a copy of the vault elsewhere brings it back on the next sync unless it is
+deleted there too.
+
+For the library: `sefy_core::model::set_field` is the one rule for changing a field of
+a record (it moved from the command line), `FieldSpec` says whether a value runs to
+several lines and whether a generator may make it, and `Recipe::check`, `Recipe::bits`
+and `Recipe::default` answer before anything is drawn (ADR-0014).
+
+### Breaking Changes
+
+**Vault files: none.** The file format is still version 1 and the database schema is
+unchanged at 5; a vault the window writes is read and written by 0.20.0 as before.
+
+`sefy_core::FieldSpec` has a new public field, `multiline`, so code that builds one
+with a struct literal has to name it.
+
 ## [0.20.0] - 2026-11-06
 
 The window stops being a place to read: it syncs, it brings back an earlier version
