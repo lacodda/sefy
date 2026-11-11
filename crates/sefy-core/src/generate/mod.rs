@@ -50,6 +50,14 @@ const VOWELS: &str = "aeiou";
 /// `--length 2000000` from filling the terminal.
 pub const MAX_LENGTH: usize = 1024;
 
+/// How long a random password is when nobody said: `sefy gen` without
+/// `--length`, and the window's generator before anything is changed.
+pub const DEFAULT_LENGTH: usize = 20;
+
+/// How many words a passphrase has when nobody said: about 78 bits from the
+/// English list, well past [`OFFLINE_BITS`].
+pub const DEFAULT_WORDS: usize = 6;
+
 /// Entropy below which a generated secret is worth a word of caution.
 ///
 /// Fewer bits hold up behind a site that limits sign-in attempts, which is
@@ -141,6 +149,58 @@ pub enum Recipe {
     },
 }
 
+impl Recipe {
+    /// Whether this recipe can make anything: a length the generator takes, and
+    /// room in it for every class asked for. What [`generate`] refuses, said
+    /// before anything is drawn.
+    pub fn check(&self) -> Result<()> {
+        match self {
+            Self::Characters { length, classes } => {
+                check_length(*length, classes.sets().len(), "characters")
+            }
+            Self::Pronounceable { length } => check_length(*length, 1, "characters"),
+            Self::Words { count, .. } => check_length(*count, 1, "words"),
+        }
+    }
+
+    /// What a secret made by this recipe is worth, in bits, before any is made:
+    /// the figure [`Generated::bits`] reports, for someone still choosing how
+    /// long to make it.
+    ///
+    /// The same count the generator reports after drawing, from the same
+    /// arithmetic: it is the one place the figure is worked out.
+    pub fn bits(&self) -> f64 {
+        match self {
+            Self::Characters { length, classes } => {
+                let sizes: Vec<usize> = classes
+                    .sets()
+                    .iter()
+                    .map(|set| set.chars().count())
+                    .collect();
+                bits_with_every_class(&sizes, *length)
+            }
+            Self::Pronounceable { length } => {
+                let consonants = (CONSONANTS.len() as f64).log2();
+                let vowels = (VOWELS.len() as f64).log2();
+                length.div_ceil(2) as f64 * consonants + (length / 2) as f64 * vowels
+            }
+            Self::Words {
+                count, language, ..
+            } => *count as f64 * (language.words().len() as f64).log2(),
+        }
+    }
+}
+
+impl Default for Recipe {
+    /// What `sefy gen` makes with no options: twenty characters, every class.
+    fn default() -> Self {
+        Self::Characters {
+            length: DEFAULT_LENGTH,
+            classes: Classes::ALL,
+        }
+    }
+}
+
 /// A generated secret and what it is worth.
 pub struct Generated {
     /// The secret. Wiped from memory when dropped.
@@ -181,10 +241,10 @@ impl Random for OsRandom {
 }
 
 fn generate_with(recipe: &Recipe, random: &mut impl Random) -> Result<Generated> {
+    recipe.check()?;
     match recipe {
         Recipe::Characters { length, classes } => {
             let sets = classes.sets();
-            check_length(*length, sets.len(), "characters")?;
             let alphabet: Vec<char> = sets.iter().flat_map(|set| set.chars()).collect();
             // Drawn whole and thrown away whole until every class is present.
             // Patching a missing class in afterwards would put it at a
@@ -202,18 +262,15 @@ fn generate_with(recipe: &Recipe, random: &mut impl Random) -> Result<Generated>
                     break candidate;
                 }
             };
-            let sizes: Vec<usize> = sets.iter().map(|set| set.chars().count()).collect();
             Ok(Generated {
                 value,
-                bits: bits_with_every_class(&sizes, *length),
+                bits: recipe.bits(),
             })
         }
         Recipe::Pronounceable { length } => {
-            check_length(*length, 1, "characters")?;
             let consonants: Vec<char> = CONSONANTS.chars().collect();
             let vowels: Vec<char> = VOWELS.chars().collect();
             let mut value = Zeroizing::new(String::with_capacity(*length));
-            let mut bits = 0.0;
             for position in 0..*length {
                 let set = if position % 2 == 0 {
                     &consonants
@@ -221,16 +278,17 @@ fn generate_with(recipe: &Recipe, random: &mut impl Random) -> Result<Generated>
                     &vowels
                 };
                 value.push(set[index(set.len(), random)?]);
-                bits += (set.len() as f64).log2();
             }
-            Ok(Generated { value, bits })
+            Ok(Generated {
+                value,
+                bits: recipe.bits(),
+            })
         }
         Recipe::Words {
             count,
             language,
             separator,
         } => {
-            check_length(*count, 1, "words")?;
             let list = language.words();
             let mut value = Zeroizing::new(String::new());
             for position in 0..*count {
@@ -241,7 +299,7 @@ fn generate_with(recipe: &Recipe, random: &mut impl Random) -> Result<Generated>
             }
             Ok(Generated {
                 value,
-                bits: *count as f64 * (list.len() as f64).log2(),
+                bits: recipe.bits(),
             })
         }
     }
@@ -431,6 +489,28 @@ mod tests {
     }
 
     #[test]
+    fn a_recipe_that_cannot_be_made_says_so_before_drawing() {
+        let short = Recipe::Characters {
+            length: 3,
+            classes: Classes::ALL,
+        };
+        assert!(matches!(
+            short.check(),
+            Err(Error::GeneratorLength { minimum: 4, .. })
+        ));
+        assert!(Recipe::default().check().is_ok());
+        assert!(
+            Recipe::Words {
+                count: MAX_LENGTH + 1,
+                language: Language::English,
+                separator: "-".into(),
+            }
+            .check()
+            .is_err()
+        );
+    }
+
+    #[test]
     fn nothing_past_the_cap_is_generated() {
         assert!(
             generate(&Recipe::Pronounceable {
@@ -504,6 +584,57 @@ mod tests {
                 .all(|word| word.chars().all(|c| ('а'..='я').contains(&c))),
             "the Russian list holds a letter outside а-я, ё included"
         );
+    }
+
+    #[test]
+    fn a_recipe_is_worth_before_drawing_what_it_reports_after() {
+        let recipes = [
+            Recipe::default(),
+            Recipe::Characters {
+                length: 7,
+                classes: Classes {
+                    uppercase: false,
+                    digits: true,
+                    symbols: false,
+                },
+            },
+            Recipe::Pronounceable { length: 21 },
+            Recipe::Pronounceable { length: 8 },
+            Recipe::Words {
+                count: DEFAULT_WORDS,
+                language: Language::Russian,
+                separator: " ".into(),
+            },
+        ];
+        for recipe in recipes {
+            let generated = generate(&recipe).unwrap();
+            assert!(
+                (recipe.bits() - generated.bits).abs() < 1e-9,
+                "{recipe:?}: {} before, {} after",
+                recipe.bits(),
+                generated.bits
+            );
+        }
+        // Counted by hand: an odd length starts and ends on a consonant.
+        let expected = 11.0 * 19f64.log2() + 10.0 * 5f64.log2();
+        assert!((Recipe::Pronounceable { length: 21 }.bits() - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn nothing_said_is_twenty_characters_of_every_class() {
+        assert_eq!(
+            Recipe::default(),
+            Recipe::Characters {
+                length: 20,
+                classes: Classes::ALL
+            }
+        );
+        let words = Recipe::Words {
+            count: DEFAULT_WORDS,
+            language: Language::English,
+            separator: "-".into(),
+        };
+        assert!(words.bits() > OFFLINE_BITS);
     }
 
     #[test]

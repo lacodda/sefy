@@ -180,6 +180,9 @@ pub struct FieldSpec {
     pub fill: bool,
     /// What `sefy audit` holds its value to.
     pub audit: AuditAs,
+    /// Whether its value runs to several lines: a key as it is in its file,
+    /// notes. Said here so every front end offers the same room to type it in.
+    pub multiline: bool,
 }
 
 impl FieldSpec {
@@ -196,7 +199,21 @@ impl FieldSpec {
             secret,
             fill,
             audit,
+            multiline: false,
         }
+    }
+
+    /// The same field, holding several lines.
+    const fn lines(mut self) -> Self {
+        self.multiline = true;
+        self
+    }
+
+    /// Whether a generator may make its value: a secret a person would
+    /// otherwise choose. A key or a card number is issued by someone else,
+    /// and a value made up here would be one nobody accepts.
+    pub fn generated(&self) -> bool {
+        matches!(self.audit, AuditAs::Password)
     }
 }
 
@@ -241,6 +258,40 @@ impl AuditAs {
             .find_map(|template| template.field(&field.name))
             .map_or(Self::Nothing, |spec| spec.audit)
     }
+}
+
+/// Writes one field of a record: in place if it is already there, at the end
+/// if not.
+///
+/// A field keeps its place, and its secrecy unless `secret` says otherwise: an
+/// edit changes what a record says, not the order it reads in or what it hides.
+/// A field that is new takes the secrecy its kind's template gives the name, so
+/// a `totp` set on a login is hidden without anyone saying so. One rule for
+/// every front end that edits: `sefy edit --set` and the window's editor.
+pub fn set_field(
+    kind: &ItemKind,
+    fields: &mut Vec<Field>,
+    name: &str,
+    value: String,
+    secret: Option<bool>,
+) {
+    if let Some(field) = fields.iter_mut().find(|field| field.name == name) {
+        field.value = value;
+        if let Some(secret) = secret {
+            field.secret = secret;
+        }
+        return;
+    }
+    let secret = secret.unwrap_or_else(|| {
+        kind.template()
+            .and_then(|template| template.field(name))
+            .is_some_and(|field| field.secret)
+    });
+    fields.push(Field {
+        name: name.to_owned(),
+        value,
+        secret,
+    });
 }
 
 /// Checks a value on its way into a field, for the fields whose value has a
@@ -299,7 +350,8 @@ static TEMPLATES: &[Template] = &[
                 PUBLIC,
                 KEEP,
                 UNCHECKED,
-            ),
+            )
+            .lines(),
         ],
     },
     Template {
@@ -336,7 +388,8 @@ static TEMPLATES: &[Template] = &[
                 PUBLIC,
                 KEEP,
                 UNCHECKED,
-            ),
+            )
+            .lines(),
         ],
     },
     Template {
@@ -348,7 +401,8 @@ static TEMPLATES: &[Template] = &[
                 SECRET,
                 KEEP,
                 ISSUED,
-            ),
+            )
+            .lines(),
             FieldSpec::new(
                 "passphrase",
                 "passphrase protecting the private key",
@@ -356,7 +410,7 @@ static TEMPLATES: &[Template] = &[
                 FILL,
                 CHOSEN,
             ),
-            FieldSpec::new("public-key", "the public key", PUBLIC, KEEP, UNCHECKED),
+            FieldSpec::new("public-key", "the public key", PUBLIC, KEEP, UNCHECKED).lines(),
             FieldSpec::new("host", "where the key is used", PUBLIC, KEEP, UNCHECKED),
             FieldSpec::new(
                 "notes",
@@ -364,7 +418,8 @@ static TEMPLATES: &[Template] = &[
                 PUBLIC,
                 KEEP,
                 UNCHECKED,
-            ),
+            )
+            .lines(),
         ],
     },
     Template {
@@ -373,7 +428,7 @@ static TEMPLATES: &[Template] = &[
             FieldSpec::new("ssid", "the network's name", PUBLIC, FILL, UNCHECKED),
             FieldSpec::new("password", "the network key", SECRET, FILL, CHOSEN),
             FieldSpec::new("security", "WPA2, WPA3, open", PUBLIC, KEEP, UNCHECKED),
-            FieldSpec::new("notes", "where it is, whose it is", PUBLIC, KEEP, UNCHECKED),
+            FieldSpec::new("notes", "where it is, whose it is", PUBLIC, KEEP, UNCHECKED).lines(),
         ],
     },
     Template {
@@ -401,7 +456,7 @@ static TEMPLATES: &[Template] = &[
                 KEEP,
                 UNCHECKED,
             ),
-            FieldSpec::new("notes", "what uses it", PUBLIC, KEEP, UNCHECKED),
+            FieldSpec::new("notes", "what uses it", PUBLIC, KEEP, UNCHECKED).lines(),
         ],
     },
     Template {
@@ -429,7 +484,8 @@ static TEMPLATES: &[Template] = &[
                 PUBLIC,
                 KEEP,
                 UNCHECKED,
-            ),
+            )
+            .lines(),
         ],
     },
 ];
@@ -833,6 +889,86 @@ mod tests {
         assert!(normalize_value("expires", "soon").is_err());
         assert_eq!(normalize_value("notes", " as is ").unwrap(), " as is ");
         assert!(normalize_value(crate::otp::FIELD, "not a key!").is_err());
+    }
+
+    #[test]
+    fn a_field_set_again_keeps_its_place_and_its_secrecy() {
+        let mut fields = vec![
+            Field::public("login", "ada"),
+            Field::secret("password", "old"),
+            Field::public("url", "https://example.com"),
+        ];
+        set_field(
+            &ItemKind::Login,
+            &mut fields,
+            "password",
+            "new".into(),
+            None,
+        );
+        assert_eq!(fields[1], Field::secret("password", "new"));
+        assert_eq!(fields.len(), 3);
+
+        // Told otherwise, it is.
+        set_field(&ItemKind::Login, &mut fields, "url", "x".into(), Some(true));
+        assert!(fields[2].secret);
+    }
+
+    #[test]
+    fn a_new_field_lands_at_the_end_as_secret_as_its_template_says() {
+        let mut fields = vec![Field::public("login", "ada")];
+        set_field(&ItemKind::Login, &mut fields, "totp", "KEY".into(), None);
+        set_field(&ItemKind::Login, &mut fields, "pet", "rex".into(), None);
+        set_field(&ItemKind::Login, &mut fields, "pin", "1".into(), Some(true));
+        assert_eq!(
+            fields,
+            [
+                Field::public("login", "ada"),
+                Field::secret("totp", "KEY"),
+                Field::public("pet", "rex"),
+                Field::secret("pin", "1"),
+            ]
+        );
+    }
+
+    #[test]
+    fn keys_and_notes_run_to_several_lines_and_nothing_else_does() {
+        for template in TEMPLATES {
+            for field in template.fields {
+                let expected = matches!(field.name, "notes" | "private-key" | "public-key");
+                assert_eq!(
+                    field.multiline, expected,
+                    "{} of {}",
+                    field.name, template.kind
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn only_a_secret_a_person_chooses_is_offered_to_the_generator() {
+        let generated: Vec<(String, &str)> = TEMPLATES
+            .iter()
+            .flat_map(|template| {
+                template
+                    .fields
+                    .iter()
+                    .filter(|field| field.generated())
+                    .map(|field| (template.kind.to_string(), field.name))
+            })
+            .collect();
+        assert_eq!(
+            generated,
+            [
+                ("login".to_owned(), "password"),
+                ("ssh-key".to_owned(), "passphrase"),
+                ("wifi".to_owned(), "password"),
+            ]
+        );
+        for template in TEMPLATES {
+            for field in template.fields.iter().filter(|field| field.generated()) {
+                assert!(field.secret, "{} is generated in the open", field.name);
+            }
+        }
     }
 
     #[test]

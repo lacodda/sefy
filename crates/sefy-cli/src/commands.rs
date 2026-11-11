@@ -819,7 +819,7 @@ fn edit_fields(kind: &ItemKind, existing: &[Field], args: &EditArgs) -> Result<V
         // be a promise sefy cannot keep. An existing field keeps whatever
         // secrecy it was stored with — the user is changing the value, not
         // declaring the field harmless.
-        set_field(
+        sefy_core::model::set_field(
             kind,
             &mut fields,
             name,
@@ -830,7 +830,7 @@ fn edit_fields(kind: &ItemKind, existing: &[Field], args: &EditArgs) -> Result<V
 
     for name in &args.set_secret {
         let value = session::secret(&format!("New value for {name}: "), None)?;
-        set_field(kind, &mut fields, name, checked(name, value)?, Some(true));
+        sefy_core::model::set_field(kind, &mut fields, name, checked(name, value)?, Some(true));
     }
 
     for name in &args.unset {
@@ -848,36 +848,6 @@ fn edit_fields(kind: &ItemKind, existing: &[Field], args: &EditArgs) -> Result<V
         bail!("a {kind} cannot be left without any field");
     }
     Ok(fields)
-}
-
-/// Writes one field, in place if it is already there and at the end if not.
-fn set_field(
-    kind: &ItemKind,
-    fields: &mut Vec<Field>,
-    name: &str,
-    value: String,
-    secret: Option<bool>,
-) {
-    if let Some(field) = fields.iter_mut().find(|field| field.name == name) {
-        field.value = value;
-        if let Some(secret) = secret {
-            field.secret = secret;
-        }
-        return;
-    }
-
-    // A name the template knows brings the template's idea of secrecy with it,
-    // so `--set totp=…` on a login is hidden without having to be told.
-    let secret = secret.unwrap_or_else(|| {
-        kind.template()
-            .and_then(|template| template.field(name))
-            .is_some_and(|field| field.secret)
-    });
-    fields.push(Field {
-        name: name.to_owned(),
-        value,
-        secret,
-    });
 }
 
 /// Lists the versions of an item's contents, or compares one with now.
@@ -1586,7 +1556,7 @@ pub fn otp(vault: &mut Vault, args: OtpArgs, auto: &mut AutoSync) -> Result<()> 
     if args.set || args.key_env.is_some() {
         let key = session::secret("Setup key or otpauth:// link: ", args.key_env.as_deref())?;
         let key = checked(sefy_core::otp::FIELD, key)?;
-        set_field(kind, &mut fields, sefy_core::otp::FIELD, key, Some(true));
+        sefy_core::model::set_field(kind, &mut fields, sefy_core::otp::FIELD, key, Some(true));
         vault.update(
             summary.id,
             None,

@@ -742,7 +742,7 @@ pub struct GenArgs {
         long,
         short = 'n',
         value_name = "N",
-        default_value_t = 20,
+        default_value_t = sefy_core::generate::DEFAULT_LENGTH,
         conflicts_with = "words"
     )]
     pub length: usize,
