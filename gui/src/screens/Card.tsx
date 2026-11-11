@@ -1,8 +1,18 @@
 import { useEffect, useState } from 'react'
-import { History as HistoryIcon } from 'lucide-react'
+import { History as HistoryIcon, Pencil, Trash2 } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Chip } from '@/components/ui/chip'
+import {
+  ConfirmDialog,
+  ConfirmDialogActions,
+  ConfirmDialogBody,
+  ConfirmDialogClose,
+  ConfirmDialogDescription,
+  ConfirmDialogHeader,
+  ConfirmDialogPopup,
+  ConfirmDialogTitle,
+} from '@/components/ui/confirm-dialog'
 import * as ipc from '@/ipc'
 import type { CardBody, CardField, Failure, ItemCard, VersionRow } from '@/ipc'
 import { CopyButton, unexpected } from '@/lib/copies'
@@ -17,6 +27,10 @@ interface Props {
   historyFirst?: boolean
   /** Goes up when what the vault holds may have moved on. */
   revision?: number
+  /** Edit was pressed. */
+  onEdit?: () => void
+  /** The item is gone from the vault. */
+  onDeleted?: () => void
 }
 
 /**
@@ -28,9 +42,10 @@ interface Props {
  * lock - the card is drawn per item, and the page forgets it when it goes.
  * Copy never brings the value into the page at all.
  */
-export function Card({ card, historyFirst = false, revision = 0 }: Props) {
+export function Card({ card, historyFirst = false, revision = 0, onEdit, onDeleted }: Props) {
   const [failure, setFailure] = useState<Failure | null>(null)
   const [showingHistory, setShowingHistory] = useState(historyFirst)
+  const [deleting, setDeleting] = useState(false)
   const now = nowSeconds()
 
   return (
@@ -64,8 +79,12 @@ export function Card({ card, historyFirst = false, revision = 0 }: Props) {
         <Body id={card.id} body={card.body} onFailure={setFailure} />
       )}
 
-      {card.earlierVersions > 0 ? (
-        <div>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" onClick={onEdit}>
+          <Pencil aria-hidden />
+          {text.card.edit}
+        </Button>
+        {card.earlierVersions > 0 ? (
           <Button
             size="sm"
             aria-pressed={showingHistory}
@@ -74,7 +93,22 @@ export function Card({ card, historyFirst = false, revision = 0 }: Props) {
             <HistoryIcon aria-hidden />
             {showingHistory ? text.card.current : text.card.historyOf(card.earlierVersions)}
           </Button>
-        </div>
+        ) : null}
+        <Button size="sm" variant="ghost" onClick={() => setDeleting(true)}>
+          <Trash2 aria-hidden />
+          {text.card.delete}
+        </Button>
+      </div>
+
+      {deleting ? (
+        <Delete
+          card={card}
+          onClose={() => setDeleting(false)}
+          onDeleted={() => {
+            setDeleting(false)
+            onDeleted?.()
+          }}
+        />
       ) : null}
 
       <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-line pt-3 font-mono text-2xs text-faint">
@@ -89,6 +123,52 @@ export function Card({ card, historyFirst = false, revision = 0 }: Props) {
         </span>
       </div>
     </div>
+  )
+}
+
+/**
+ * The question before an item goes, saying what goes with it: its history, and
+ * nothing that a copy elsewhere holds. Asked as `sefy rm` asks it.
+ */
+function Delete({ card, onClose, onDeleted }: { card: ItemCard; onClose: () => void; onDeleted: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [failure, setFailure] = useState<Failure | null>(null)
+
+  const confirm = async () => {
+    setBusy(true)
+    setFailure(null)
+    try {
+      await ipc.deleteItem(card.uuid)
+      onDeleted()
+    } catch (cause) {
+      setFailure(ipc.isFailure(cause) ? cause : unexpected(cause))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <ConfirmDialog open onOpenChange={(open) => !open && !busy && onClose()}>
+      <ConfirmDialogPopup size="md">
+        <ConfirmDialogHeader>
+          <ConfirmDialogTitle>{text.card.deleteTitle(card.title)}</ConfirmDialogTitle>
+          <ConfirmDialogDescription>{text.card.deleteBody(card.earlierVersions)}</ConfirmDialogDescription>
+        </ConfirmDialogHeader>
+        <ConfirmDialogBody className="flex flex-col gap-3">
+          <p className="text-xs text-dim">{text.card.deleteElsewhere}</p>
+          {failure === null ? null : (
+            <Alert tone="bad" role="alert">
+              {failure.message}
+            </Alert>
+          )}
+        </ConfirmDialogBody>
+        <ConfirmDialogActions>
+          <ConfirmDialogClose render={<Button type="button" disabled={busy} />}>{text.card.cancel}</ConfirmDialogClose>
+          <Button type="button" variant="danger" className="border border-bad" disabled={busy} onClick={() => void confirm()}>
+            {busy ? text.card.deleting : text.card.deleteConfirm}
+          </Button>
+        </ConfirmDialogActions>
+      </ConfirmDialogPopup>
+    </ConfirmDialog>
   )
 }
 

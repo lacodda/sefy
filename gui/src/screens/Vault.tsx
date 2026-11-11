@@ -1,18 +1,29 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { Lock } from 'lucide-react'
+import { Lock, Plus } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Chip } from '@/components/ui/chip'
+import { useCommand } from '@/components/ui/commands'
+import {
+  ConfirmDialog,
+  ConfirmDialogActions,
+  ConfirmDialogClose,
+  ConfirmDialogDescription,
+  ConfirmDialogHeader,
+  ConfirmDialogPopup,
+  ConfirmDialogTitle,
+} from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ListDetail, ListDetailBack, Pane, useListDetailTurn } from '@/components/ui/frame'
 import { RowButton } from '@/components/ui/list-row'
 import { SearchField } from '@/components/ui/search-field'
 import { SectionNav } from '@/components/ui/section-nav'
 import * as ipc from '@/ipc'
-import type { Filter, ItemCard, ItemRow, Policy, TagCount, VaultStatus, WipeOutcome } from '@/ipc'
+import type { Filter, Forms, ItemCard, ItemRow, Policy, TagCount, VaultStatus, WipeOutcome } from '@/ipc'
 import { CopiesProvider } from '@/lib/copies'
 import { ago, count, nowSeconds, span } from '@/lib/format'
 import { Card } from '@/screens/Card'
+import { Editor, type Editing } from '@/screens/Editor'
 import { Settings } from '@/screens/Settings'
 import { Sync } from '@/screens/Sync'
 import { text } from '@/text'
@@ -60,7 +71,9 @@ function kindHeading(kind: string): string {
  * The list is the core's search (`sefy find`, through `items`): text in the
  * box, narrowed by a kind or a tag from the rail, with titles that match
  * ahead of matches inside. The card is `sefy show`: every field named, every
- * secret hidden until asked for, and Copy beside each.
+ * secret hidden until asked for, and Copy beside each. New item and Edit put
+ * the editor where the card is; what was typed there is not dropped by a stray
+ * click elsewhere without asking.
  *
  * Nothing here holds a secret for longer than it is on screen: the card is
  * drawn per item, and a lock unmounts all of it.
@@ -76,6 +89,15 @@ export function Vault({ status, revision = 0, unreadable = false, onLock, onWipe
   const [selected, setSelected] = useState<number | null>(null)
   const [card, setCard] = useState<ItemCard | null>(null)
   const [policy, setPolicy] = useState<Policy | null>(null)
+  const [forms, setForms] = useState<Forms | null>(null)
+  const [editing, setEditing] = useState<Editing | null>(null)
+  const [dirty, setDirty] = useState(false)
+  // What was asked for while the editor held something unsaved: done once the
+  // person says to leave it.
+  const [leaving, setLeaving] = useState<{ then: () => void } | null>(null)
+  // Goes up when this screen wrote the vault: what it shows is asked for again
+  // without waiting for the process to say the file moved on.
+  const [wrote, setWrote] = useState(0)
   const searchRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const titleRef = useRef<HTMLHeadingElement>(null)
@@ -96,7 +118,18 @@ export function Vault({ status, revision = 0, unreadable = false, onLock, onWipe
     return () => {
       current = false
     }
-  }, [revision])
+  }, [revision, wrote])
+
+  useEffect(() => {
+    let current = true
+    ipc
+      .forms()
+      .then((found) => current && setForms(found))
+      .catch(() => undefined)
+    return () => {
+      current = false
+    }
+  }, [])
 
   // The list follows the box and the rail. An answer that comes back after a
   // newer question was asked is dropped rather than drawn over it.
@@ -110,7 +143,7 @@ export function Vault({ status, revision = 0, unreadable = false, onLock, onWipe
     return () => {
       current = false
     }
-  }, [typed, kind, tag, revision])
+  }, [typed, kind, tag, revision, wrote])
 
   // The open item is one the list still shows: narrowing the list closes
   // what it no longer holds.
@@ -126,7 +159,7 @@ export function Vault({ status, revision = 0, unreadable = false, onLock, onWipe
     return () => {
       current = false
     }
-  }, [open, revision])
+  }, [open, revision, wrote])
 
   // The card on screen is the open item's, and nothing once none is: a card
   // fetched for an item since closed is not drawn.
@@ -139,21 +172,55 @@ export function Vault({ status, revision = 0, unreadable = false, onLock, onWipe
     fallback: searchRef,
   })
 
-  const choose = (id: number | null) => {
-    turn(id === null ? null : String(id))
-    setHistoryOf(null)
-    setSelected(id)
+  /* Whatever takes the editor away asks first when something typed there would
+   * go with it. */
+  const unlessEditing = (then: () => void) => {
+    if (editing !== null && dirty) {
+      setLeaving({ then })
+      return
+    }
+    setEditing(null)
+    setDirty(false)
+    then()
   }
 
-  /* From a conflict on the Sync screen to the item, with its history showing. The
-   * search and the filters go, so that the list holds what is being opened. */
-  const openHistory = (id: number) => {
+  const choose = (id: number | null) =>
+    unlessEditing(() => {
+      turn(id === null ? null : String(id))
+      setHistoryOf(null)
+      setSelected(id)
+    })
+
+  /* To one item with the search and the filters gone, so that the list holds
+   * what is being opened: from a conflict on the Sync screen, with its history
+   * showing, and to an item just made. */
+  const showItem = (id: number, history: boolean) => {
     setQuery('')
     setTag(null)
     setView({ at: 'items', kind: null })
     turn(String(id))
-    setHistoryOf(id)
+    setHistoryOf(history ? id : null)
     setSelected(id)
+  }
+  const openHistory = (id: number) => unlessEditing(() => showItem(id, true))
+
+  /* New item starts on the kind the rail shows, when it is one that can be made. */
+  const newItem = () =>
+    unlessEditing(() => {
+      const shown = view.at === 'items' ? view.kind : null
+      const kind = forms?.kinds.some((form) => form.kind === shown) ? shown! : 'login'
+      if (view.at !== 'items') setView({ at: 'items', kind: null })
+      setEditing({ at: 'new', kind })
+    })
+
+  useCommand({ id: 'new-item', label: text.vault.newItem, keys: 'Mod+N', run: newItem, whileTyping: true })
+
+  const saved = (id: number, changed: boolean) => {
+    const made = editing?.at === 'new'
+    setEditing(null)
+    setDirty(false)
+    if (changed) setWrote((count) => count + 1)
+    if (made) showItem(id, false)
   }
 
   /* Up and Down walk the list and open what they land on, as a mail client
@@ -215,7 +282,7 @@ export function Vault({ status, revision = 0, unreadable = false, onLock, onWipe
             value={query}
             onValueChange={(value) => {
               setQuery(value)
-              if (view.at !== 'items') setView({ at: 'items', kind: null })
+              if (view.at !== 'items') unlessEditing(() => setView({ at: 'items', kind: null }))
             }}
             onKeyDown={fromSearch}
             placeholder={text.browse.search}
@@ -224,6 +291,10 @@ export function Vault({ status, revision = 0, unreadable = false, onLock, onWipe
             shortcut={{ id: 'search', label: text.browse.search, keys: 'Mod+K' }}
             className="w-full max-w-md"
           />
+          <Button size="sm" variant="primary" disabled={forms === null} onClick={newItem} className="shrink-0">
+            <Plus aria-hidden />
+            {text.vault.newItem}
+          </Button>
           <span className="ml-auto flex shrink-0 items-center gap-2 text-xs text-dim">
             <span aria-hidden className="size-1.5 rounded-full bg-good" />
             {text.vault.unlocked}
@@ -246,7 +317,7 @@ export function Vault({ status, revision = 0, unreadable = false, onLock, onWipe
               label={text.browse.items}
               items={railItems}
               activeId={view.at === 'items' ? (view.kind ?? ALL) : undefined}
-              onSelect={(id) => setView({ at: 'items', kind: id === ALL ? null : id })}
+              onSelect={(id) => unlessEditing(() => setView({ at: 'items', kind: id === ALL ? null : id }))}
             />
             {tags.length === 0 ? null : (
               <div className="flex flex-col gap-2 px-2.5">
@@ -274,7 +345,7 @@ export function Vault({ status, revision = 0, unreadable = false, onLock, onWipe
                 { id: SETTINGS, label: text.browse.settings },
               ]}
               activeId={view.at === 'sync' ? SYNC : view.at === 'settings' ? SETTINGS : undefined}
-              onSelect={(id) => setView({ at: id === SYNC ? 'sync' : 'settings' })}
+              onSelect={(id) => unlessEditing(() => setView({ at: id === SYNC ? 'sync' : 'settings' }))}
               className="mt-auto"
             />
           </nav>
@@ -283,14 +354,26 @@ export function Vault({ status, revision = 0, unreadable = false, onLock, onWipe
             <Sync status={status} revision={revision} onOpenHistory={openHistory} />
           ) : view.at === 'settings' ? (
             <Settings status={status} policy={policy} onWiped={(outcome) => onWiped?.(outcome)} />
-          ) : rows !== null && rows.length === 0 && typed === '' && kind === null && tag === null ? (
-            <EmptyState title={text.browse.nothingYet} body={text.browse.nothingYetBody} className="flex-1" />
+          ) : editing === null && rows !== null && rows.length === 0 && typed === '' && kind === null && tag === null ? (
+            <EmptyState
+              title={text.browse.nothingYet}
+              body={text.browse.nothingYetBody}
+              action={
+                <Button variant="primary" disabled={forms === null} onClick={newItem}>
+                  <Plus aria-hidden />
+                  {text.vault.newItem}
+                </Button>
+              }
+              className="flex-1"
+            />
           ) : (
             <ListDetail
-              open={shown !== null}
+              open={shown !== null || editing !== null}
               list={
                 <Pane label={text.browse.list} bodyClassName="p-1">
-                  {rows !== null && rows.length === 0 ? (
+                  {rows !== null && rows.length === 0 && typed === '' && kind === null && tag === null ? (
+                    <EmptyState plain title={text.browse.nothingYet} className="p-2" />
+                  ) : rows !== null && rows.length === 0 ? (
                     <EmptyState
                       plain
                       variant="filtered"
@@ -323,7 +406,32 @@ export function Vault({ status, revision = 0, unreadable = false, onLock, onWipe
                 </Pane>
               }
               detail={
-                shown === null ? (
+                editing !== null && forms !== null ? (
+                  <Pane
+                    label={editing.at === 'new' ? text.editor.newTitle : `${text.editor.editTitle} ${editing.card.title}`}
+                    head={
+                      <>
+                        <ListDetailBack label={text.browse.back} onClick={() => choose(null)} />
+                        <h2 className="min-w-0 flex-1 truncate font-mono text-lg font-semibold text-text">
+                          {editing.at === 'new' ? text.editor.newTitle : editing.card.title}
+                        </h2>
+                      </>
+                    }
+                    bodyClassName="p-4"
+                  >
+                    <Editor
+                      key={editing.at === 'new' ? 'new' : editing.card.uuid}
+                      forms={forms}
+                      editing={editing}
+                      onSaved={saved}
+                      onCancel={() => {
+                        setEditing(null)
+                        setDirty(false)
+                      }}
+                      onDirtyChange={setDirty}
+                    />
+                  </Pane>
+                ) : shown === null ? (
                   <EmptyState title={text.browse.nothingOpen} body={text.browse.nothingOpenBody} className="flex-1" />
                 ) : (
                   <Pane
@@ -346,7 +454,12 @@ export function Vault({ status, revision = 0, unreadable = false, onLock, onWipe
                       key={shown.id}
                       card={shown}
                       historyFirst={historyOf === shown.id}
-                      revision={revision}
+                      revision={revision + wrote}
+                      onEdit={() => setEditing({ at: 'edit', card: shown })}
+                      onDeleted={() => {
+                        setWrote((count) => count + 1)
+                        choose(null)
+                      }}
                     />
                   </Pane>
                 )
@@ -354,6 +467,34 @@ export function Vault({ status, revision = 0, unreadable = false, onLock, onWipe
             />
           )}
         </div>
+
+        {leaving === null ? null : (
+          <ConfirmDialog open onOpenChange={(open) => !open && setLeaving(null)}>
+            <ConfirmDialogPopup size="sm">
+              <ConfirmDialogHeader>
+                <ConfirmDialogTitle>{text.editor.leaveTitle}</ConfirmDialogTitle>
+                <ConfirmDialogDescription>{text.editor.leaveBody}</ConfirmDialogDescription>
+              </ConfirmDialogHeader>
+              <ConfirmDialogActions>
+                <ConfirmDialogClose render={<Button type="button" />}>{text.editor.stay}</ConfirmDialogClose>
+                <Button
+                  type="button"
+                  variant="danger"
+                  className="border border-bad"
+                  onClick={() => {
+                    const { then } = leaving
+                    setLeaving(null)
+                    setEditing(null)
+                    setDirty(false)
+                    then()
+                  }}
+                >
+                  {text.editor.leave}
+                </Button>
+              </ConfirmDialogActions>
+            </ConfirmDialogPopup>
+          </ConfirmDialog>
+        )}
 
         <div className="flex shrink-0 flex-wrap items-center gap-x-3 border-t border-line px-4 py-1.5 font-mono text-2xs text-faint">
           <span>{count(status.items, text.vault.item, text.vault.items)}</span>

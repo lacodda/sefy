@@ -2,7 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 import { describe, expect, it, vi } from 'vitest'
-import type { Filter, ItemCard, ItemRow, VaultStatus, VersionRow } from '@/ipc'
+import type { Draft, Edit, Filter, Forms, ItemCard, ItemRow, VaultStatus, VersionRow } from '@/ipc'
 import { Vault } from '@/screens/Vault'
 
 /*
@@ -150,24 +150,59 @@ const HISTORY: VersionRow[] = [
   },
 ]
 
+/** What the process says the editor can make: the core's templates, in part. */
+const FORMS: Forms = {
+  kinds: [
+    { kind: 'note', shape: 'note', fields: [] },
+    {
+      kind: 'login',
+      shape: 'record',
+      fields: [
+        { name: 'login', hint: 'username, email, or whatever the service calls it', secret: false, multiline: false, generated: false },
+        { name: 'password', hint: 'the secret itself', secret: true, multiline: false, generated: true },
+        { name: 'url', hint: 'where the account lives', secret: false, multiline: false, generated: false },
+        { name: 'totp', hint: 'key for one-time passwords', secret: true, multiline: false, generated: false },
+        { name: 'notes', hint: 'anything else worth remembering', secret: false, multiline: true, generated: false },
+      ],
+    },
+    { kind: 'file', shape: 'file', fields: [] },
+  ],
+  recipe: { make: 'characters', length: 20, uppercase: true, digits: true, symbols: true },
+  words: 6,
+  maxLength: 1024,
+}
+
 interface Bridge {
   calls: [string, Record<string, unknown> | undefined][]
   filters: () => Filter[]
+  /** The calls of one command, by their arguments. */
+  of: (cmd: string) => (Record<string, unknown> | undefined)[]
 }
 
-function bridge(): Bridge {
+function bridge({ rows = ROWS }: { rows?: ItemRow[] } = {}): Bridge {
   const state: Bridge = {
     calls: [],
     filters: () => state.calls.filter(([cmd]) => cmd === 'items').map(([, args]) => args!.filter as Filter),
+    of: (cmd) => state.calls.filter(([called]) => called === cmd).map(([, args]) => args),
   }
   mockWindows('main')
   mockIPC((cmd, args) => {
     const given = args as Record<string, unknown> | undefined
     state.calls.push([cmd, given])
     switch (cmd) {
+      case 'forms':
+        return FORMS
+      case 'worth':
+        return { bits: 131.1, offline: true }
+      case 'add_item':
+        return 4
+      case 'edit_item':
+        return true
+      case 'delete_item':
+        return true
       case 'items': {
         const filter = given!.filter as Filter
-        return ROWS.filter(
+        return rows.filter(
           (row) =>
             (filter.text === null || row.title.includes(filter.text)) &&
             (filter.kind === null || row.kind === filter.kind) &&
@@ -458,6 +493,183 @@ describe('the open vault', () => {
       const card = heading.closest<HTMLElement>('[data-pane]')!
       expect(await within(card).findByRole('region', { name: 'History' })).toBeInTheDocument()
       expect(await within(card).findByText('k.miller.laptop')).toBeInTheDocument()
+    })
+  })
+
+  describe('editing', () => {
+    const editor = () => screen.findByRole('form', { name: /New item|Edit/ })
+
+    it('sends an empty vault to New item, not to the command line', async () => {
+      bridge({ rows: [] })
+      render(<Vault status={{ ...STATUS, items: 0, kinds: [] }} onLock={() => undefined} />)
+      expect(await screen.findByText('Nothing in this vault yet.')).toBeInTheDocument()
+      expect(document.body.textContent).not.toContain('sefy add')
+      const add = screen.getAllByRole('button', { name: 'New item' }).at(-1)!
+      await waitFor(() => expect(add).toBeEnabled())
+      await userEvent.click(add)
+      expect(await editor()).toBeInTheDocument()
+    })
+
+    it('makes a login of what was typed, and sends what was left empty nowhere', async () => {
+      const calls = bridge()
+      render(<Vault status={STATUS} onLock={() => undefined} />)
+      const add = screen.getByRole('button', { name: 'New item' })
+      await waitFor(() => expect(add).toBeEnabled())
+      await userEvent.click(add)
+      const form = await editor()
+
+      await userEvent.type(within(form).getByLabelText(/^Title/), 'mail')
+      await userEvent.type(within(form).getByLabelText('login', { selector: 'input' }), 'kmiller')
+      await userEvent.type(within(form).getByLabelText('password', { selector: 'input' }), 'typed-not-real')
+      await userEvent.type(within(form).getByLabelText(/^Tags/), 'work{Enter}')
+      await userEvent.click(within(form).getByRole('button', { name: 'Save' }))
+
+      await waitFor(() => expect(calls.of('add_item')).toHaveLength(1))
+      const draft = calls.of('add_item')[0]!.draft as Draft
+      expect(draft).toEqual({
+        title: 'mail',
+        tags: ['work'],
+        contents: {
+          shape: 'record',
+          kind: 'login',
+          fields: [
+            { name: 'login', secret: null, value: { from: 'typed', text: 'kmiller' } },
+            { name: 'password', secret: null, value: { from: 'typed', text: 'typed-not-real' } },
+          ],
+        },
+      })
+      await waitFor(() => expect(screen.queryByRole('form', { name: /New item/ })).toBeNull())
+    })
+
+    it('generates a password in the process: the page sends the recipe and gets no value', async () => {
+      const calls = bridge()
+      render(<Vault status={STATUS} onLock={() => undefined} />)
+      const add = screen.getByRole('button', { name: 'New item' })
+      await waitFor(() => expect(add).toBeEnabled())
+      await userEvent.click(add)
+      const form = await editor()
+      await userEvent.type(within(form).getByLabelText(/^Title/), 'bank')
+      await userEvent.click(within(form).getByRole('button', { name: 'Generate password' }))
+
+      expect(await within(form).findByText(/131 bits of entropy/)).toBeInTheDocument()
+      expect(calls.of('worth')[0]).toEqual({ recipe: FORMS.recipe })
+      await userEvent.click(within(form).getByRole('button', { name: 'Save' }))
+
+      await waitFor(() => expect(calls.of('add_item')).toHaveLength(1))
+      const draft = calls.of('add_item')[0]!.draft as Draft
+      expect(draft.contents).toEqual({
+        shape: 'record',
+        kind: 'login',
+        fields: [{ name: 'password', secret: null, value: { from: 'generated', recipe: FORMS.recipe } }],
+      })
+    })
+
+    it('starts on the kind the rail shows', async () => {
+      bridge()
+      render(<Vault status={STATUS} onLock={() => undefined} />)
+      await screen.findByRole('button', { name: /mailbox/ })
+      await userEvent.click(screen.getByRole('button', { name: /Notes/ }))
+      await userEvent.click(screen.getByRole('button', { name: 'New item' }))
+      const form = await editor()
+      expect(within(form).getByLabelText('Note', { selector: 'textarea' })).toBeInTheDocument()
+      expect(within(form).queryByLabelText('password', { selector: 'input' })).toBeNull()
+    })
+
+    it('edits what changed and nothing else, without asking for a secret to edit it', async () => {
+      const calls = bridge()
+      render(<Vault status={STATUS} onLock={() => undefined} />)
+      const card = await openBank()
+      await userEvent.click(within(card).getByRole('button', { name: 'Edit' }))
+      const form = await editor()
+
+      // A secret is named and kept; its value is not on the page to edit.
+      expect(within(form).getByRole('region', { name: 'password' })).toHaveTextContent('unchanged')
+      expect(within(form).getByLabelText('login', { selector: 'input' })).toHaveValue('k.miller')
+      const url = within(form).getByLabelText('url', { selector: 'input' })
+      await userEvent.clear(url)
+      await userEvent.type(url, 'https://bank.example.org')
+      await userEvent.click(within(form).getByRole('button', { name: 'Save' }))
+
+      await waitFor(() => expect(calls.of('edit_item')).toHaveLength(1))
+      expect(calls.of('edit_item')[0]).toEqual({
+        uuid: CARDS[1]!.uuid,
+        edit: {
+          title: null,
+          tags: null,
+          text: null,
+          fields: [{ change: 'set', name: 'url', secret: null, value: { from: 'typed', text: 'https://bank.example.org' } }],
+        } satisfies Edit,
+      })
+      expect(calls.of('reveal')).toEqual([])
+      expect(document.body.textContent).not.toContain(PASSWORD)
+    })
+
+    it('rotates a password in one gesture, and takes away a key when asked', async () => {
+      const calls = bridge()
+      render(<Vault status={STATUS} onLock={() => undefined} />)
+      const card = await openBank()
+      await userEvent.click(within(card).getByRole('button', { name: 'Edit' }))
+      const form = await editor()
+
+      await userEvent.click(within(form).getByRole('button', { name: 'Generate password' }))
+      await userEvent.click(within(form).getByRole('button', { name: 'Remove totp' }))
+      expect(within(form).getByRole('region', { name: 'totp' })).toHaveTextContent('removed when you save')
+      // A key is issued by the site: there is nothing to generate it from.
+      expect(within(form).queryByRole('button', { name: 'Generate totp' })).toBeNull()
+      await userEvent.click(within(form).getByRole('button', { name: 'Save' }))
+
+      await waitFor(() => expect(calls.of('edit_item')).toHaveLength(1))
+      expect((calls.of('edit_item')[0]!.edit as Edit).fields).toEqual([
+        { change: 'set', name: 'password', secret: null, value: { from: 'generated', recipe: FORMS.recipe } },
+        { change: 'remove', name: 'totp' },
+      ])
+    })
+
+    it('saves nothing when nothing changed', async () => {
+      const calls = bridge()
+      render(<Vault status={STATUS} onLock={() => undefined} />)
+      const card = await openBank()
+      await userEvent.click(within(card).getByRole('button', { name: 'Edit' }))
+      const form = await editor()
+      await userEvent.click(within(form).getByRole('button', { name: 'Save' }))
+      await waitFor(() => expect(screen.queryByRole('form', { name: /Edit/ })).toBeNull())
+      expect(calls.of('edit_item')).toEqual([])
+    })
+
+    it('asks before what was typed goes, and keeps it when told to', async () => {
+      const calls = bridge()
+      render(<Vault status={STATUS} onLock={() => undefined} />)
+      const add = screen.getByRole('button', { name: 'New item' })
+      await waitFor(() => expect(add).toBeEnabled())
+      await userEvent.click(add)
+      const form = await editor()
+      await userEvent.type(within(form).getByLabelText(/^Title/), 'half typed')
+
+      await userEvent.click(screen.getByRole('button', { name: /mailbox/ }))
+      const question = await screen.findByRole('alertdialog', { name: 'Leave without saving?' })
+      await userEvent.click(within(question).getByRole('button', { name: 'Keep editing' }))
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+      expect(within(await editor()).getByLabelText(/^Title/)).toHaveValue('half typed')
+
+      await userEvent.click(screen.getByRole('button', { name: /mailbox/ }))
+      await userEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Leave' }))
+      expect(await paneOf('mailbox')).toBeInTheDocument()
+      expect(calls.of('add_item')).toEqual([])
+    })
+
+    it('deletes after asking, and says what goes with the item', async () => {
+      const calls = bridge()
+      render(<Vault status={STATUS} onLock={() => undefined} />)
+      const card = await openBank()
+      await userEvent.click(within(card).getByRole('button', { name: 'Delete' }))
+
+      const question = await screen.findByRole('alertdialog', { name: 'Delete bank · main?' })
+      expect(question).toHaveTextContent('Its 2 earlier versions go with it')
+      expect(question).toHaveTextContent('a sync brings it back')
+      await userEvent.click(within(question).getByRole('button', { name: 'Delete it' }))
+
+      await waitFor(() => expect(calls.of('delete_item')).toEqual([{ uuid: CARDS[1]!.uuid }]))
+      await waitFor(() => expect(screen.queryByRole('heading', { name: 'bank · main' })).toBeNull())
     })
   })
 })

@@ -1,13 +1,17 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { Copied } from './generated/Copied'
+import type { Draft } from './generated/Draft'
+import type { Edit } from './generated/Edit'
 import type { Failure } from './generated/Failure'
 import type { Filter } from './generated/Filter'
+import type { Forms } from './generated/Forms'
 import type { ItemCard } from './generated/ItemCard'
 import type { ItemRow } from './generated/ItemRow'
 import type { Opening } from './generated/Opening'
 import type { PasswordChanged } from './generated/PasswordChanged'
 import type { PasswordStrength } from './generated/PasswordStrength'
 import type { Policy } from './generated/Policy'
+import type { Recipe } from './generated/Recipe'
 import type { Revealed } from './generated/Revealed'
 import type { Shortcut } from './generated/Shortcut'
 import type { TagCount } from './generated/TagCount'
@@ -18,6 +22,7 @@ import type { VaultStatus } from './generated/VaultStatus'
 import type { VersionRow } from './generated/VersionRow'
 import type { WipeOutcome } from './generated/WipeOutcome'
 import type { WipePreview } from './generated/WipePreview'
+import type { Worth } from './generated/Worth'
 
 /*
  * The commands the window may call, typed by the Rust that answers them
@@ -28,14 +33,18 @@ import type { WipePreview } from './generated/WipePreview'
 
 export type {
   Copied,
+  Draft,
+  Edit,
   Failure,
   Filter,
+  Forms,
   ItemCard,
   ItemRow,
   Opening,
   PasswordChanged,
   PasswordStrength,
   Policy,
+  Recipe,
   Revealed,
   Shortcut,
   TagCount,
@@ -46,10 +55,17 @@ export type {
   VersionRow,
   WipeOutcome,
   WipePreview,
+  Worth,
 }
 export type { CardBody } from './generated/CardBody'
 export type { CardField } from './generated/CardField'
+export type { DraftContents } from './generated/DraftContents'
+export type { DraftField } from './generated/DraftField'
 export type { FailureKind } from './generated/FailureKind'
+export type { FieldEdit } from './generated/FieldEdit'
+export type { FieldForm } from './generated/FieldForm'
+export type { KindForm } from './generated/KindForm'
+export type { Value } from './generated/Value'
 
 /** The file the window was started on. */
 export const opening = () => invoke<Opening>('opening')
@@ -82,6 +98,24 @@ export const tags = () => invoke<TagCount[]>('tags')
 
 /** One item, as the card shows it: every secret named, none filled in. */
 export const item = (id: number) => invoke<ItemCard>('item', { id })
+
+/** What the editor can make, kind by kind, and how its generator starts. */
+export const forms = () => invoke<Forms>('forms')
+
+/** What a secret made by `recipe` would be worth. Rejects with why it cannot be
+ * made; nothing is made either way. */
+export const worth = (recipe: Recipe) => invoke<Worth>('worth', { recipe })
+
+/** Adds what the editor drafted; resolves to the new item's id. A generated
+ * secret is made in the process and never comes back here. */
+export const addItem = (draft: Draft) => invoke<number>('add_item', { draft })
+
+/** Changes the item `uuid` names; resolves to whether anything changed. */
+export const editItem = (uuid: string, edit: Edit) => invoke<boolean>('edit_item', { uuid, edit })
+
+/** Removes the item `uuid` names, with its history; resolves to whether it was
+ * still there. */
+export const deleteItem = (uuid: string) => invoke<boolean>('delete_item', { uuid })
 
 /** Every version of an item, oldest first: every secret named, none filled in. */
 export const history = (id: number) => invoke<VersionRow[]>('history', { id })

@@ -2,15 +2,15 @@
 //!
 //! The page gets no file system, no dialog API, no shell and no clipboard: it
 //! asks for a file to be chosen, a vault to be unlocked or locked, what the
-//! open vault is and holds, one field to be shown or copied. Each answer is a
-//! `wire` value.
+//! open vault is and holds, one field to be shown or copied, an item to be
+//! added, changed or removed. Each answer is a `wire` value.
 
 use crate::clip::Clip;
 use crate::session::{self, Handover, Session};
 use crate::wire::{
-    Copied, Failure, FailureKind, Filter, ItemCard, ItemRow, Opening, PasswordChanged,
-    PasswordStrength, Policy, Revealed, Shortcut, TagCount, Transfer, Transport, Transports,
-    VaultStatus, VersionRow, WipeOutcome, WipePart, WipePreview,
+    Copied, Draft, Edit, Failure, FailureKind, Filter, Forms, ItemCard, ItemRow, Opening,
+    PasswordChanged, PasswordStrength, Policy, Recipe, Revealed, Shortcut, TagCount, Transfer,
+    Transport, Transports, VaultStatus, VersionRow, WipeOutcome, WipePart, WipePreview, Worth,
 };
 use sefy_core::agent::{Client, Seat};
 use std::path::PathBuf;
@@ -158,6 +158,50 @@ pub async fn restore(app: AppHandle, id: i64, version: String) -> Result<bool, F
     })
     .await
     .inspect(|_| tell_changed(&app))
+}
+
+/// What the editor can make, kind by kind, and how its generator starts.
+#[tauri::command]
+pub fn forms() -> Forms {
+    Forms::new()
+}
+
+/// What a secret made by `recipe` would be worth, or why it cannot be made.
+/// Nothing is made to say so.
+#[tauri::command]
+pub fn worth(recipe: Recipe) -> Result<Worth, Failure> {
+    Worth::of(&recipe)
+}
+
+/// Adds the item the editor drafted, and says its id.
+#[tauri::command]
+pub async fn add_item(app: AppHandle, draft: Draft) -> Result<i64, Failure> {
+    worker(app.clone(), move |app| app.state::<Session>().add(draft))
+        .await
+        .inspect(|_| tell_changed(&app))
+}
+
+/// Changes the item `uuid` names, and says whether anything changed.
+#[tauri::command]
+pub async fn edit_item(app: AppHandle, uuid: String, edit: Edit) -> Result<bool, Failure> {
+    worker(app.clone(), move |app| {
+        app.state::<Session>().edit(&uuid, edit)
+    })
+    .await
+    .inspect(|changed| {
+        if *changed {
+            tell_changed(&app);
+        }
+    })
+}
+
+/// Removes the item `uuid` names, with its history, and says whether it was
+/// still there.
+#[tauri::command]
+pub async fn delete_item(app: AppHandle, uuid: String) -> Result<bool, Failure> {
+    worker(app.clone(), move |app| app.state::<Session>().delete(&uuid))
+        .await
+        .inspect(|_| tell_changed(&app))
 }
 
 /// One secret field of an item, because someone asked to see it; of an earlier

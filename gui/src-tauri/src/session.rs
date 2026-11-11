@@ -10,14 +10,16 @@
 //! locks the vault when nobody has used it for a while.
 
 use crate::wire::{
-    CardBody, Failure, FailureKind, Filter, ItemCard, ItemRow, Opening, TagCount, Transfer,
-    VaultStatus, VersionRow,
+    CardBody, Draft, DraftContents, Edit, Failure, FailureKind, FieldEdit, Filter, ItemCard,
+    ItemRow, Opening, TagCount, Transfer, Value, VaultStatus, VersionRow,
 };
 use sefy_core::agent::Keeper;
 use sefy_core::crypto::{DerivedKey, SALT_LEN};
+use sefy_core::model::{normalize_value, set_field};
 use sefy_core::vault::version_on_disk;
 use sefy_core::{
-    Error, FreshKey, ItemKind, KeySource, Payload, Plugin, Policy, Query, Totp, Vault, sync,
+    Error, Field, FreshKey, Item, ItemKind, KeySource, NewItem, Payload, Plugin, Policy, Query,
+    Totp, Vault, sync,
 };
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -478,6 +480,54 @@ impl Session {
         })
     }
 
+    /// Adds what the editor drafted, and says the id of the new item.
+    ///
+    /// Every value is checked as the command line checks it, a generated one is
+    /// made here, and a file is read from disk here: the page holds neither.
+    pub fn add(&self, draft: Draft) -> Result<i64, Failure> {
+        let item = new_item(draft)?;
+        self.write(|vault| {
+            let id = vault.add(item)?;
+            vault.save()?;
+            Ok(id)
+        })
+    }
+
+    /// Changes the item `uuid` names as the editor asked, and says whether that
+    /// changed anything.
+    ///
+    /// By identity rather than by id: an id is a row, and a row can go to another
+    /// item once its own is removed, while what is changed has to be the item the
+    /// person was looking at. Only what the editor changed is touched, on top of
+    /// the item as the file has it now; what it replaces becomes a version.
+    pub fn edit(&self, uuid: &str, edit: Edit) -> Result<bool, Failure> {
+        self.write(|vault| {
+            let id = vault.find_by_uuid(uuid)?.ok_or_else(gone)?;
+            let item = vault.get(id)?;
+            let (title, tags, payload) = edited(&item, edit)?;
+            if title.is_none() && tags.is_none() && payload.is_none() {
+                return Ok(false);
+            }
+            vault.update(id, title, payload, tags)?;
+            vault.save()?;
+            Ok(true)
+        })
+    }
+
+    /// Removes the item `uuid` names, and its history with it, and says whether
+    /// it was still there: one that something else removed first is gone all
+    /// the same.
+    pub fn delete(&self, uuid: &str) -> Result<bool, Failure> {
+        self.write(|vault| {
+            let Some(id) = vault.find_by_uuid(uuid)? else {
+                return Ok(false);
+            };
+            vault.remove(id)?;
+            vault.save()?;
+            Ok(true)
+        })
+    }
+
     /// How long what the open vault lets out stays out; what a new vault says
     /// when none is open.
     pub fn policy(&self) -> Result<Policy, Failure> {
@@ -685,6 +735,204 @@ fn refused(message: String) -> Failure {
         kind: FailureKind::Other,
         message,
     }
+}
+
+/// The answer to an edit of an item that is no longer in the vault.
+fn gone() -> Failure {
+    refused(
+        "this item is no longer in the vault: something else removed it; \
+         nothing was written"
+            .to_owned(),
+    )
+}
+
+/// A value the editor sent, made: what was typed, or a secret generated now.
+/// Nothing typed is a field that is not there, as on the command line.
+fn made(value: Value) -> Result<Option<Zeroizing<String>>, Failure> {
+    match value {
+        Value::Typed { text } => Ok((!text.is_empty()).then(|| Zeroizing::new(text))),
+        Value::Generated { recipe } => Ok(Some(sefy_core::generate(&recipe.core())?.value)),
+    }
+}
+
+/// A value on its way into the field `name`, held to the shape the core gives
+/// that field: what `sefy add` and `sefy edit` hold it to.
+fn checked(name: &str, value: &str) -> Result<String, Failure> {
+    normalize_value(name, value).map_err(|error| refused(format!("{name}: {error}")))
+}
+
+/// A title as the editor typed it. Spaces around it are never meant in a form,
+/// and an empty one names nothing to find the item by.
+fn title_of(typed: &str) -> Result<String, Failure> {
+    let title = typed.trim();
+    if title.is_empty() {
+        return Err(refused("an item needs a title".to_owned()));
+    }
+    Ok(title.to_owned())
+}
+
+/// A field name as the editor typed it.
+fn field_name(typed: &str) -> Result<String, Failure> {
+    let name = typed.trim();
+    if name.is_empty() {
+        return Err(refused("a field needs a name".to_owned()));
+    }
+    Ok(name.to_owned())
+}
+
+/// Tags as the editor gave them, in the shape the vault keeps them: trimmed,
+/// split at commas as the command line splits them, without empty ones and
+/// repeats, sorted.
+fn tags_of(given: Vec<String>) -> Vec<String> {
+    let mut tags: Vec<String> = given
+        .iter()
+        .flat_map(|tag| tag.split(','))
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_owned)
+        .collect();
+    tags.sort();
+    tags.dedup();
+    tags
+}
+
+/// What the editor drafted, made into an item.
+fn new_item(draft: Draft) -> Result<NewItem, Failure> {
+    let Draft {
+        title,
+        tags,
+        contents,
+    } = draft;
+    let (title, payload) = match contents {
+        DraftContents::Note { text } => (title_of(&title)?, Payload::Note { text }),
+        DraftContents::Record { kind, fields } => {
+            let kind = ItemKind::parse(&kind);
+            if !kind.is_record() {
+                return Err(refused(format!("a {kind} is not made of fields")));
+            }
+            let mut made_fields: Vec<Field> = Vec::new();
+            for field in fields {
+                let name = field_name(&field.name)?;
+                if made_fields.iter().any(|made| made.name == name) {
+                    return Err(refused(format!("{name:?} is there twice")));
+                }
+                if let Some(value) = made(field.value)? {
+                    let value = checked(&name, &value)?;
+                    set_field(&kind, &mut made_fields, &name, value, field.secret);
+                }
+            }
+            if made_fields.is_empty() {
+                return Err(refused(format!(
+                    "a {kind} needs at least one field; nothing was given"
+                )));
+            }
+            (
+                title_of(&title)?,
+                Payload::Fields {
+                    kind,
+                    fields: made_fields,
+                },
+            )
+        }
+        DraftContents::File { path } => {
+            let path = PathBuf::from(path);
+            let bytes = std::fs::read(&path).map_err(|source| Error::Io {
+                context: format!("cannot read {}", path.display()),
+                source,
+            })?;
+            let filename = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "file".to_owned());
+            // Called after itself unless told otherwise, as `sefy add file` does.
+            let title = if title.trim().is_empty() {
+                filename.clone()
+            } else {
+                title_of(&title)?
+            };
+            (title, Payload::File { filename, bytes })
+        }
+    };
+    Ok(NewItem::new(title, payload).with_tags(tags_of(tags)))
+}
+
+/// What `edit` changes in `item`: a new title, new tags and new contents, each
+/// only when it differs from what the item has now.
+type Edited = (Option<String>, Option<Vec<String>>, Option<Payload>);
+
+fn edited(item: &Item, edit: Edit) -> Result<Edited, Failure> {
+    let Edit {
+        title,
+        tags,
+        text,
+        fields,
+    } = edit;
+    let summary = &item.summary;
+    let name = &summary.title;
+    let new_title = title
+        .map(|typed| title_of(&typed))
+        .transpose()?
+        .filter(|title| title != name);
+    let new_tags = tags.map(tags_of).filter(|tags| *tags != summary.tags);
+
+    let payload = match &item.payload {
+        Payload::Note { text: current } => {
+            if !fields.is_empty() {
+                return Err(refused(format!("{name:?} is a note; it has no fields")));
+            }
+            text.filter(|text| text != current)
+                .map(|text| Payload::Note { text })
+        }
+        Payload::Fields {
+            kind,
+            fields: current,
+        } => {
+            if text.is_some() {
+                return Err(refused(format!(
+                    "{name:?} is a {kind}; only a note has text"
+                )));
+            }
+            let mut next = current.clone();
+            for change in fields {
+                match change {
+                    FieldEdit::Set {
+                        name,
+                        secret,
+                        value,
+                    } => {
+                        let name = field_name(&name)?;
+                        match made(value)? {
+                            Some(value) => {
+                                set_field(kind, &mut next, &name, checked(&name, &value)?, secret)
+                            }
+                            None => next.retain(|field| field.name != name),
+                        }
+                    }
+                    FieldEdit::Remove { name } => next.retain(|field| field.name != name),
+                }
+            }
+            if next.is_empty() {
+                return Err(refused(format!(
+                    "a {kind} cannot be left without any field"
+                )));
+            }
+            (next != *current).then(|| Payload::Fields {
+                kind: kind.clone(),
+                fields: next,
+            })
+        }
+        // What this build cannot read, or does not write from a form, keeps its
+        // contents: its labels live beside them and can still change.
+        Payload::File { .. } | Payload::Unknown { .. } => {
+            if text.is_some() || !fields.is_empty() {
+                return Err(refused(format!(
+                    "only the title and the tags of {name:?} can be changed"
+                )));
+            }
+            None
+        }
+    };
+    Ok((new_title, new_tags, payload))
 }
 
 /// A file that moved on and will not open is not a wrong password, whatever the
@@ -1724,6 +1972,523 @@ mod tests {
             session.status().unwrap().last_sync.unwrap().operation,
             "push"
         );
+    }
+
+    fn typed(text: &str) -> Value {
+        Value::Typed { text: text.into() }
+    }
+
+    fn draft_field(name: &str, value: Value) -> crate::wire::DraftField {
+        crate::wire::DraftField {
+            name: name.into(),
+            secret: None,
+            value,
+        }
+    }
+
+    fn login_draft(title: &str, fields: Vec<crate::wire::DraftField>) -> Draft {
+        Draft {
+            title: title.into(),
+            tags: vec![],
+            contents: DraftContents::Record {
+                kind: "login".into(),
+                fields,
+            },
+        }
+    }
+
+    fn stored(path: &Path, title: &str) -> sefy_core::Item {
+        let vault = Vault::open(path, PASSWORD).unwrap();
+        let summary = vault
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|item| item.title == title)
+            .unwrap_or_else(|| panic!("{title:?} is not in the vault"));
+        vault.get(summary.id).unwrap()
+    }
+
+    fn uuid_of(session: &Session, title: &str) -> String {
+        session.card(id_of(session, title), 0).unwrap().uuid
+    }
+
+    #[test]
+    fn a_new_item_is_the_one_the_command_line_would_make() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+
+        let id = session
+            .add(Draft {
+                title: "  mail  ".into(),
+                tags: vec![" work, home ".into(), "work".into(), "".into()],
+                contents: DraftContents::Record {
+                    kind: "login".into(),
+                    fields: vec![
+                        draft_field("login", typed("kmiller")),
+                        draft_field("password", typed("hunter2-not-real")),
+                        draft_field("url", typed("")),
+                        draft_field("totp", typed("jbsw y3dp-ehpk 3pxp")),
+                    ],
+                },
+            })
+            .unwrap();
+
+        let item = stored(&path, "mail");
+        assert_eq!(item.summary.id, id);
+        assert_eq!(item.summary.tags, ["home", "work"]);
+        let Payload::Fields { kind, fields } = item.payload else {
+            panic!("a login is a record");
+        };
+        assert_eq!(kind, ItemKind::Login);
+        let names: Vec<(&str, bool)> = fields
+            .iter()
+            .map(|field| (field.name.as_str(), field.secret))
+            .collect();
+        // Nothing typed is nothing kept, and secrecy is the template's.
+        assert_eq!(
+            names,
+            [("login", false), ("password", true), ("totp", true)]
+        );
+        assert_eq!(
+            fields[2].value, "JBSWY3DPEHPK3PXP",
+            "the key went in unchecked"
+        );
+        let versions = Vault::open(&path, PASSWORD).unwrap().history(id).unwrap();
+        assert_eq!(versions[0].device, sefy_core::device::name());
+    }
+
+    #[test]
+    fn a_generated_password_is_made_here_by_the_recipe_of_sefy_gen() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+        session
+            .add(login_draft(
+                "generated",
+                vec![draft_field(
+                    "password",
+                    Value::Generated {
+                        recipe: crate::wire::Recipe::of(&sefy_core::Recipe::default()),
+                    },
+                )],
+            ))
+            .unwrap();
+
+        let item = stored(&path, "generated");
+        let password = &item.payload.field("password").unwrap().value;
+        assert_eq!(
+            password.chars().count(),
+            sefy_core::generate::DEFAULT_LENGTH
+        );
+        assert!(item.payload.field("password").unwrap().secret);
+    }
+
+    #[test]
+    fn a_draft_with_nothing_in_it_or_no_title_is_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let empty = session
+            .add(login_draft("empty", vec![draft_field("login", typed(""))]))
+            .unwrap_err();
+        assert!(empty.message.contains("at least one field"), "{empty:?}");
+        let untitled = session
+            .add(Draft {
+                title: "   ".into(),
+                tags: vec![],
+                contents: DraftContents::Note { text: "x".into() },
+            })
+            .unwrap_err();
+        assert!(untitled.message.contains("title"), "{untitled:?}");
+        let twice = session
+            .add(login_draft(
+                "twice",
+                vec![
+                    draft_field("login", typed("a")),
+                    draft_field("login", typed("b")),
+                ],
+            ))
+            .unwrap_err();
+        assert!(twice.message.contains("twice"), "{twice:?}");
+        let note_of_fields = session
+            .add(Draft {
+                title: "x".into(),
+                tags: vec![],
+                contents: DraftContents::Record {
+                    kind: "note".into(),
+                    fields: vec![draft_field("a", typed("b"))],
+                },
+            })
+            .unwrap_err();
+        assert!(
+            note_of_fields.message.contains("not made of fields"),
+            "{note_of_fields:?}"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "something was written"
+        );
+    }
+
+    #[test]
+    fn a_value_with_a_shape_is_held_to_it_and_the_field_is_named() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+        let card = |expires: &str| Draft {
+            title: "travel card".into(),
+            tags: vec![],
+            contents: DraftContents::Record {
+                kind: "card".into(),
+                fields: vec![
+                    draft_field("number", typed("4111111111111111")),
+                    draft_field("expires", typed(expires)),
+                ],
+            },
+        };
+        let refused = session.add(card("soon")).unwrap_err();
+        assert!(refused.message.starts_with("expires: "), "{refused:?}");
+        session.add(card("03/29")).unwrap();
+        let item = stored(&path, "travel card");
+        assert_eq!(item.payload.field("expires").unwrap().value, "2029-03");
+    }
+
+    #[test]
+    fn a_file_is_read_by_the_process_and_named_after_itself() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = vault_in(&directory);
+        let session = Session::default();
+        session
+            .hold(open(&path, PASSWORD).unwrap(), password())
+            .unwrap();
+        let file = directory.path().join("scan.pdf");
+        std::fs::write(&file, [1u8, 2, 3]).unwrap();
+
+        session
+            .add(Draft {
+                title: "".into(),
+                tags: vec!["travel".into()],
+                contents: DraftContents::File {
+                    path: file.display().to_string(),
+                },
+            })
+            .unwrap();
+        let item = stored(&path, "scan.pdf");
+        assert_eq!(
+            item.payload,
+            Payload::File {
+                filename: "scan.pdf".into(),
+                bytes: vec![1, 2, 3]
+            }
+        );
+
+        let missing = session
+            .add(Draft {
+                title: "".into(),
+                tags: vec![],
+                contents: DraftContents::File {
+                    path: directory.path().join("gone.pdf").display().to_string(),
+                },
+            })
+            .unwrap_err();
+        assert_eq!(missing.kind, FailureKind::Missing);
+    }
+
+    #[test]
+    fn an_edit_changes_only_what_was_changed_on_top_of_the_file_as_it_is() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = browsing(&directory);
+        let path = session
+            .status()
+            .map(|status| PathBuf::from(status.path))
+            .unwrap();
+        let uuid = uuid_of(&session, "mailbox");
+
+        // The command line changes the login while the editor is open.
+        let mut outside = Vault::open(&path, PASSWORD).unwrap();
+        let id = outside.find_by_uuid(&uuid).unwrap().unwrap();
+        let Payload::Fields { kind, mut fields } = outside.get(id).unwrap().payload else {
+            panic!("a login is a record");
+        };
+        set_field(&kind, &mut fields, "login", "from-outside".into(), None);
+        outside
+            .update(id, None, Some(Payload::Fields { kind, fields }), None)
+            .unwrap();
+        outside.save().unwrap();
+
+        let changed = session
+            .edit(
+                &uuid,
+                Edit {
+                    title: Some("mailbox".into()),
+                    fields: vec![FieldEdit::Set {
+                        name: "url".into(),
+                        secret: None,
+                        value: typed("https://mail.example.com"),
+                    }],
+                    ..Edit::default()
+                },
+            )
+            .unwrap();
+        assert!(changed);
+
+        let item = stored(&path, "mailbox");
+        assert_eq!(item.payload.field("login").unwrap().value, "from-outside");
+        assert_eq!(
+            item.payload.field("url").unwrap().value,
+            "https://mail.example.com"
+        );
+        assert_eq!(
+            item.payload.field("password").unwrap().value,
+            "hunter2-not-real",
+            "a secret nobody touched changed"
+        );
+        let names: Vec<&str> = match &item.payload {
+            Payload::Fields { fields, .. } => {
+                fields.iter().map(|field| field.name.as_str()).collect()
+            }
+            _ => unreachable!(),
+        };
+        assert_eq!(names, ["login", "password", "totp", "url"]);
+    }
+
+    #[test]
+    fn a_rotated_password_leaves_the_old_one_in_the_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = browsing(&directory);
+        let id = id_of(&session, "mailbox");
+        let uuid = uuid_of(&session, "mailbox");
+
+        session
+            .edit(
+                &uuid,
+                Edit {
+                    fields: vec![FieldEdit::Set {
+                        name: "password".into(),
+                        secret: None,
+                        value: Value::Generated {
+                            recipe: crate::wire::Recipe::Words {
+                                count: 5,
+                                list: crate::wire::WordList::En,
+                                separator: "-".into(),
+                            },
+                        },
+                    }],
+                    ..Edit::default()
+                },
+            )
+            .unwrap();
+
+        let (now, _) = session.value(id, Some("password"), 0).unwrap();
+        assert_ne!(now.as_str(), "hunter2-not-real");
+        assert_eq!(now.split('-').count(), 5);
+        let versions = session.history(id, 0).unwrap();
+        assert_eq!(versions.len(), 2);
+        assert_eq!(versions[1].changed, ["password"]);
+        let (old, _) = session
+            .value_of(id, Some(&versions[0].uuid), Some("password"), 0)
+            .unwrap();
+        assert_eq!(old.as_str(), "hunter2-not-real");
+    }
+
+    #[test]
+    fn an_empty_value_takes_a_field_away_and_the_last_one_stays() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = browsing(&directory);
+        let id = id_of(&session, "travel card");
+        let uuid = uuid_of(&session, "travel card");
+
+        session
+            .edit(
+                &uuid,
+                Edit {
+                    fields: vec![
+                        FieldEdit::Set {
+                            name: "expires".into(),
+                            secret: None,
+                            value: typed(""),
+                        },
+                        FieldEdit::Set {
+                            name: "security question".into(),
+                            secret: Some(true),
+                            value: typed("rex"),
+                        },
+                    ],
+                    ..Edit::default()
+                },
+            )
+            .unwrap();
+        let item = session.slot().as_ref().unwrap().get(id).unwrap();
+        assert!(item.payload.field("expires").is_none());
+        assert!(item.payload.field("security question").unwrap().secret);
+
+        let refused = session
+            .edit(
+                &uuid,
+                Edit {
+                    fields: vec![
+                        FieldEdit::Remove {
+                            name: "number".into(),
+                        },
+                        FieldEdit::Remove {
+                            name: "security question".into(),
+                        },
+                    ],
+                    ..Edit::default()
+                },
+            )
+            .unwrap_err();
+        assert!(refused.message.contains("without any field"), "{refused:?}");
+    }
+
+    #[test]
+    fn an_edit_that_changes_nothing_writes_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = browsing(&directory);
+        let path = PathBuf::from(session.status().unwrap().path);
+        let uuid = uuid_of(&session, "recovery codes");
+        let before = version_on_disk(&path);
+
+        let changed = session
+            .edit(
+                &uuid,
+                Edit {
+                    title: Some(" recovery codes ".into()),
+                    tags: Some(vec![]),
+                    text: Some("mailbox: F7Q2-XXXX".into()),
+                    fields: vec![],
+                },
+            )
+            .unwrap();
+        assert!(!changed);
+        assert_eq!(version_on_disk(&path), before, "the file was written");
+    }
+
+    #[test]
+    fn what_a_kind_does_not_have_cannot_be_edited_into_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = browsing(&directory);
+        let note = session
+            .edit(
+                &uuid_of(&session, "recovery codes"),
+                Edit {
+                    fields: vec![FieldEdit::Remove { name: "x".into() }],
+                    ..Edit::default()
+                },
+            )
+            .unwrap_err();
+        assert!(note.message.contains("no fields"), "{note:?}");
+        let record = session
+            .edit(
+                &uuid_of(&session, "mailbox"),
+                Edit {
+                    text: Some("x".into()),
+                    ..Edit::default()
+                },
+            )
+            .unwrap_err();
+        assert!(record.message.contains("only a note"), "{record:?}");
+        let file = session
+            .edit(
+                &uuid_of(&session, "scan.pdf"),
+                Edit {
+                    text: Some("x".into()),
+                    ..Edit::default()
+                },
+            )
+            .unwrap_err();
+        assert!(file.message.contains("title and the tags"), "{file:?}");
+
+        // Its labels can change all the same.
+        assert!(
+            session
+                .edit(
+                    &uuid_of(&session, "scan.pdf"),
+                    Edit {
+                        title: Some("passport scan".into()),
+                        tags: Some(vec!["travel".into()]),
+                        ..Edit::default()
+                    },
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            session
+                .card(id_of(&session, "passport scan"), 0)
+                .unwrap()
+                .tags,
+            ["travel"]
+        );
+    }
+
+    #[test]
+    fn an_item_removed_elsewhere_is_not_edited_and_is_gone_all_the_same() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = browsing(&directory);
+        let path = PathBuf::from(session.status().unwrap().path);
+        let uuid = uuid_of(&session, "recovery codes");
+
+        let mut outside = Vault::open(&path, PASSWORD).unwrap();
+        let id = outside.find_by_uuid(&uuid).unwrap().unwrap();
+        outside.remove(id).unwrap();
+        outside.save().unwrap();
+
+        let refused = session
+            .edit(
+                &uuid,
+                Edit {
+                    text: Some("x".into()),
+                    ..Edit::default()
+                },
+            )
+            .unwrap_err();
+        assert!(
+            refused.message.contains("no longer in the vault"),
+            "{refused:?}"
+        );
+        assert!(
+            !session.delete(&uuid).unwrap(),
+            "it was not there to remove"
+        );
+    }
+
+    #[test]
+    fn a_delete_takes_the_item_and_its_history_and_leaves_the_rest() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = browsing(&directory);
+        let path = PathBuf::from(session.status().unwrap().path);
+        let uuid = uuid_of(&session, "recovery codes");
+        session
+            .edit(
+                &uuid,
+                Edit {
+                    text: Some("second".into()),
+                    ..Edit::default()
+                },
+            )
+            .unwrap();
+
+        assert!(session.delete(&uuid).unwrap());
+        let reopened = Vault::open(&path, PASSWORD).unwrap();
+        assert_eq!(reopened.find_by_uuid(&uuid).unwrap(), None);
+        assert_eq!(reopened.list().unwrap().len(), 3);
+        assert_eq!(session.status().unwrap().items, 3);
     }
 
     #[test]

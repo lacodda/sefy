@@ -382,6 +382,348 @@ impl CardField {
     }
 }
 
+/// What the editor can make, and how its generator starts.
+///
+/// The page draws its forms from this, so a kind or a field added to the core's
+/// templates reaches the window with nothing written on the page.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct Forms {
+    /// Every kind this build can make, in the order the kinds are declared.
+    pub kinds: Vec<KindForm>,
+    /// What the generator makes when nothing is changed: what `sefy gen` makes.
+    pub recipe: Recipe,
+    /// How many words a passphrase has when nobody said.
+    #[ts(type = "number")]
+    pub words: usize,
+    /// The longest the generator makes, in characters or words.
+    #[ts(type = "number")]
+    pub max_length: usize,
+}
+
+impl Forms {
+    /// What the core offers.
+    pub fn new() -> Self {
+        Self {
+            kinds: sefy_core::ItemKind::known()
+                .iter()
+                .map(KindForm::of)
+                .collect(),
+            recipe: Recipe::of(&sefy_core::Recipe::default()),
+            words: sefy_core::generate::DEFAULT_WORDS,
+            max_length: sefy_core::generate::MAX_LENGTH,
+        }
+    }
+}
+
+impl Default for Forms {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// One kind the editor can make.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct KindForm {
+    /// The kind's name, as stored.
+    pub kind: String,
+    /// What it holds.
+    pub shape: KindShape,
+    /// Its template's fields, in the order a record of it is read; none unless
+    /// it is a record.
+    pub fields: Vec<FieldForm>,
+}
+
+impl KindForm {
+    fn of(kind: &sefy_core::ItemKind) -> Self {
+        let shape = match kind {
+            sefy_core::ItemKind::Note => KindShape::Note,
+            sefy_core::ItemKind::File => KindShape::File,
+            _ => KindShape::Record,
+        };
+        Self {
+            kind: kind.as_str().to_owned(),
+            shape,
+            fields: kind
+                .template()
+                .map(|template| template.fields.iter().map(FieldForm::of).collect())
+                .unwrap_or_default(),
+        }
+    }
+}
+
+/// What an item of a kind holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum KindShape {
+    /// Text.
+    Note,
+    /// Named fields.
+    Record,
+    /// A file, kept byte for byte.
+    File,
+}
+
+/// One field of a kind's template, as the editor offers it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS)]
+pub struct FieldForm {
+    /// The name it is stored under.
+    pub name: String,
+    /// What it holds, in a few words: the command line's help for it.
+    pub hint: String,
+    /// Whether its value is a secret: typed masked, and never sent back to the
+    /// page to be edited.
+    pub secret: bool,
+    /// Whether its value runs to several lines.
+    pub multiline: bool,
+    /// Whether the generator is offered for it: a secret a person would choose.
+    pub generated: bool,
+}
+
+impl FieldForm {
+    fn of(spec: &sefy_core::FieldSpec) -> Self {
+        Self {
+            name: spec.name.to_owned(),
+            hint: spec.description.to_owned(),
+            secret: spec.secret,
+            multiline: spec.multiline,
+            generated: spec.generated(),
+        }
+    }
+}
+
+/// How to make a secret: the options of `sefy gen`, as the editor chooses them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "make", rename_all = "kebab-case")]
+pub enum Recipe {
+    /// Random characters; lower-case letters always, the rest as chosen.
+    Characters {
+        /// How many.
+        #[ts(type = "number")]
+        length: usize,
+        /// Upper-case letters too.
+        uppercase: bool,
+        /// Digits too.
+        digits: bool,
+        /// Symbols too.
+        symbols: bool,
+    },
+    /// Consonants and vowels in turn, to be read out and typed.
+    Pronounceable {
+        /// How many characters.
+        #[ts(type = "number")]
+        length: usize,
+    },
+    /// Words from a list.
+    Words {
+        /// How many.
+        #[ts(type = "number")]
+        count: usize,
+        /// Which list.
+        list: WordList,
+        /// What goes between them.
+        separator: String,
+    },
+}
+
+/// A list passphrases are drawn from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum WordList {
+    /// The EFF large wordlist.
+    En,
+    /// Russian Diceware 4d6.
+    Ru,
+}
+
+impl Recipe {
+    /// The editor's view of one of the core's recipes.
+    pub fn of(recipe: &sefy_core::Recipe) -> Self {
+        use sefy_core::Recipe as Core;
+        match recipe {
+            Core::Characters { length, classes } => Self::Characters {
+                length: *length,
+                uppercase: classes.uppercase,
+                digits: classes.digits,
+                symbols: classes.symbols,
+            },
+            Core::Pronounceable { length } => Self::Pronounceable { length: *length },
+            Core::Words {
+                count,
+                language,
+                separator,
+            } => Self::Words {
+                count: *count,
+                list: match language {
+                    sefy_core::Language::English => WordList::En,
+                    sefy_core::Language::Russian => WordList::Ru,
+                },
+                separator: separator.clone(),
+            },
+        }
+    }
+
+    /// The core's recipe this one stands for.
+    pub fn core(&self) -> sefy_core::Recipe {
+        use sefy_core::Recipe as Core;
+        match self {
+            Self::Characters {
+                length,
+                uppercase,
+                digits,
+                symbols,
+            } => Core::Characters {
+                length: *length,
+                classes: sefy_core::Classes {
+                    uppercase: *uppercase,
+                    digits: *digits,
+                    symbols: *symbols,
+                },
+            },
+            Self::Pronounceable { length } => Core::Pronounceable { length: *length },
+            Self::Words {
+                count,
+                list,
+                separator,
+            } => Core::Words {
+                count: *count,
+                language: match list {
+                    WordList::En => sefy_core::Language::English,
+                    WordList::Ru => sefy_core::Language::Russian,
+                },
+                separator: separator.clone(),
+            },
+        }
+    }
+}
+
+/// What a secret made by a recipe would be worth. Nothing was made to say so.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+pub struct Worth {
+    /// Entropy in bits.
+    pub bits: f64,
+    /// Whether that is enough for a secret attacked offline, a master password
+    /// or a disk key, rather than behind a site that limits sign-in attempts.
+    pub offline: bool,
+}
+
+impl Worth {
+    /// What a secret made by `recipe` would be worth, or why none can be made:
+    /// the refusal [`sefy_core::generate`] would give.
+    pub fn of(recipe: &Recipe) -> Result<Self, Failure> {
+        let recipe = recipe.core();
+        recipe.check()?;
+        let bits = recipe.bits();
+        Ok(Self {
+            bits,
+            offline: bits >= sefy_core::generate::OFFLINE_BITS,
+        })
+    }
+}
+
+/// A new item, as the editor drafted it.
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct Draft {
+    /// What to call it.
+    pub title: String,
+    /// Its tags.
+    pub tags: Vec<String>,
+    /// What it holds.
+    pub contents: DraftContents,
+}
+
+/// What a new item holds.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(tag = "shape", rename_all = "kebab-case")]
+pub enum DraftContents {
+    /// A note.
+    Note {
+        /// Its text.
+        text: String,
+    },
+    /// A record of a kind made of fields.
+    Record {
+        /// The kind, by the name it is stored under.
+        kind: String,
+        /// Its fields, in order. One left empty is not there.
+        fields: Vec<DraftField>,
+    },
+    /// A file, read from disk by the process when the item is saved: the page
+    /// never holds its contents.
+    File {
+        /// Where it is.
+        path: String,
+    },
+}
+
+/// One field of a new record.
+#[derive(Debug, Clone, Deserialize, TS)]
+pub struct DraftField {
+    /// Its name.
+    pub name: String,
+    /// Whether it is secret. Left out, it is what the template of the kind says
+    /// about the name, and public for a name the template does not know.
+    pub secret: Option<bool>,
+    /// Its value.
+    pub value: Value,
+}
+
+/// Where the new value of a field comes from.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(tag = "from", rename_all = "kebab-case")]
+pub enum Value {
+    /// Typed on the page. Empty means the field is not there.
+    Typed {
+        /// What was typed.
+        text: String,
+    },
+    /// Made here when the item is saved, so the page never holds it: it is
+    /// shown or copied from the card like any other secret.
+    Generated {
+        /// How.
+        recipe: Recipe,
+    },
+}
+
+/// Changes to an item already in the vault, as the editor sends them.
+///
+/// Only what the person changed, applied on top of the item as the file has it
+/// at the moment of saving: a field that something else changed meanwhile, and
+/// nobody touched here, keeps what was written there.
+#[derive(Debug, Clone, Default, Deserialize, TS)]
+pub struct Edit {
+    /// A new title.
+    pub title: Option<String>,
+    /// All of its tags, when they changed.
+    pub tags: Option<Vec<String>>,
+    /// The new text of a note.
+    pub text: Option<String>,
+    /// The changed fields of a record, in the order they were changed.
+    pub fields: Vec<FieldEdit>,
+}
+
+/// One field changed in a record.
+#[derive(Debug, Clone, Deserialize, TS)]
+#[serde(tag = "change", rename_all = "kebab-case")]
+pub enum FieldEdit {
+    /// A new value, in place if the field is there and at the end if not. An
+    /// empty one takes the field away.
+    Set {
+        /// The field.
+        name: String,
+        /// Its secrecy, when it is new; a field already there keeps its own
+        /// unless this says otherwise.
+        secret: Option<bool>,
+        /// The value.
+        value: Value,
+    },
+    /// The field goes.
+    Remove {
+        /// The field.
+        name: String,
+    },
+}
+
 /// A secret field, shown because someone asked to see it.
 ///
 /// The one wire value that carries a secret. It crosses only on that request
@@ -773,5 +1115,125 @@ impl Failure {
             kind: FailureKind::Locked,
             message: "no vault is open".to_owned(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_forms_are_the_templates_of_the_core() {
+        let forms = Forms::new();
+        let kinds: Vec<&str> = forms.kinds.iter().map(|kind| kind.kind.as_str()).collect();
+        assert_eq!(
+            kinds,
+            [
+                "note",
+                "login",
+                "card",
+                "ssh-key",
+                "wifi",
+                "api-token",
+                "bank",
+                "file"
+            ]
+        );
+        let login = &forms.kinds[1];
+        assert_eq!(login.shape, KindShape::Record);
+        let fields: Vec<(&str, bool, bool, bool)> = login
+            .fields
+            .iter()
+            .map(|field| {
+                (
+                    field.name.as_str(),
+                    field.secret,
+                    field.generated,
+                    field.multiline,
+                )
+            })
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                ("login", false, false, false),
+                ("password", true, true, false),
+                ("url", false, false, false),
+                ("totp", true, false, false),
+                ("notes", false, false, true),
+            ]
+        );
+        assert_eq!(forms.kinds[0].shape, KindShape::Note);
+        assert!(forms.kinds[0].fields.is_empty());
+        assert_eq!(forms.kinds[7].shape, KindShape::File);
+    }
+
+    #[test]
+    fn the_generator_starts_where_sefy_gen_does() {
+        let forms = Forms::new();
+        assert_eq!(forms.recipe.core(), sefy_core::Recipe::default());
+        assert_eq!(forms.words, sefy_core::generate::DEFAULT_WORDS);
+    }
+
+    #[test]
+    fn a_recipe_is_worth_what_the_core_counts_and_one_too_short_is_refused() {
+        let worth = Worth::of(&Recipe::of(&sefy_core::Recipe::default())).unwrap();
+        assert!((worth.bits - sefy_core::Recipe::default().bits()).abs() < 1e-9);
+        assert!(worth.offline);
+
+        let short = Worth::of(&Recipe::Pronounceable { length: 8 }).unwrap();
+        assert!(!short.offline, "{} bits", short.bits);
+
+        let refused = Worth::of(&Recipe::Characters {
+            length: 2,
+            uppercase: true,
+            digits: true,
+            symbols: false,
+        })
+        .unwrap_err();
+        assert!(refused.message.contains("cannot generate"), "{refused:?}");
+    }
+
+    #[test]
+    fn a_recipe_crosses_and_comes_back_the_same() {
+        for recipe in [
+            sefy_core::Recipe::default(),
+            sefy_core::Recipe::Pronounceable { length: 12 },
+            sefy_core::Recipe::Words {
+                count: 7,
+                language: sefy_core::Language::Russian,
+                separator: " ".into(),
+            },
+        ] {
+            assert_eq!(Recipe::of(&recipe).core(), recipe);
+        }
+    }
+
+    #[test]
+    fn the_page_sends_values_in_the_shape_the_process_reads() {
+        let draft: Draft = serde_json::from_str(
+            r#"{"title":"mail","tags":["work"],"contents":{"shape":"record","kind":"login","fields":[
+                {"name":"login","secret":null,"value":{"from":"typed","text":"ada"}},
+                {"name":"password","secret":null,"value":{"from":"generated","recipe":
+                    {"make":"words","count":6,"list":"en","separator":"-"}}}]}}"#,
+        )
+        .unwrap();
+        let DraftContents::Record { fields, .. } = draft.contents else {
+            panic!("a login is a record");
+        };
+        assert!(matches!(
+            &fields[1].value,
+            Value::Generated {
+                recipe: Recipe::Words { count: 6, .. }
+            }
+        ));
+
+        let edit: Edit = serde_json::from_str(
+            r#"{"title":null,"tags":null,"text":null,"fields":[
+                {"change":"remove","name":"url"},
+                {"change":"set","name":"pin","secret":true,"value":{"from":"typed","text":"1"}}]}"#,
+        )
+        .unwrap();
+        assert!(matches!(&edit.fields[0], FieldEdit::Remove { name } if name == "url"));
     }
 }
