@@ -51,7 +51,8 @@ everything below is an expansion of it.
   shows titles, tags and public fields while the vault is open. It shows a
   secret only when you press **Show**, and from then until the window's page
   forgets it the secret is a string in a webview's memory, which no program
-  can wipe. Copy never brings the secret into the page at all.
+  can wipe; so is a secret you type into its form. Copy never brings the secret
+  into the page at all, and neither does a password the window generates.
 - **A command's environment.** `sefy run` puts secrets in the environment of
   the command it starts. Any process running as you can read another's
   environment, and the command passes it on to every process it starts in

@@ -141,11 +141,11 @@ Every command, with its flags: **[the reference](https://lacodda.github.io/sefy/
   browser exports, history included; `export` writes sefy JSON, KeePass XML or
   CSV - in the clear only after you say so explicitly.
 - **A window, and a line over every window.** The desktop app opens the
-  same vault: search it, open an item and its history, copy a field without it
-  touching the screen - every secret stays hidden until you ask to see it. Sync
-  from it, set how long it stays unlocked, wipe it. Ctrl+Alt+Space
-  brings up a search line over whatever you are doing, and Enter copies the
-  password.
+  same vault: search it, add and change items, copy a field without it touching
+  the screen - every secret stays hidden until you ask to see it, and a
+  generated password is never shown until you do. Sync from it, set how long it
+  stays unlocked, wipe it. Ctrl+Alt+Space brings up a search line over whatever
+  you are doing, and Enter copies the password.
 - **Asked once, for as long as you say.** `sefy agent` keeps the password in
   the memory of one process, and commands stop asking. Fifteen minutes with
   nobody using it, twelve hours at most, or `sefy lock`: it wipes the password
@@ -202,9 +202,8 @@ for transports.
 the plugin protocol at version 1 since 0.3.0; the database schema inside the
 ciphertext moves between releases, and older builds keep reading a vault
 safely - see [versions and compatibility](https://lacodda.github.io/sefy/concepts/versions/).
-The desktop app ships from 0.18.0: it browses, searches, copies, syncs and looks
-after the vault, while
-adding and editing items stay on the command line.
+The desktop app ships from 0.18.0 and adds, changes and deletes items from
+0.21.0.
 What landed in each version:
 [CHANGELOG](https://github.com/lacodda/sefy/blob/main/CHANGELOG.md).
 

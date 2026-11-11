@@ -1,13 +1,13 @@
 ---
 title: The desktop app
-description: The same vault in a window - browse and search it, copy a secret without it touching the screen, sync it, set how long it stays unlocked, and find an item from anywhere with quick search.
+description: The same vault in a window - browse and search it, add and change items, copy a secret without it touching the screen, sync it, set how long it stays unlocked, and find an item from anywhere with quick search.
 ---
 
 The desktop app is the same vault as the command line, in a window: the same
 file, the same core, the same rules about what leaves it. It opens a vault,
-lists what is in it, shows one item and its history at a time, copies a field to
-the clipboard, syncs, and looks after the vault itself. Adding and editing items
-stays on the command line for now.
+lists what is in it, shows one item and its history at a time, adds, changes and
+deletes items, copies a field to the clipboard, syncs, and looks after the vault
+itself.
 
 ## Install
 
@@ -80,6 +80,55 @@ seconds the code has left; the key itself never leaves the vault.
 
 Files stay in the vault: take one out with
 [`sefy extract`](/sefy/reference/extract/).
+
+## Adding an item
+
+**New item** (<kbd>Ctrl</kbd> <kbd>N</kbd>) puts an empty item where the card is,
+of the kind the rail shows, or a login. The fields are the ones
+[`sefy add`](/sefy/reference/add/) offers for that kind, with the same help under
+each, the secret ones typed masked. A field left empty is not kept, and a value
+with a shape is held to it as on the command line: a one-time password key or an
+`otpauth://` link, a card's `03/29`, a token's `2027-01-31`. **Add a field** keeps
+anything else, secret unless you say otherwise.
+
+A **File** item takes a file from the system's dialog; the window reads it when
+you save, and it is kept byte for byte.
+
+## Changing an item
+
+**Edit** on the card turns it into the same form, filled in. Public values are
+there to change in place; emptying one takes the field away. A secret is not: the
+window does not bring a password onto the page to edit it. It says
+**unchanged**, and offers **Change** to type a new one, **Generate** where a
+generator makes sense, and **Remove**.
+
+Only what you changed is saved, on top of the item as the file has it at that
+moment. If the command line or a sync changed the item while the form was open,
+whatever you left alone keeps what they wrote - the form shows the item as it was
+when you opened it - and whatever you changed replaces theirs, which stays in the
+[history](#history). Nothing about the kind changes: a login stays a login. A
+file, and an item of a kind written by a newer sefy, can only be retitled and
+retagged.
+
+## Generating a password
+
+**Generate** beside a password, a Wi-Fi password or a key's passphrase offers what
+[`sefy gen`](/sefy/reference/gen/) does: random characters, pronounceable ones, or
+words, with the same defaults - twenty characters of every class - and says how
+many bits of entropy that is, before anything is made. It is not offered for a
+card number, a token or a key: those are issued by someone else.
+
+The password is made when you save, and never shown in the form: **Show** or
+**Copy** it from the card once it is saved. Generating one in place of a password
+the item already has is rotating it: the old one stays in the history, ready for
+the site's "current password" box.
+
+## Deleting an item
+
+**Delete** asks first, and says what goes with the item: every earlier version of
+it. There is no trash. A copy of the vault elsewhere still holds the item, and a
+sync brings it back from there unless it is deleted there too - see
+[Syncing](/sefy/guides/syncing/).
 
 ## History
 
@@ -214,13 +263,16 @@ a line saying so, and the window writes nothing until it can read the file again
 
 The [threat model](/sefy/concepts/threat-model/) is the command line's, with
 two additions: an open window shows titles to whoever is looking at the
-screen, and a secret you **Show** is a string in the window's page from then
-until the page is gone - something no program can wipe from a webview's
-memory. That is why a secret is shown only when you ask, and copied without
-being shown at all.
+screen, and a secret you **Show** - or type into the form - is a string in the
+window's page from then until the page is gone, something no program can wipe
+from a webview's memory. That is why a secret is shown only when you ask, a
+generated one is made outside the page, and a copy is made without the secret
+being shown at all. The webview's form autofill is off, so nothing typed into
+the window is kept by it on disk.
 
 ## Related
 
+- [`add`](/sefy/reference/add/) and [`edit`](/sefy/reference/edit/) - the same items, from a terminal
 - [`get`](/sefy/reference/get/) - the command line's copy, and the clipboard rules
 - [`status`](/sefy/reference/status/) - what **Settings** shows
 - [`sync`](/sefy/reference/sync/) - what **Sync now** does

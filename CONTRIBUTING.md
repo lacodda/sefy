@@ -60,7 +60,9 @@ remember one either: [ADR-0010](docs/adr/0010-the-desktop-app.md). How it
 shows an item without its secrets, copies without the page, and what quick
 search is allowed to be: [ADR-0011](docs/adr/0011-browsing-copying-and-quick-search.md).
 What happens when the window writes a file something else is writing too, and where
-its settings live: [ADR-0013](docs/adr/0013-writing-from-the-window.md).
+its settings live: [ADR-0013](docs/adr/0013-writing-from-the-window.md). How it adds
+and changes items without a secret already in the vault coming to the page, and
+generates one outside it: [ADR-0014](docs/adr/0014-editing-from-the-window.md).
 
 ## Repository layout
 
